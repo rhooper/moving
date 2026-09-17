@@ -95,8 +95,19 @@ ollama pull qwen3-vl:30b     # default, ~20 GB
 ollama pull qwen3-vl:8b      # faster option
 ```
 
-Drafts are **never** applied automatically. Accepted items are stored with
-`source='ai'` so AI-derived data stays distinguishable from what you typed.
+Drafts are **never** applied automatically. The suggestion appears with every
+item ticked; untick what's wrong, edit the summary, then accept. Accepted items
+are stored with `source='ai'` so AI-derived data stays distinguishable from
+what you typed.
+
+Measured on this machine: about 30 seconds the first time (the model has to
+load), then **~6 seconds** per photo. If the model isn't installed the error
+says so and gives you the `ollama pull` command, rather than blaming the
+connection.
+
+Photos are downscaled to 2048 px, their orientation baked in, and **all other
+metadata stripped** — indoor photos carry GPS and this database gets exported.
+Re-uploading the same shot is a no-op, so a retried upload can't duplicate it.
 
 ## Not built (deliberately)
 
@@ -110,6 +121,36 @@ Recorded so the reasoning is not lost, not because they were forgotten:
 - **DK-2251 black + red** — the QL-800 supports two-colour tape; the renderer is
   mono-only.
 - Insurance valuation report, nested boxes, multi-user accounts.
+- **A cloud vision provider.** Drafting is local-only. `vision.base.VisionProvider`
+  is the seam if that ever changes.
+
+## Backups
+
+```bash
+uv run moving backup        # verified, prunes to the last 14
+```
+
+The installer adds a nightly agent at 03:17. Backups use SQLite's online backup
+API rather than a file copy — the service holds a connection open, and in WAL
+mode `cp` can miss committed rows still in the `-wal` sidecar. Each backup is
+verified *before* older ones are pruned, and is written as a single standalone
+file you can open read-only or restore from a snapshot.
+
+## Getting the data out
+
+```bash
+uv run moving export --format json -o moving.json
+uv run moving export --format csv  -o moving.csv
+uv run moving manifest                     # counts and weight per room
+curl -O https://<host>/api/manifest.pdf    # for the movers
+```
+
+Exports name rooms rather than referencing ids, and nest items inside their
+box, so they stand alone without the database.
+
+The manifest's weight total states its own coverage ("weight covers 60 of 86
+boxes"), because an unqualified total under a box count reads as the shipment
+weight.
 
 ## Layout
 

@@ -15,19 +15,22 @@ const keyStore = {
   },
 };
 
-async function api(path, options = {}) {
+async function request(url, options = {}) {
   const headers = { ...(options.headers || {}) };
-  if (options.body) headers["content-type"] = "application/json";
+  // Only declare JSON for a string body. Setting it for FormData would
+  // override the multipart content-type and strip the boundary the browser
+  // generates, and the upload would arrive unparseable.
+  if (typeof options.body === "string") headers["content-type"] = "application/json";
   const key = keyStore.get();
   if (key) headers["X-API-Key"] = key;
 
-  const response = await fetch(`/api${path}`, { ...options, headers });
+  const response = await fetch(url, { ...options, headers });
 
   if (response.status === 401) {
     const entered = prompt("This server needs an access key.");
     if (entered) {
       keyStore.set(entered);
-      return api(path, options);
+      return request(url, options);
     }
     throw new Error("An access key is required to use this server.");
   }
@@ -38,6 +41,10 @@ async function api(path, options = {}) {
   }
   return response.status === 204 ? null : response.json();
 }
+
+// Most endpoints live under /api. Photo files and /b/{code} do not, so those
+// callers use request() directly rather than faking a relative path.
+const api = (path, options) => request(`/api${path}`, options);
 
 // --- helpers --------------------------------------------------------------
 
@@ -103,10 +110,12 @@ async function viewBoxes(query) {
 }
 
 async function viewBox(code) {
-  const [box, items, rooms] = await Promise.all([
-    api(`/boxes/${encodeURIComponent(code)}`),
-    api(`/boxes/${encodeURIComponent(code)}/items`),
+  const path = `/boxes/${encodeURIComponent(code)}`;
+  const [box, items, rooms, photos] = await Promise.all([
+    api(path),
+    api(`${path}/items`),
     api("/rooms"),
+    api(`${path}/photos`),
   ]);
   const room = rooms.find((r) => r.id === box.destination_room_id);
   const flags = flagsOf(box);
@@ -150,6 +159,27 @@ async function viewBox(code) {
     </div>
 
     <div class="section">
+      <h2>Photos</h2>
+      <p class="meta">A photo of the open box before you tape it is the fastest
+         record of what went in.</p>
+      <div class="shots">${photos.map((p) => `
+        <figure>
+          <a href="/photos/${escape(p.id)}/full" target="_blank" rel="noreferrer">
+            <img src="/photos/${escape(p.id)}/thumb" alt="${escape(p.caption || "Box contents")}"
+                 width="${escape(p.width)}" height="${escape(p.height)}" loading="lazy">
+          </a>
+          <button data-drop-photo="${escape(p.id)}" aria-label="Delete this photo">Delete</button>
+        </figure>`).join("")}</div>
+      <div class="row" style="margin-top:0.75rem">
+        <label class="btn" for="shot">Take a photo
+          <input id="shot" type="file" accept="image/*" capture="environment" hidden>
+        </label>
+        ${photos.length ? '<button class="btn quiet" id="draft-btn">Draft contents</button>' : ""}
+      </div>
+      <div id="draft-panel"></div>
+    </div>
+
+    <div class="section">
       <h2>Label</h2>
       <p class="meta">Printed ${escape(box.label_print_count || 0)} time${box.label_print_count === 1 ? "" : "s"}.</p>
       <div class="row">
@@ -178,6 +208,89 @@ async function viewBox(code) {
   });
   document.getElementById("print").addEventListener("click", () => act(() =>
     api("/labels/print", { method: "POST", body: JSON.stringify({ codes: [code] }) })));
+
+  document.getElementById("shot").addEventListener("change", async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    const body = new FormData();
+    body.append("file", file, file.name || "photo.jpg");
+    const panel = document.getElementById("draft-panel");
+    panel.innerHTML = `<p class="meta">Uploading ${escape(file.name || "photo")}…</p>`;
+    try {
+      // No content-type header: the browser must set the multipart boundary.
+      await api(`${path}/photos`, { method: "POST", body });
+      await viewBox(code);
+    } catch (error) { showError(error.message); }
+  });
+
+  for (const button of app.querySelectorAll("[data-drop-photo]")) {
+    button.addEventListener("click", () => act(() =>
+      request(`/photos/${encodeURIComponent(button.dataset.dropPhoto)}`, { method: "DELETE" })));
+  }
+
+  const draftButton = document.getElementById("draft-btn");
+  if (draftButton) {
+    draftButton.addEventListener("click", async () => {
+      const panel = document.getElementById("draft-panel");
+      draftButton.disabled = true;
+      panel.innerHTML = `<p class="meta">Looking at the photo. This takes a few
+        seconds, longer the first time while the model loads.</p>`;
+      try {
+        const { draft } = await api(`${path}/ai/draft`, { method: "POST", body: "{}" });
+        renderDraft(panel, draft);
+      } catch (error) {
+        panel.innerHTML = `<div class="err"><strong>${escape(error.message)}</strong></div>`;
+      } finally {
+        draftButton.disabled = false;
+      }
+    });
+  }
+
+  function renderDraft(panel, draft) {
+    // Nothing is applied until this is accepted. The model proposes; you decide.
+    panel.innerHTML = `
+      <div class="draft">
+        <h3>Suggested contents</h3>
+        <p class="meta">Nothing is saved until you accept. Untick anything wrong.</p>
+        <label class="dlabel" for="d-summary">Summary</label>
+        <textarea id="d-summary" rows="2">${escape(draft.summary || "")}</textarea>
+        <ul class="items">${draft.items.map((item, index) => `
+          <li>
+            <input type="checkbox" id="d-${index}" checked style="width:auto;min-height:auto">
+            <label for="d-${index}" style="flex:1">${escape(item.name)}${item.qty > 1 ? ` ×${escape(item.qty)}` : ""}</label>
+          </li>`).join("")}</ul>
+        ${draft.fragile ? '<p><span class="flag">Fragile</span> suggested</p>' : ""}
+        <div class="row" style="margin-top:0.75rem">
+          <button class="btn" id="d-accept">Accept</button>
+          <button class="btn quiet" id="d-discard">Discard</button>
+        </div>
+      </div>`;
+
+    document.getElementById("d-discard").addEventListener("click", () => {
+      panel.innerHTML = "";
+    });
+
+    document.getElementById("d-accept").addEventListener("click", async () => {
+      const summary = document.getElementById("d-summary").value.trim();
+      const chosen = draft.items.filter((_, i) => document.getElementById(`d-${i}`).checked);
+      try {
+        const patch = {};
+        if (summary) patch.content_summary = summary;
+        if (draft.fragile) patch.fragile = true;
+        if (Object.keys(patch).length) {
+          await api(path, { method: "PATCH", body: JSON.stringify(patch) });
+        }
+        for (const item of chosen) {
+          // source: "ai" keeps drafted items distinguishable from typed ones.
+          await api(`${path}/items`, {
+            method: "POST",
+            body: JSON.stringify({ name: item.name, qty: item.qty, source: "ai" }),
+          });
+        }
+        await viewBox(code);
+      } catch (error) { showError(error.message); }
+    });
+  }
 
   async function act(operation) {
     try { await operation(); await viewBox(code); }

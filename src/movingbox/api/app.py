@@ -35,6 +35,17 @@ def get_conn(config: Config = Depends(get_config)) -> Iterator[sqlite3.Connectio
         conn.close()
 
 
+def get_vision_provider(config: Config = Depends(get_config)):
+    """The vision provider for drafting. Overridden in tests with a stub.
+
+    Built per request rather than at startup so a config change (or Ollama
+    coming back up) does not need a restart.
+    """
+    from ..vision.ollama import OllamaProvider
+
+    return OllamaProvider(config.ollama_url)
+
+
 def require_api_key(
     config: Config = Depends(get_config),
     x_api_key: str | None = Header(default=None),
@@ -55,12 +66,13 @@ def create_app(config: Config | None = None) -> FastAPI:
     app = FastAPI(title="Moving Box Tracker", version="0.1.0")
     app.state.config = config or from_env()
 
-    from . import admin, boxes, labels, rooms
+    from . import admin, boxes, labels, photos, rooms
 
     app.include_router(boxes.router, dependencies=[Depends(require_api_key)])
     app.include_router(rooms.router, dependencies=[Depends(require_api_key)])
     app.include_router(labels.router, dependencies=[Depends(require_api_key)])
     app.include_router(admin.router, dependencies=[Depends(require_api_key)])
+    app.include_router(photos.router, dependencies=[Depends(require_api_key)])
 
     @app.get("/health")
     def health() -> dict[str, str]:

@@ -12,6 +12,10 @@ uv run moving seed-rooms         # starter set of rooms
 uv run moving preview B-0001     # render a label to PNG, no printing
 uv run moving print  B-0001      # honours MOVING_PRINTER_BACKEND (default: fake)
 uv run moving reindex            # rebuild the FTS index
+uv run moving backup             # verified backup + prune
+uv run moving export --format csv -o out.csv
+uv run moving manifest           # box counts per room
+scripts/claude/try_vision.py     # call the real model (slow, non-deterministic)
 uv run pytest                    # printer forced to `fake` in conftest
 scripts/claude/install-service.sh          # launchd + tailscale serve (persistent https)
 scripts/claude/install-service.sh --uninstall
@@ -75,6 +79,26 @@ ctypes reads it at call time whereas dyld caches its own at exec.
 **Fonts are bundled** (`labels/fonts/Inter.ttf`, OFL). Golden-image tests
 compare rendered bytes, so a system font update would break them spuriously.
 
+**Vision drafting is local-only by deliberate choice.** `qwen3-vl:30b` through
+Ollama. Measured on this machine: ~30 s on the first call (loading ~20 GB) and
+**~6 s warm**, ~12 s end-to-end through the API — fast enough to answer
+synchronously, so there is no job queue. A cloud provider would slot in behind
+`vision.base.VisionProvider`; none is built, because local was the choice.
+
+**`base.parse` is deliberately forgiving of the reply, strict about the
+outcome.** Local models wrap JSON in markdown fences, prepend "Sure! Here
+is…", and return quantities like `"lots"` however firmly the prompt forbids
+it — all of that is mined and coerced. But a reply with no usable JSON raises
+`DraftUnreadable` rather than returning an empty draft, which would read as
+"the model saw an empty box".
+
+**FastAPI's `include_router` does not flatten into `app.routes`** in this
+version: each included router is one `_IncludedRouter` wrapper whose real
+routes hang off `original_router`. Its `routes` attribute is a *string* — walk
+that and you iterate its characters and silently inspect nothing. This
+initially made `test_api_structure.py` pass while testing almost no routes, so
+that file now has a test guarding its own route walk.
+
 ## Conventions
 
 - **Printer backend defaults to `fake`** everywhere. Tests force it in
@@ -97,7 +121,18 @@ compare rendered bytes, so a system font update would break them spuriously.
   log. `schemas.Strict` forbids unknown fields, so a PATCH carrying `status`
   fails 422 rather than being silently dropped.
 - **AI output is provenance-tagged**: items from a vision draft get
-  `source='ai'`. Never auto-apply a draft.
+  `source='ai'`. **Never auto-apply a draft** — `ai.draft_for_box` returns a
+  proposal and writes nothing to the box; the PWA's review panel applies it
+  through the ordinary items/PATCH endpoints once a person accepts.
+- **Every route taking `get_conn` must be a sync `def`.** `get_conn` is a sync
+  generator dependency so FastAPI runs it in a threadpool, while an `async def`
+  endpoint runs on the event loop — the sqlite handle then crosses threads and
+  sqlite3 refuses it outright. Photo upload hit this for real.
+  `tests/test_api_structure.py` enforces it.
+- **Photos are normalised on the way in**: downscaled to 2048 px, EXIF
+  orientation baked in and all other metadata stripped (indoor photos carry
+  GPS, and this database gets exported), deduplicated by sha256 so the phone's
+  upload retries are harmless.
 - Scripts live in `scripts/claude/` with a purpose header.
 - Ruff's `B008` is disabled for FastAPI's `Depends`/`Query`/`Header` defaults
   via `extend-immutable-calls` — it is a false positive for that idiom.

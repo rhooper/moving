@@ -64,6 +64,15 @@ class PrintRequest(Strict):
     height: int | None = None  # exact cut height; omit to fit content
 
 
+class CaptionUpdate(Strict):
+    caption: str | None = None
+
+
+class DraftRequest(Strict):
+    photo_ids: list[int] | None = None
+    model: str | None = None
+
+
 class RoomCreate(Strict):
     name: str = Field(min_length=1)
     kind: Literal["source", "destination", "both"] = "destination"

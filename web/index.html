@@ -188,6 +188,22 @@ ul.items button { width: auto; min-height: 2rem; padding: 0.2rem 0.5rem; border:
 
 .err { border-left: 3px solid var(--signal); padding: 0.5rem 0.75rem; margin: 1rem 0; }
 
+.shots { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.shots figure { margin: 0; width: calc(50% - 0.25rem); }
+.shots img { width: 100%; height: auto; display: block; background: var(--sunk); }
+.shots button {
+  width: 100%; min-height: 2rem; padding: 0.2rem;
+  border: 1px solid var(--line); border-top: 0;
+  background: transparent; color: var(--muted); font-size: 0.8125rem; cursor: pointer;
+}
+
+/* A proposal, not a record: the signal border marks it as unsaved. */
+.draft { border-left: 3px solid var(--signal); padding: 0.75rem; margin-top: 1rem; background: var(--sunk); }
+.draft h3 { margin: 0 0 0.25rem; font-size: 1rem; }
+.dlabel { display: block; font-size: 0.8125rem; color: var(--muted); margin: 0.5rem 0 0.25rem; }
+
+label.btn { display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+
 @media (prefers-reduced-motion: no-preference) {
   .step, .btn { transition: background-color 90ms linear, color 90ms linear; }
 }
