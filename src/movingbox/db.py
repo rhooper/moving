@@ -76,15 +76,21 @@ def connect(path: str | Path) -> sqlite3.Connection:
 def next_box_code(conn: sqlite3.Connection) -> str:
     """Allocate the next never-before-used box code, e.g. ``B-0042``.
 
+    The shape comes from the configured format (see :mod:`movingbox.codes`).
     Codes come from a monotonic counter rather than ``boxes.id`` so that
     deleting a box does not free its code: a reused code would send an
-    already-printed label to the wrong box.
+    already-printed label to the wrong box. The counter is per prefix, so
+    switching prefix starts a fresh sequence without ever reusing an old code.
     """
+    from . import codes
+
+    shape = codes.get_format(conn)
     row = conn.execute(
         """
-        INSERT INTO counters (name, value) VALUES ('box_code', 1)
+        INSERT INTO counters (name, value) VALUES (?, 1)
             ON CONFLICT(name) DO UPDATE SET value = value + 1
             RETURNING value
-        """
+        """,
+        (codes.counter_name(shape["prefix"]),),
     ).fetchone()
-    return f"B-{row[0]:04d}"
+    return codes.render(row[0], **shape)

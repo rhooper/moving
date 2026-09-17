@@ -6,7 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import backup, db, export, search, store
+from . import backup, codes, db, export, search, store
 from .config import from_env
 from .labels import layout, printer
 
@@ -170,6 +170,54 @@ def cmd_manifest(args) -> int:
     return 0
 
 
+def cmd_code_format(args) -> int:
+    config = from_env()
+    conn = db.connect(config.db_path)
+    try:
+        if args.prefix is None and args.digits is None and args.separator is None:
+            shape = codes.get_format(conn)
+        else:
+            current = codes.get_format(conn)
+            try:
+                shape = codes.set_format(
+                    conn,
+                    prefix=current["prefix"] if args.prefix is None else args.prefix,
+                    separator=(current["separator"] if args.separator is None else args.separator),
+                    digits=current["digits"] if args.digits is None else args.digits,
+                )
+            except ValueError as bad:
+                print(bad, file=sys.stderr)
+                return 1
+
+        example = codes.render(1, **shape)
+        later = codes.render(42, **shape)
+        print(f"prefix     {shape['prefix']}")
+        print(f"separator  {shape['separator']!r}")
+        print(f"digits     {shape['digits']}")
+        print(f"example    {example}  ...  {later}")
+        print()
+        print("Existing boxes keep the codes already on their labels.")
+    finally:
+        conn.close()
+    return 0
+
+
+def cmd_set_sequence(args) -> int:
+    config = from_env()
+    conn = db.connect(config.db_path)
+    try:
+        shape = codes.get_format(conn)
+        try:
+            codes.set_sequence(conn, args.number)
+        except ValueError as bad:
+            print(bad, file=sys.stderr)
+            return 1
+        print(f"next code for prefix {shape['prefix']}: {codes.render(args.number, **shape)}")
+    finally:
+        conn.close()
+    return 0
+
+
 def cmd_reindex(args) -> int:
     config = from_env()
     conn = db.connect(config.db_path)
@@ -241,6 +289,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     man = sub.add_parser("manifest", help="box counts and weight per destination room")
     man.set_defaults(func=cmd_manifest)
+
+    fmt = sub.add_parser("code-format", help="show or set the box code format")
+    fmt.add_argument("--prefix", help="e.g. B, CAM, Z06")
+    fmt.add_argument("--separator", help="'-', '_', '.' or '' for none")
+    fmt.add_argument("--digits", type=int, help="length of the number, e.g. 3 for 001")
+    fmt.set_defaults(func=cmd_code_format)
+
+    seq = sub.add_parser("set-sequence", help="set the next number for the current prefix")
+    seq.add_argument("number", type=int)
+    seq.set_defaults(func=cmd_set_sequence)
 
     reindex = sub.add_parser("reindex", help="rebuild the search index")
     reindex.set_defaults(func=cmd_reindex)

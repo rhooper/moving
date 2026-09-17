@@ -34,12 +34,36 @@ async function makeDecoder() {
   };
 }
 
-// A scanned value is a full URL -- https://host/b/B-0042. Read the trailing
-// code segment and ignore the host, so a label still resolves if the server
-// ever moves. Bare codes work too, for anything printed differently.
+// A scanned value is a full URL -- https://host/b/CAM-001. Read the segment
+// after /b/ and ignore the host, so a label still resolves if the server ever
+// moves. Bare codes work too, for anything printed differently.
+//
+// Deliberately makes no assumption about the code's *shape*. The format is
+// configurable (CAM-001, D001, Z06-001), and the previous pattern of
+// letters-hyphen-digits silently failed to match two of those three.
+const SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
+
 export function codeFrom(scanned) {
-  const match = String(scanned).trim().match(/([A-Za-z]+-\d+)\/?$/);
-  return match ? match[1].toUpperCase() : null;
+  const raw = String(scanned ?? "").trim();
+  if (!raw) return null;
+
+  let candidate = raw;
+  if (/^https?:\/\//i.test(raw)) {
+    let path;
+    try {
+      path = new URL(raw).pathname;
+    } catch {
+      return null;
+    }
+    const parts = path.split("/").filter(Boolean);
+    const marker = parts.lastIndexOf("b");
+    // Require the /b/ marker so scanning an unrelated QR does not hand us its
+    // last path segment as though it were a box code.
+    if (marker === -1 || marker === parts.length - 1) return null;
+    candidate = parts[marker + 1];
+  }
+
+  return SEGMENT.test(candidate) ? candidate.toUpperCase() : null;
 }
 
 export async function viewScan(show, showError) {

@@ -85,9 +85,7 @@ class OllamaProvider:
             )
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            raise base.DraftUnreadable(
-                self.explain(exc.response.status_code, model)
-            ) from exc
+            raise base.DraftUnreadable(self.explain(exc.response.status_code, model)) from exc
         except httpx.HTTPError as exc:
             # Connection refused, DNS failure, timeout: nothing answered.
             raise base.DraftUnreadable(self.explain(None, model)) from exc

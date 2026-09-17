@@ -27,9 +27,7 @@ def test_a_connection_can_be_queried_from_another_thread(tmp_path):
     conn = db.connect(tmp_path / "t.db")
     store.create_box(conn, content_summary="pots")
 
-    codes = run_in_another_thread(
-        lambda: [r[0] for r in conn.execute("SELECT code FROM boxes")]
-    )
+    codes = run_in_another_thread(lambda: [r[0] for r in conn.execute("SELECT code FROM boxes")])
 
     conn.close()
     assert codes == ["B-0001"]
@@ -47,9 +45,7 @@ def test_the_handoff_works_across_three_threads(tmp_path):
     """Open, use, and close each on a different thread, as a request does."""
     conn = run_in_another_thread(lambda: db.connect(tmp_path / "t.db"))
     run_in_another_thread(lambda: store.create_box(conn, content_summary="kettle"))
-    count = run_in_another_thread(
-        lambda: conn.execute("SELECT count(*) FROM boxes").fetchone()[0]
-    )
+    count = run_in_another_thread(lambda: conn.execute("SELECT count(*) FROM boxes").fetchone()[0])
     run_in_another_thread(conn.close)
 
     assert count == 1
