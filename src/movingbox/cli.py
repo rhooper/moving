@@ -71,11 +71,14 @@ def cmd_preview(args) -> int:
             base_url=config.base_url,
             room_name=store.room_name(conn, box["destination_room_id"]),
             source_name=store.room_name(conn, box["source_room_id"]),
+            items=store.list_items(conn, args.code),
         )
     finally:
         conn.close()
 
-    image = layout.render(data, height=args.height)
+    image = layout.render(
+        data, height=args.height, orientation=args.orientation or config.label_orientation
+    )
     out = Path(args.output) if args.output else config.label_preview_dir / f"{args.code}.png"
     out.parent.mkdir(parents=True, exist_ok=True)
     image.save(out)
@@ -106,6 +109,7 @@ def cmd_print(args) -> int:
                         base_url=config.base_url,
                         room_name=store.room_name(conn, box["destination_room_id"]),
                         source_name=store.room_name(conn, box["source_room_id"]),
+                        items=store.list_items(conn, code),
                     ),
                 )
             )
@@ -113,7 +117,13 @@ def cmd_print(args) -> int:
         backend = printer.get_backend(config)
         for code, data in jobs:
             written = backend.print_label(
-                layout.render(data, height=args.height), code=code, copies=args.copies
+                layout.render(
+                    data,
+                    height=args.height,
+                    orientation=args.orientation or config.label_orientation,
+                ),
+                code=code,
+                copies=args.copies,
             )
             store.record_print(conn, code)
             print(f"{code} -> {written}  [{config.printer_backend}]")
@@ -299,13 +309,15 @@ def build_parser() -> argparse.ArgumentParser:
     preview = sub.add_parser("preview", help="render a label to a PNG without printing")
     preview.add_argument("code")
     preview.add_argument("-o", "--output")
-    preview.add_argument("--height", type=int, help="exact cut height; omit to fit content")
+    preview.add_argument("--height", type=int, help="portrait only: exact cut height")
+    preview.add_argument("--orientation", choices=("landscape", "portrait"))
     preview.set_defaults(func=cmd_preview)
 
     print_ = sub.add_parser("print", help="print one or more labels")
     print_.add_argument("codes", nargs="+")
     print_.add_argument("--copies", type=int, default=1)
     print_.add_argument("--height", type=int)
+    print_.add_argument("--orientation", choices=("landscape", "portrait"))
     print_.add_argument(
         "--backend",
         choices=sorted(printer.BACKENDS),

@@ -307,7 +307,11 @@ def _render_landscape(data: LabelData) -> Image.Image:
     canvas = Image.new("L", (width, height), 255)
     draw = ImageDraw.Draw(canvas)
 
-    split = int(width * IDENTITY_SHARE)
+    # With nothing to list, the contents column would be an empty heading over
+    # dead space, so the identity takes the whole label instead -- which also
+    # gives the room band the full four inches to be read across.
+    has_items = bool(data.items)
+    split = int(width * IDENTITY_SHARE) if has_items else width
     left_width = split - 2 * MARGIN
 
     # --- identity column ---
@@ -325,7 +329,8 @@ def _render_landscape(data: LabelData) -> Image.Image:
 
     if data.room:
         band_height = 78
-        draw.rectangle([0, y, split - MARGIN // 2, y + band_height], fill=0)
+        band_right = (split - MARGIN // 2) if has_items else width
+        draw.rectangle([0, y, band_right, y + band_height], fill=0)
         room_font = _fit(
             draw, data.room.upper(), left_width - 2 * BAND_PADDING, start=58, weight=800
         )
@@ -369,6 +374,9 @@ def _render_landscape(data: LabelData) -> Image.Image:
             fill=0,
             anchor="lt",
         )
+
+    if not has_items:
+        return canvas.point(lambda p: 255 if p > 128 else 0).convert("1")
 
     # --- contents column ---
     draw.line([(split, MARGIN), (split, height - MARGIN)], fill=0, width=2)
