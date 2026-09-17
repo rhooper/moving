@@ -7,7 +7,8 @@ import sqlite3
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from .. import store, summarise
-from .app import get_conn
+from . import events
+from .app import get_conn, get_events
 from .schemas import BoxWrite, ItemCreate, LocationChange, StatusChange
 
 router = APIRouter(prefix="/api", tags=["boxes"])
@@ -44,8 +45,16 @@ def list_boxes(
 
 
 @router.post("/boxes", status_code=201)
-def create_box(body: BoxWrite, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
-    return store.create_box(conn, **body.set_fields())
+def create_box(
+    body: BoxWrite,
+    conn: sqlite3.Connection = Depends(get_conn),
+    changes: events.Publisher = Depends(get_events),
+) -> dict:
+    # Every publish below happens after the store call returns, so a request
+    # that failed announces nothing and no client refetches for no reason.
+    box = store.create_box(conn, **body.set_fields())
+    changes.publish(events.BOX_CREATED, box["code"])
+    return box
 
 
 @router.get("/boxes/{code}")
@@ -54,30 +63,54 @@ def get_box(code: str, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
 
 
 @router.patch("/boxes/{code}")
-def update_box(code: str, body: BoxWrite, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+def update_box(
+    code: str,
+    body: BoxWrite,
+    conn: sqlite3.Connection = Depends(get_conn),
+    changes: events.Publisher = Depends(get_events),
+) -> dict:
     _require(conn, code)
-    return store.update_box(conn, code, **body.set_fields())
+    box = store.update_box(conn, code, **body.set_fields())
+    changes.publish(events.BOX_UPDATED, code)
+    return box
 
 
 @router.delete("/boxes/{code}", status_code=204)
-def delete_box(code: str, conn: sqlite3.Connection = Depends(get_conn)) -> Response:
+def delete_box(
+    code: str,
+    conn: sqlite3.Connection = Depends(get_conn),
+    changes: events.Publisher = Depends(get_events),
+) -> Response:
     if not store.delete_box(conn, code):
         raise HTTPException(status_code=404, detail=f"No box {code}")
+    changes.publish(events.BOX_DELETED, code)
     return Response(status_code=204)
 
 
 @router.post("/boxes/{code}/status")
-def set_status(code: str, body: StatusChange, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+def set_status(
+    code: str,
+    body: StatusChange,
+    conn: sqlite3.Connection = Depends(get_conn),
+    changes: events.Publisher = Depends(get_events),
+) -> dict:
     _require(conn, code)
-    return store.set_status(conn, code, body.status, actor=body.actor)
+    box = store.set_status(conn, code, body.status, actor=body.actor)
+    changes.publish(events.BOX_STATUS, code)
+    return box
 
 
 @router.post("/boxes/{code}/location")
 def set_location(
-    code: str, body: LocationChange, conn: sqlite3.Connection = Depends(get_conn)
+    code: str,
+    body: LocationChange,
+    conn: sqlite3.Connection = Depends(get_conn),
+    changes: events.Publisher = Depends(get_events),
 ) -> dict:
     _require(conn, code)
-    return store.set_location(conn, code, body.current_location, actor=body.actor)
+    box = store.set_location(conn, code, body.current_location, actor=body.actor)
+    changes.publish(events.BOX_LOCATION, code)
+    return box
 
 
 @router.get("/boxes/{code}/items")
@@ -87,15 +120,31 @@ def list_items(code: str, conn: sqlite3.Connection = Depends(get_conn)) -> list[
 
 
 @router.post("/boxes/{code}/items", status_code=201)
-def add_item(code: str, body: ItemCreate, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+def add_item(
+    code: str,
+    body: ItemCreate,
+    conn: sqlite3.Connection = Depends(get_conn),
+    changes: events.Publisher = Depends(get_events),
+) -> dict:
     _require(conn, code)
-    return store.add_item(conn, code, **body.model_dump())
+    item = store.add_item(conn, code, **body.model_dump())
+    changes.publish(events.ITEMS_CHANGED, code)
+    return item
 
 
 @router.delete("/items/{item_id}", status_code=204)
-def delete_item(item_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> Response:
+def delete_item(
+    item_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+    changes: events.Publisher = Depends(get_events),
+) -> Response:
+    # Which box owns it, read before the row goes. The notification names a
+    # box because that is what a client re-fetches by, and by the time it is
+    # sent the item id refers to nothing.
+    owner = store.code_for_item(conn, item_id)
     if not store.delete_item(conn, item_id):
         raise HTTPException(status_code=404, detail=f"No item {item_id}")
+    changes.publish(events.ITEMS_CHANGED, owner)
     return Response(status_code=204)
 
 
