@@ -186,6 +186,33 @@ ul.items button { width: auto; min-height: 2rem; padding: 0.2rem 0.5rem; border:
 }
 .bar a[aria-current="page"] { background: var(--ink); color: var(--paper); }
 
+/* On a phone the nav sits at the bottom, where your thumb is. On a desktop
+   there is no thumb and the bottom of a tall window is the furthest point
+   from the content, so it moves to the top and stops spanning the full
+   width. */
+@media (min-width: 46rem) {
+  main { padding-top: 4.5rem; padding-bottom: 3rem; }
+
+  /* The room band runs edge to edge on a phone, mirroring the printed label.
+     On desktop the column *is* the page, so it aligns to the column instead
+     of hanging 1rem off each side. */
+  .band { margin-inline: 0; }
+
+  .bar {
+    top: 0;
+    bottom: auto;
+    border-top: 0;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 0;
+    justify-content: center;
+    gap: 1px;  /* hairline between items; the band's --line shows through */
+  }
+  .bar a {
+    flex: 0 0 auto;
+    padding-inline: 1.5rem;
+  }
+}
+
 .err { border-left: 3px solid var(--signal); padding: 0.5rem 0.75rem; margin: 1rem 0; }
 
 .shots { display: flex; flex-wrap: wrap; gap: 0.5rem; }
