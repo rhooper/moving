@@ -92,16 +92,30 @@ matter. A box destined for the kitchen may currently be on the truck.
 Conflating them breaks the main use case ("where is the coffee maker *right
 now*?").
 
+## Where the real database lives
+
+`var/moving.db` **in the main checkout**, not in a worktree. `config.ROOT` is
+derived from the package location, so running the CLI from a worktree silently
+uses that worktree's `var/` — and worktrees get deleted. B-0001 has a physical
+label in circulation; do not lose its row. Back up before anything destructive.
+
 ## Status
 
 Phases 0–4 complete: schema, store, REST API, search, label renderer, printer
-backends, CLI. 90 tests passing. Verified end to end against a running server
+backends, CLI. 90 tests passing, verified end to end against a running server
 via `scripts/claude/smoke.sh`.
 
-**Phase 4 physical checkpoint is still outstanding** — no QL-800 is attached
-(`lpstat -p` shows only an MFC-L3770CDW and an Epson P900). Before building the
-PWA on top of this layout, print one real label on DK-2205 and scan it with a
-phone. Layout changes are free on screen and expensive once on tape.
+**Phase 4 physical checkpoint PASSED (2026-09-17).** A real label for B-0001
+printed on DK-2205 over the `brother_ql` USB backend, and scanning its QR with a
+phone opened the box page over Tailscale HTTPS. The layout is therefore
+committed: changing it now means reprinting anything already stuck to a box.
+
+Hardware notes from that run: the QL-800 appears on USB as `0x04f9:0x209b` but
+registers **no CUPS queue**, so `brother_ql` (pyusb) is the working backend and
+`cups_raw` is not currently usable. MagicDNS does not resolve from the sandboxed
+tool shell — test with
+`curl --resolve moving.example.ts.net:443:$(tailscale ip -4)` — but
+resolves fine from a phone.
 
 Next: phases 5–9 (PWA shell, scanner, admin, AI drafting, backups/deploy). Build
 order and gates are in
