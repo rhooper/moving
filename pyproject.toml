@@ -35,8 +35,9 @@ packages = ["src/movingbox"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# Tests must never reach the physical printer.
-env = ["MOVING_PRINTER_BACKEND=fake"]
+filterwarnings = ["error"]
+# The printer is forced to `fake` in tests/conftest.py, not here: pytest ignores
+# an `env` key unless pytest-env is installed, and does so silently.
 
 [tool.ruff]
 line-length = 100
