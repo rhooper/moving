@@ -140,3 +140,46 @@ class TestFromBox:
 def test_an_unprintable_height_is_rejected(conn, bad):
     with pytest.raises(ValueError):
         layout.render(a_label(), height=bad)
+
+
+class TestSourceOnLabel:
+    """The `from:` line joins the source room with the detail inside it."""
+
+    def test_the_room_and_the_detail_within_it_are_joined(self, conn):
+        box = {
+            "code": "B-1",
+            "fragile": 0,
+            "open_first": 0,
+            "heavy": 0,
+            "source_location": "shelf 3",
+        }
+
+        data = layout.from_box(box, base_url="https://x.test", source_name="Basement")
+
+        assert data.source == "Basement shelf 3"
+
+    def test_a_source_room_alone_is_enough(self, conn):
+        box = {"code": "B-1", "fragile": 0, "open_first": 0, "heavy": 0}
+
+        data = layout.from_box(box, base_url="https://x.test", source_name="Garage")
+
+        assert data.source == "Garage"
+
+    def test_a_detail_alone_still_works(self, conn):
+        # Boxes created before source rooms existed only have free text.
+        box = {
+            "code": "B-1",
+            "fragile": 0,
+            "open_first": 0,
+            "heavy": 0,
+            "source_location": "under the stairs",
+        }
+
+        data = layout.from_box(box, base_url="https://x.test")
+
+        assert data.source == "under the stairs"
+
+    def test_neither_leaves_the_line_off_entirely(self, conn):
+        box = {"code": "B-1", "fragile": 0, "open_first": 0, "heavy": 0}
+
+        assert layout.from_box(box, base_url="https://x.test").source is None

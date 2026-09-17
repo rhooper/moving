@@ -12,9 +12,12 @@ import httpx
 
 from . import base
 
-#: Generous: a 30B MoE on an M2 Ultra is quick, but a cold model has to load
-#: ~20 GB from disk first and that dominates the first request.
-TIMEOUT = 300.0
+#: 20 minutes. A warm 30B MoE on an M2 Ultra answers in about six seconds, but
+#: a cold model has to load ~20 GB from disk, and a larger model pulled in
+#: later could take far longer still. The cost of a generous timeout is a
+#: request that hangs; the cost of a tight one is losing a draft that would
+#: have succeeded.
+TIMEOUT = 1200.0
 
 
 def build_request(model: str, images: list[bytes]) -> dict:

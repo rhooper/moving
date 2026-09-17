@@ -213,8 +213,18 @@ def render(
     return canvas.point(lambda p: 255 if p > 128 else 0).convert("1")
 
 
-def from_box(box: dict, *, base_url: str, room_name: str | None = None) -> LabelData:
-    """Build label content from a box row."""
+def from_box(
+    box: dict,
+    *,
+    base_url: str,
+    room_name: str | None = None,
+    source_name: str | None = None,
+) -> LabelData:
+    """Build label content from a box row.
+
+    The `from:` line joins the source room and the detail within it, so
+    "Basement" plus "shelf 3" reads as "Basement shelf 3" on the tape.
+    """
     flags = []
     if box.get("fragile"):
         flags.append("FRAGILE")
@@ -229,11 +239,15 @@ def from_box(box: dict, *, base_url: str, room_name: str | None = None) -> Label
     if box.get("weight_kg"):
         footer_parts.append(f"{box['weight_kg']:g} kg")
 
+    source = " ".join(
+        part for part in (source_name, box.get("source_location")) if part
+    ) or None
+
     return LabelData(
         code=box["code"],
         url=f"{base_url.rstrip('/')}/b/{box['code']}",
         room=room_name,
-        source=box.get("source_location"),
+        source=source,
         summary=box.get("content_summary"),
         flags=tuple(flags),
         footer=" - ".join(footer_parts) or None,

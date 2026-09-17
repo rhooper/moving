@@ -25,6 +25,7 @@ def _label_for(conn: sqlite3.Connection, code: str, config: Config) -> layout.La
         box,
         base_url=config.base_url,
         room_name=store.room_name(conn, box["destination_room_id"]),
+        source_name=store.room_name(conn, box["source_room_id"]),
     )
 
 

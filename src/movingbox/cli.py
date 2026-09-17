@@ -10,16 +10,23 @@ from . import backup, codes, db, export, search, store
 from .config import from_env
 from .labels import layout, printer
 
-# Rooms worth having before the first box; edit freely afterwards.
+# The rooms this move actually uses. `kind` matters: a room can be somewhere
+# boxes come from, somewhere they go, or both -- the pickers filter on it.
 STARTER_ROOMS = [
-    ("Kitchen", "both"),
-    ("Living Room", "both"),
-    ("Main Bedroom", "both"),
-    ("Bathroom", "both"),
+    # Destinations in the new place.
+    ("Living Room", "destination"),
+    ("Dining Room", "destination"),
+    ("Kitchen", "destination"),
+    ("Bathroom", "destination"),
+    ("Guest Room", "destination"),
+    ("Main Bedroom", "destination"),
+    # Both: packed from here, and boxes end up here too.
     ("Office", "both"),
     ("Garage", "both"),
-    ("Basement", "source"),
-    ("Storage", "both"),
+    ("Basement", "both"),
+    # Sources only.
+    ("Bedroom", "source"),
+    ("Other", "source"),
 ]
 
 
@@ -63,6 +70,7 @@ def cmd_preview(args) -> int:
             box,
             base_url=config.base_url,
             room_name=store.room_name(conn, box["destination_room_id"]),
+            source_name=store.room_name(conn, box["source_room_id"]),
         )
     finally:
         conn.close()
@@ -97,6 +105,7 @@ def cmd_print(args) -> int:
                         box,
                         base_url=config.base_url,
                         room_name=store.room_name(conn, box["destination_room_id"]),
+                        source_name=store.room_name(conn, box["source_room_id"]),
                     ),
                 )
             )
@@ -229,14 +238,40 @@ def cmd_reindex(args) -> int:
 
 
 def cmd_seed_rooms(args) -> int:
+    """Create the standard rooms, and correct the kind of any that already exist.
+
+    Rooms that are not in the list are left alone rather than deleted -- boxes
+    may already point at them, and losing that would be worse than an unused
+    row in a picker.
+    """
     config = from_env()
     conn = db.connect(config.db_path)
     try:
-        existing = {r["name"] for r in store.list_rooms(conn)}
+        existing = {r["name"]: r for r in store.list_rooms(conn)}
+        wanted = {name for name, _ in STARTER_ROOMS}
+
         for index, (name, kind) in enumerate(STARTER_ROOMS):
-            if name not in existing:
+            current = existing.get(name)
+            if current is None:
                 store.create_room(conn, name, kind=kind, sort_order=index)
-                print(f"+ {name}")
+                print(f"+ {name:<13} {kind}")
+            elif current["kind"] != kind or current["sort_order"] != index:
+                conn.execute(
+                    "UPDATE rooms SET kind = ?, sort_order = ? WHERE id = ?",
+                    (kind, index, current["id"]),
+                )
+                print(f"~ {name:<13} {current['kind']} -> {kind}")
+
+        for name, room in existing.items():
+            if name not in wanted:
+                used = conn.execute(
+                    "SELECT count(*) FROM boxes "
+                    "WHERE destination_room_id = ? OR source_room_id = ?",
+                    (room["id"], room["id"]),
+                ).fetchone()[0]
+                note = f"{used} box(es) still use it" if used else "unused"
+                print(f"? {name:<13} not in the standard list; kept ({note})")
+
         print(f"{len(store.list_rooms(conn))} rooms")
     finally:
         conn.close()

@@ -59,6 +59,15 @@ function escape(value) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+const forDestination = (rooms) => rooms.filter((r) => r.kind !== "source");
+const forSource = (rooms) => rooms.filter((r) => r.kind !== "destination");
+
+function roomOptions(rooms, selected) {
+  return rooms
+    .map((r) => `<option value="${escape(r.id)}"${r.id === selected ? " selected" : ""}>${escape(r.name)}</option>`)
+    .join("");
+}
+
 function flagsOf(box) {
   return [
     box.fragile && "Fragile",
@@ -211,11 +220,15 @@ async function viewBox(code, { keepBanner = false } = {}) {
         <label class="dlabel" for="dest-room">Destination room</label>
         <select id="dest-room" name="destination_room_id">
           <option value="">Not decided yet</option>
-          ${rooms.map((r) => `<option value="${escape(r.id)}"
-            ${r.id === box.destination_room_id ? "selected" : ""}>${escape(r.name)}</option>`).join("")}
+          ${roomOptions(forDestination(rooms), box.destination_room_id)}
         </select>
-        <label class="dlabel" for="dest-from">Packed from</label>
-        <input id="dest-from" name="source_location" placeholder="Basement shelf 3"
+        <label class="dlabel" for="src-room">Packed from</label>
+        <select id="src-room" name="source_room_id">
+          <option value="">Not recorded</option>
+          ${roomOptions(forSource(rooms), box.source_room_id)}
+        </select>
+        <label class="dlabel" for="dest-from">Where in that room (optional)</label>
+        <input id="dest-from" name="source_location" placeholder="shelf 3, under the desk"
                value="${escape(box.source_location || "")}">
         <div class="row" style="margin-top:0.75rem">
           <button class="btn quiet" type="submit">Save</button>
@@ -436,7 +449,12 @@ async function viewNew() {
       <div class="section">
         <h2>What is in it</h2>
         <textarea name="content_summary" rows="3" placeholder="pots, baking pans, stand mixer"></textarea>
-        <input name="source_location" placeholder="Where you packed it from" style="margin-top:0.5rem">
+        <select name="source_room_id" aria-label="Packed from" style="margin-top:0.5rem">
+          <option value="">Packed from: not recorded</option>
+          ${roomOptions(forSource(rooms))}
+        </select>
+        <input name="source_location" placeholder="Where in that room (optional)"
+               style="margin-top:0.5rem">
         <label style="display:flex;gap:0.6rem;align-items:center;margin-top:0.75rem">
           <input type="checkbox" name="fragile" style="width:auto;min-height:auto"> Fragile
         </label>
@@ -456,6 +474,8 @@ async function viewNew() {
     };
     const roomId = form.get("destination_room_id");
     if (roomId) payload.destination_room_id = Number(roomId);
+    const sourceId = form.get("source_room_id");
+    if (sourceId) payload.source_room_id = Number(sourceId);
 
     try {
       const box = await api("/boxes", { method: "POST", body: JSON.stringify(payload) });
