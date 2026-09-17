@@ -126,12 +126,14 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.events = events.Hub()
 
     from . import admin, boxes, labels, photos, rooms
+    from . import settings as settings_routes
 
     app.include_router(boxes.router, dependencies=[Depends(require_api_key)])
     app.include_router(rooms.router, dependencies=[Depends(require_api_key)])
     app.include_router(labels.router, dependencies=[Depends(require_api_key)])
     app.include_router(admin.router, dependencies=[Depends(require_api_key)])
     app.include_router(photos.router, dependencies=[Depends(require_api_key)])
+    app.include_router(settings_routes.router, dependencies=[Depends(require_api_key)])
 
     @app.get("/health")
     def health() -> dict[str, str]:

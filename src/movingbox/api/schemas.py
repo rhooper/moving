@@ -69,6 +69,16 @@ class PrintRequest(Strict):
     allow_empty: bool = False
 
 
+class CodeFormat(Strict):
+    prefix: str
+    separator: str = "-"
+    digits: int = Field(default=4, ge=1, le=12)
+
+
+class NextNumber(Strict):
+    number: int = Field(ge=1)
+
+
 class CaptionUpdate(Strict):
     caption: str | None = None
 

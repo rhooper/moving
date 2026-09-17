@@ -240,6 +240,18 @@ ul.items button { width: auto; min-height: 2rem; padding: 0.2rem 0.5rem; border:
 .say { border-left: 3px solid var(--ink); padding: 0.5rem 0.75rem; margin: 0 0 1rem; background: var(--sunk); }
 .say.warn { border-left-color: var(--signal); }
 
+/* The override for printing an empty box: present only when it applies, and
+   never pre-ticked. */
+.anyway {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+  color: var(--muted);
+  font-size: 0.9375rem;
+}
+.anyway input { width: auto; min-height: auto; }
+
 /* A button that is working says so and cannot be pressed again. */
 button.working, .btn.working { opacity: 0.65; cursor: progress; }
 button.working::before {
@@ -286,6 +298,7 @@ label.btn { display: inline-flex; align-items: center; justify-content: center; 
   <a href="#/" id="nav-boxes">Boxes</a>
   <a href="#/scan" id="nav-scan">Scan</a>
   <a href="#/new" id="nav-new">New box</a>
+  <a href="#/settings" id="nav-settings">Settings</a>
 </nav>
 <script type="module" src="/app.js"></script>
 </body>
