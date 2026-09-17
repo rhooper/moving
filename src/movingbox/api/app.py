@@ -22,11 +22,16 @@ def get_config(request: Request) -> Config:
 
 
 def get_conn(config: Config = Depends(get_config)) -> Iterator[sqlite3.Connection]:
-    """One connection per request.
+    """One connection per request, never shared between requests.
 
-    Connections are not shared: sqlite3 objects are not thread-safe and FastAPI
-    runs sync endpoints in a threadpool. WAL mode makes the per-request open
-    cheap and keeps readers from blocking the writer.
+    Per-request isolation is necessary but **not sufficient**: a single request
+    does not stay on one thread. FastAPI runs this generator's setup, the
+    endpoint body, and its teardown on potentially three different threadpool
+    workers, so the connection itself must tolerate the handoff -- see the
+    check_same_thread note in db.connect().
+
+    WAL mode makes the per-request open cheap and keeps readers from blocking
+    the writer.
     """
     conn = db.connect(config.db_path)
     try:

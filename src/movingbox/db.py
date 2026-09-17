@@ -52,7 +52,20 @@ def connect(path: str | Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     # isolation_level=None -> autocommit; executescript and the PRAGMAs below
     # both require not being inside an implicit transaction.
-    conn = sqlite3.connect(path, isolation_level=None)
+    #
+    # check_same_thread=False because a single HTTP request does not stay on
+    # one thread. FastAPI runs a sync generator dependency's __enter__ through
+    # run_in_threadpool, the endpoint body through the threadpool again, and
+    # __exit__ under a *separate* CapacityLimiter, so opening, using and
+    # closing a connection can happen on three different workers. The default
+    # check rejects that, which took the live service down with 500s the
+    # moment the phone issued its four parallel requests.
+    #
+    # This is safe here, not merely convenient: each request gets its own
+    # connection (never shared between requests), and the three phases are
+    # awaited in order, so no connection is ever touched by two threads at
+    # once -- which is all SQLite's multi-thread mode requires.
+    conn = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
