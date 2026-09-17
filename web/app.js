@@ -1,6 +1,8 @@
 // Moving boxes -- phone-first PWA. Hash routing so a scanned label can land on
 // /#/b/CODE without needing server-side routes for every view.
 
+import { splitItems } from "/text.js";
+
 const STATUSES = ["open", "packed", "loaded", "delivered", "unpacked"];
 const app = document.getElementById("app");
 
@@ -67,6 +69,73 @@ function flagsOf(box) {
 
 function show(markup) { app.innerHTML = markup; }
 
+// Any button that reaches the server goes through this. Without it a slow
+// action looks identical to a dead button, which is exactly how a print job
+// ends up submitted five times.
+async function busy(button, label, work) {
+  const original = button.textContent;
+  const wasDisabled = button.disabled;
+  button.disabled = true;
+  button.classList.add("working");
+  button.textContent = label;
+  try {
+    return await work();
+  } finally {
+    button.classList.remove("working");
+    button.textContent = original;
+    button.disabled = wasDisabled;
+  }
+}
+
+function printerLine(press) {
+  if (!press) return "";
+  if (!press.prints) {
+    return `<p class="say warn">${escape(press.detail)}</p>`;
+  }
+  const mark = press.ready ? "Printer ready" : "Printer unavailable";
+  const cls = press.ready ? "say" : "say warn";
+  return `<p class="${cls}">${escape(mark)} - ${escape(press.detail)}</p>`;
+}
+
+// The Web Speech API is Chrome-only; on Firefox and Safari the keyboard's own
+// microphone does the job, so the button simply stays hidden rather than
+// sitting there dead.
+const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+function wireDictation(scope) {
+  for (const button of scope.querySelectorAll("button.dictate")) {
+    if (!Recognition) continue;
+    button.hidden = false;
+    button.addEventListener("click", () => {
+      const field = scope.querySelector(`[name="${button.dataset.target}"]`);
+      if (!field) return;
+      const recogniser = new Recognition();
+      recogniser.lang = navigator.language || "en-GB";
+      recogniser.interimResults = false;
+      button.classList.add("working");
+      button.textContent = "Listening…";
+      recogniser.onresult = (event) => {
+        const said = Array.from(event.results).map((r) => r[0].transcript).join(" ");
+        field.value = field.value ? `${field.value.trim()}, ${said}` : said;
+      };
+      recogniser.onerror = () => announce("Could not hear anything.", { warn: true });
+      recogniser.onend = () => {
+        button.classList.remove("working");
+        button.textContent = "Dictate";
+      };
+      recogniser.start();
+    });
+  }
+}
+
+function announce(message, { warn = false } = {}) {
+  const banner = document.getElementById("say");
+  if (!banner) return;
+  banner.className = warn ? "say warn" : "say";
+  banner.textContent = message;
+  banner.hidden = false;
+}
+
 function showError(message) {
   show(`<div class="err"><strong>${escape(message)}</strong></div>
         <p><a href="#/">Back to boxes</a></p>`);
@@ -109,26 +178,53 @@ async function viewBoxes(query) {
   });
 }
 
-async function viewBox(code) {
+async function viewBox(code, { keepBanner = false } = {}) {
+  const held = keepBanner ? document.getElementById("say")?.outerHTML : null;
   const path = `/boxes/${encodeURIComponent(code)}`;
-  const [box, items, rooms, photos] = await Promise.all([
+  const [box, items, rooms, photos, press] = await Promise.all([
     api(path),
     api(`${path}/items`),
     api("/rooms"),
     api(`${path}/photos`),
+    api("/printer").catch(() => null),
   ]);
   const room = rooms.find((r) => r.id === box.destination_room_id);
   const flags = flagsOf(box);
 
   show(`
+    ${held || '<div id="say" class="say" hidden></div>'}
     <h1 class="code">${escape(box.code)}</h1>
     ${flags.length ? `<div class="flags">${flags.map((f) => `<span class="flag">${escape(f)}</span>`).join("")}</div>` : ""}
     ${room ? `<div class="band">${escape(room.name)}</div>` : ""}
-    ${box.source_location ? `<p class="meta">From ${escape(box.source_location)}</p>` : ""}
-    <p id="summary-text">${escape(box.content_summary || "Nothing written down yet.")}</p>
+    <form id="summary-form">
+      <textarea name="content_summary" rows="2" aria-label="What is in this box"
+        placeholder="pots, baking pans, stand mixer">${escape(box.content_summary || "")}</textarea>
+      <div class="row" style="margin-top:0.5rem">
+        <button class="btn quiet" type="submit">Save summary</button>
+        <button class="btn quiet dictate" type="button" data-target="content_summary" hidden>Dictate</button>
+      </div>
+    </form>
 
     <div class="section">
-      <h2>Where it is</h2>
+      <h2>Where it is going</h2>
+      <form id="destination">
+        <label class="dlabel" for="dest-room">Destination room</label>
+        <select id="dest-room" name="destination_room_id">
+          <option value="">Not decided yet</option>
+          ${rooms.map((r) => `<option value="${escape(r.id)}"
+            ${r.id === box.destination_room_id ? "selected" : ""}>${escape(r.name)}</option>`).join("")}
+        </select>
+        <label class="dlabel" for="dest-from">Packed from</label>
+        <input id="dest-from" name="source_location" placeholder="Basement shelf 3"
+               value="${escape(box.source_location || "")}">
+        <div class="row" style="margin-top:0.75rem">
+          <button class="btn quiet" type="submit">Save</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="section">
+      <h2>Where it is now</h2>
       <div class="track" role="group" aria-label="Box status">
         ${STATUSES.map((s, i) => {
           const at = STATUSES.indexOf(box.status);
@@ -152,9 +248,15 @@ async function viewBox(code) {
           ${i.qty > 1 ? `<span class="qty">×${escape(i.qty)}</span>` : ""}
           <button data-remove="${escape(i.id)}" aria-label="Remove ${escape(i.name)}">Remove</button>
         </li>`).join("")}</ul>
-      <form id="add-item" class="row" style="margin-top:0.75rem">
-        <input name="name" placeholder="Add something" aria-label="Item name" required>
-        <button class="btn" type="submit">Add</button>
+      <form id="add-item" style="margin-top:0.75rem">
+        <textarea name="name" rows="2" required aria-label="Items"
+          placeholder="kettle, toaster, three mugs"></textarea>
+        <p class="meta">One per line, or separated by commas. Use your keyboard's
+           microphone to dictate.</p>
+        <div class="row">
+          <button class="btn" type="submit">Add</button>
+          <button class="btn quiet dictate" type="button" data-target="name" hidden>Dictate</button>
+        </div>
       </form>
     </div>
 
@@ -182,6 +284,7 @@ async function viewBox(code) {
     <div class="section">
       <h2>Label</h2>
       <p class="meta">Printed ${escape(box.label_print_count || 0)} time${box.label_print_count === 1 ? "" : "s"}.</p>
+      ${printerLine(press)}
       <div class="row">
         <button class="btn quiet" id="print">Print label</button>
       </div>
@@ -206,8 +309,25 @@ async function viewBox(code) {
     const name = new FormData(event.target).get("name").trim();
     if (name) act(() => api(`/boxes/${encodeURIComponent(code)}/items`, { method: "POST", body: JSON.stringify({ name }) }));
   });
-  document.getElementById("print").addEventListener("click", () => act(() =>
-    api("/labels/print", { method: "POST", body: JSON.stringify({ codes: [code] }) })));
+  const printButton = document.getElementById("print");
+  printButton.addEventListener("click", async () => {
+    try {
+      const result = await busy(printButton, "Printing…", () =>
+        api("/labels/print", { method: "POST", body: JSON.stringify({ codes: [code] }) }));
+      if (result.backend === "fake") {
+        // The request succeeded and no tape came out. Saying "Printed" here
+        // would be a lie, and it is the lie that gets the button pressed again.
+        announce(
+          `No label printed: the server is using the '${result.backend}' printer, ` +
+          `which only writes a preview image. Set MOVING_PRINTER_BACKEND=brother_ql.`,
+          { warn: true },
+        );
+      } else {
+        announce(`Printed ${code}.`);
+      }
+      await viewBox(code, { keepBanner: true });
+    } catch (error) { showError(error.message); }
+  });
 
   document.getElementById("shot").addEventListener("change", async (event) => {
     const file = event.target.files[0];
@@ -216,11 +336,13 @@ async function viewBox(code) {
     body.append("file", file, file.name || "photo.jpg");
     const panel = document.getElementById("draft-panel");
     panel.innerHTML = `<p class="meta">Uploading ${escape(file.name || "photo")}…</p>`;
+    event.target.disabled = true;
     try {
       // No content-type header: the browser must set the multipart boundary.
       await api(`${path}/photos`, { method: "POST", body });
       await viewBox(code);
     } catch (error) { showError(error.message); }
+    finally { event.target.disabled = false; }
   });
 
   for (const button of app.querySelectorAll("[data-drop-photo]")) {
@@ -232,16 +354,14 @@ async function viewBox(code) {
   if (draftButton) {
     draftButton.addEventListener("click", async () => {
       const panel = document.getElementById("draft-panel");
-      draftButton.disabled = true;
-      panel.innerHTML = `<p class="meta">Looking at the photo. This takes a few
-        seconds, longer the first time while the model loads.</p>`;
+      panel.innerHTML = `<p class="meta">Reading the photo with the vision model.
+        A few seconds, longer the first time while it loads.</p>`;
       try {
-        const { draft } = await api(`${path}/ai/draft`, { method: "POST", body: "{}" });
+        const { draft } = await busy(draftButton, "Reading…", () =>
+          api(`${path}/ai/draft`, { method: "POST", body: "{}" }));
         renderDraft(panel, draft);
       } catch (error) {
         panel.innerHTML = `<div class="err"><strong>${escape(error.message)}</strong></div>`;
-      } finally {
-        draftButton.disabled = false;
       }
     });
   }
@@ -270,7 +390,8 @@ async function viewBox(code) {
       panel.innerHTML = "";
     });
 
-    document.getElementById("d-accept").addEventListener("click", async () => {
+    const accept = document.getElementById("d-accept");
+    accept.addEventListener("click", async () => {
       const summary = document.getElementById("d-summary").value.trim();
       const chosen = draft.items.filter((_, i) => document.getElementById(`d-${i}`).checked);
       try {
@@ -280,13 +401,15 @@ async function viewBox(code) {
         if (Object.keys(patch).length) {
           await api(path, { method: "PATCH", body: JSON.stringify(patch) });
         }
-        for (const item of chosen) {
-          // source: "ai" keeps drafted items distinguishable from typed ones.
-          await api(`${path}/items`, {
-            method: "POST",
-            body: JSON.stringify({ name: item.name, qty: item.qty, source: "ai" }),
-          });
-        }
+        await busy(accept, "Saving…", async () => {
+          for (const item of chosen) {
+            // source: "ai" keeps drafted items distinguishable from typed ones.
+            await api(`${path}/items`, {
+              method: "POST",
+              body: JSON.stringify({ name: item.name, qty: item.qty, source: "ai" }),
+            });
+          }
+        });
         await viewBox(code);
       } catch (error) { showError(error.message); }
     });

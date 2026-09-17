@@ -54,10 +54,19 @@ def print_labels(
     backend = printer.get_backend(config)
     printed = []
     for code, data in labels:
-        written = backend.print_label(
-            layout.render(data, height=body.height), code=code, copies=body.copies
-        )
+        try:
+            written = backend.print_label(
+                layout.render(data, height=body.height), code=code, copies=body.copies
+            )
+        except Exception as failure:  # noqa: BLE001 - every backend fails differently
+            # 502: we are the gateway to the hardware, and the hardware failed.
+            # record_print is deliberately not reached -- a print count that
+            # rises when no tape came out is worse than no count at all.
+            raise HTTPException(
+                status_code=502,
+                detail=(f"Could not print {code}: {failure}. {printer.status(config)['detail']}"),
+            ) from failure
         store.record_print(conn, code)
         printed.append({"code": code, "output": str(written)})
 
-    return {"printed": printed, "backend": config.printer_backend}
+    return {"printed": printed, **printer.status(config)}

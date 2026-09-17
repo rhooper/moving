@@ -215,6 +215,27 @@ ul.items button { width: auto; min-height: 2rem; padding: 0.2rem 0.5rem; border:
 
 .err { border-left: 3px solid var(--signal); padding: 0.5rem 0.75rem; margin: 1rem 0; }
 
+.say { border-left: 3px solid var(--ink); padding: 0.5rem 0.75rem; margin: 0 0 1rem; background: var(--sunk); }
+.say.warn { border-left-color: var(--signal); }
+
+/* A button that is working says so and cannot be pressed again. */
+button.working, .btn.working { opacity: 0.65; cursor: progress; }
+button.working::before {
+  content: "";
+  display: inline-block;
+  width: 0.7em; height: 0.7em;
+  margin-right: 0.5em;
+  vertical-align: -0.05em;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  button.working::before { animation: none; opacity: 0.5; }
+}
+
 .shots { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .shots figure { margin: 0; width: calc(50% - 0.25rem); }
 .shots img { width: 100%; height: auto; display: block; background: var(--sunk); }

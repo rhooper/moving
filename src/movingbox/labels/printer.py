@@ -23,9 +23,83 @@ from PIL import Image
 from ..config import Config
 from .layout import PRINTABLE_WIDTH
 
+#: Brother's USB vendor id. The QL-800 is 0x04f9:0x209b.
+BROTHER_VENDOR = 0x04F9
+
+
+class PrintFailed(RuntimeError):
+    """The printer was asked to print and could not."""
+
 
 class PrinterBackend(Protocol):
     def print_label(self, image: Image.Image, *, code: str, copies: int = 1) -> Path: ...
+
+
+def _find_brother_device():
+    import usb.core
+
+    return usb.core.find(idVendor=BROTHER_VENDOR)
+
+
+def status(config: Config, find_device=None) -> dict:
+    """What the UI needs to say about printing right now.
+
+    `prints` is separate from `ready` on purpose. The fake backend is perfectly
+    ready and prints nothing, and reporting that as simply "ready" is what let a
+    dead Print button look healthy.
+    """
+    backend = config.printer_backend
+
+    if backend == "fake":
+        return {
+            "backend": backend,
+            "ready": True,
+            "prints": False,
+            "detail": "Preview only - labels are saved as images, not printed.",
+        }
+
+    if backend == "cups_raw":
+        if not config.printer_queue:
+            return {
+                "backend": backend,
+                "ready": False,
+                "prints": True,
+                "detail": "No CUPS queue configured; set MOVING_PRINTER_QUEUE.",
+            }
+        return {
+            "backend": backend,
+            "ready": True,
+            "prints": True,
+            "detail": f"Sending raw jobs to the CUPS queue {config.printer_queue}.",
+        }
+
+    find_device = find_device or _find_brother_device
+    try:
+        device = find_device()
+    except Exception as exc:  # noqa: BLE001 - surfaced to the UI, never raised
+        return {
+            "backend": backend,
+            "ready": False,
+            "prints": True,
+            "detail": f"Could not check USB: {exc}",
+        }
+
+    if device is None:
+        return {
+            "backend": backend,
+            "ready": False,
+            "prints": True,
+            "detail": (
+                "No Brother printer on USB. Check it is plugged in, switched on, "
+                "and that Editor Lite mode is off."
+            ),
+        }
+    return {
+        "backend": backend,
+        "ready": True,
+        "prints": True,
+        "detail": f"{config.printer_model} connected over USB.",
+    }
 
 
 def build_instructions(image: Image.Image, *, model: str, label: str) -> bytes:

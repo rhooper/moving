@@ -17,6 +17,11 @@ PORT=8787
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 UV="$(command -v uv)"
 
+# The service must be told to use the real printer. The library default is
+# `fake`, which writes a PNG preview and returns success -- so without this the
+# Print button appears to work and no tape ever comes out.
+PRINTER_BACKEND="${MOVING_PRINTER_BACKEND:-brother_ql}"
+
 BACKUP_LABEL="$LABEL.backup"
 BACKUP_PLIST="$HOME/Library/LaunchAgents/$BACKUP_LABEL.plist"
 
@@ -81,6 +86,9 @@ cat > "$PLIST" <<PLIST_EOF
     <key>PATH</key><string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <!-- Homebrew's libzbar is outside the default dyld search path. -->
     <key>DYLD_FALLBACK_LIBRARY_PATH</key><string>/opt/homebrew/lib:/usr/local/lib:/usr/lib</string>
+    <!-- Without this the app falls back to the `fake` backend and silently
+         writes preview PNGs instead of printing. -->
+    <key>MOVING_PRINTER_BACKEND</key><string>$PRINTER_BACKEND</string>
   </dict>
 </dict>
 </plist>
@@ -140,6 +148,25 @@ echo
 tailscale serve --bg "$PORT" >/dev/null
 echo
 tailscale serve status
+echo
+# --- printer ---------------------------------------------------------------
+echo
+echo "Printer backend: $PRINTER_BACKEND"
+if "$UV" run --project "$REPO" python -c "
+import sys, usb.core
+sys.exit(0 if usb.core.find(idVendor=0x04f9) is not None else 1)
+" 2>/dev/null; then
+  echo "  QL-800 found on USB."
+  echo "  If it powers itself off, turn that off once in Brother's Printer"
+  echo "  Setting Tool: Device Settings > Basic > Auto Power Off (AC/DC) > None."
+  echo "  It is stored in the printer, so it only needs doing once. There is no"
+  echo "  way to set it over USB."
+else
+  echo "  No Brother printer found on USB (looked for vendor 0x04f9)."
+  echo "  Printing will fail until it is plugged in and switched on, with"
+  echo "  Editor Lite mode OFF."
+fi
+
 echo
 echo "Installed:"
 echo "  $LABEL         starts at login, restarts if it dies"

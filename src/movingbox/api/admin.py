@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse, Response
 
 from .. import backup, export
 from ..config import Config
+from ..labels import printer
 from .app import get_config, get_conn
 
 router = APIRouter(prefix="/api", tags=["admin"])
@@ -22,6 +23,12 @@ def _download(content: str | bytes, *, filename: str, media_type: str) -> Respon
         media_type=media_type,
         headers={"content-disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/printer")
+def printer_status(config: Config = Depends(get_config)) -> dict:
+    """Whether a label would actually come out if you pressed Print."""
+    return printer.status(config)
 
 
 @router.get("/export.json")
