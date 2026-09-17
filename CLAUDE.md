@@ -179,8 +179,21 @@ the package, not duplicated), the code set huge as the hero, room in the same
 black knockout band, true black rather than a tinted near-black. The point is
 that after scanning a physical object the screen confirms it is the same one.
 
-Still to do: phase 7 (admin table, bulk print, manifest PDF, export), phase 8
-(AI photo drafting — `qwen3-vl:30b` is pulled and ready, nothing wired yet), and
-the backup half of phase 9. Plus the phase-2 list in README that was
-deliberately deferred. Build order is in
+**Every phase of the plan is built.** Schema, store, REST API, search, label
+rendering, three printer backends, CLI, PWA with scanner, exports, manifest,
+verified nightly backups, photo storage, and AI drafting. Running under launchd
+behind `tailscale serve`.
+
+**Closed decisions — do not re-propose these as gaps** (rationale in README
+§ Decided against): no pre-printed blank label batches, no offline write sync,
+no DK-2251 two-colour printing, no cloud vision provider.
+
+Known limitations that are real, not decisions:
+
+- `cups_raw` is unusable here because the QL-800 registers no CUPS queue. USB
+  works; this only matters if macOS ever claims the device.
+- The phone UI for photos and drafting is verified by API and syntax check, but
+  has not been exercised on a real handset.
+
+The original build order and phase gates are kept for history in
 `~/.claude/plans/create-a-packing-tracking-atomic-tarjan.md`.

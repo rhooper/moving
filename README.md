@@ -109,20 +109,22 @@ Photos are downscaled to 2048 px, their orientation baked in, and **all other
 metadata stripped** — indoor photos carry GPS and this database gets exported.
 Re-uploading the same shot is a no-op, so a retried upload can't duplicate it.
 
-## Not built (deliberately)
+## Decided against
 
-Recorded so the reasoning is not lost, not because they were forgotten:
+Not a backlog. These were considered and ruled out, recorded so nobody
+re-proposes them as oversights:
 
-- **Pre-printed blank label batches** — print a strip of numbered labels, stick
-  them on flat-packed boxes, fill contents in by scanning later.
-- **Full offline-first write sync** — the PWA currently needs the tailnet
-  reachable. Failed photo uploads retry from an IndexedDB queue, but edits do
-  not queue.
-- **DK-2251 black + red** — the QL-800 supports two-colour tape; the renderer is
-  mono-only.
+- **Pre-printed blank label batches.** Create a box and print its label one at
+  a time instead; that already gives you label-first packing without a
+  strip-of-blanks flow to manage.
+- **Offline write sync.** The PWA needs the tailnet reachable. Failed photo
+  uploads retry from a queue, but edits do not, and are not going to.
+- **DK-2251 black + red.** The QL-800 can do two-colour tape; the renderer is
+  mono only. The room name is knocked out white on a solid black band, which is
+  what does the sorting work on mono stock.
+- **A cloud vision provider.** Drafting is local-only.
+  `vision.base.VisionProvider` is the seam if that ever changes.
 - Insurance valuation report, nested boxes, multi-user accounts.
-- **A cloud vision provider.** Drafting is local-only. `vision.base.VisionProvider`
-  is the seam if that ever changes.
 
 ## Backups
 
