@@ -42,6 +42,47 @@ into every printed QR code. Remove it with `--uninstall`.
 It uses `tailscale serve`, not `funnel`: reachable from your own tailnet
 devices, never the public internet.
 
+## Deploying
+
+**Merging to `main` deploys.** The installer puts a `post-merge` git hook in
+place, so a `git merge` or `git pull` that moves `main` in the main checkout
+redeploys by itself. Nothing to remember; work cannot sit finished-but-not-
+running, which is what used to happen.
+
+```bash
+scripts/claude/deploy.sh          # the same thing, by hand
+scripts/claude/install-hooks.sh   # re-wire the hook (install-service.sh does this)
+MOVING_NO_DEPLOY=1 git merge …    # merge without deploying, just this once
+```
+
+A deploy, in order:
+
+1. **Refuses** unless the checkout is the main one (not a worktree), on `main`,
+   with no modified tracked files, and served by the installed launchd agent.
+2. **Backs up first** — `uv run moving backup`, before anything else. The merge
+   has already put any new migration on disk and the old process re-reads that
+   directory on every connection, so the live database can be migrated by the
+   very next request. The backup goes in ahead of that, not after the tests.
+3. `uv sync`, then **the whole test suite**. A red test stops the deploy dead
+   and the running service is never touched — it keeps serving the old build.
+4. Restarts the agent, waits for `/health`, and checks that the answer names
+   the commit it just deployed. `/health` reports the revision the process
+   started from, so "up" and "up on the new code" cannot be confused.
+
+```console
+$ scripts/claude/deploy.sh
+Deployed.
+  revision  c6fed8f  Merge feature-tape-counter
+  previous  bfb2263d942a
+  agent     ca.toybox.moving  pid 23971 -> 25527
+  health    http://127.0.0.1:8787/health  ok, revision c6fed8f
+  backup    var/backups/moving-20260917T205704-408189.db
+```
+
+Run it as often as you like — it is the same operation every time. Hooks live
+in `.git/hooks`, which git does not version-control, so a fresh clone has none
+until `install-hooks.sh` (or `install-service.sh`) runs.
+
 ## Scanning
 
 The stock phone camera reads a label and opens the box page — no app needed.
@@ -161,6 +202,7 @@ weight.
 | `src/movingbox/` | FastAPI service, label rendering, vision providers |
 | `web/` | PWA — no build step, plain ES modules |
 | `migrations/` | Numbered SQL, applied against `PRAGMA user_version` |
-| `scripts/claude/` | Operational scripts (backup, print test, model pull) |
+| `scripts/claude/` | Operational scripts (install, deploy, backup, print test) |
+| `scripts/claude/hooks/` | The git hooks themselves; `install-hooks.sh` wires them up |
 | `docs/superpowers/specs/` | Design documents — never deleted |
 | `var/` | Database, photos, label previews. Gitignored, backed up separately |

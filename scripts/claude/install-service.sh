@@ -11,11 +11,31 @@
 # Usage:   scripts/claude/install-service.sh [--uninstall]
 set -euo pipefail
 
-LABEL="ca.toybox.moving"
+# See the note in deploy.sh: with CDPATH set, a relative `cd` prints its target
+# into the surrounding $( ). Nothing here uses a relative cd today; clearing it
+# keeps that from becoming a trap for the next edit.
+CDPATH=""
+
+# MOVING_SERVICE_LABEL / MOVING_SERVICE_PORT let a throwaway second instance be
+# installed alongside the real one -- which is how the deploy path gets tested
+# without restarting the service people are using. `tailscale serve` is the one
+# thing a second instance must not touch: there is a single :443 handler for the
+# whole machine, so it is only configured for the default install.
+DEFAULT_LABEL="ca.toybox.moving"
+DEFAULT_PORT=8787
+LABEL="${MOVING_SERVICE_LABEL:-$DEFAULT_LABEL}"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-PORT=8787
+PORT="${MOVING_SERVICE_PORT:-$DEFAULT_PORT}"
+IS_DEFAULT_INSTANCE=0
+if [[ "$LABEL" == "$DEFAULT_LABEL" && "$PORT" == "$DEFAULT_PORT" ]]; then
+  IS_DEFAULT_INSTANCE=1
+fi
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 UV="$(command -v uv)"
+
+# reload_agent / wait_for_health live in one place, shared with deploy.sh.
+# shellcheck source=lib/launchd.sh
+source "$REPO/scripts/claude/lib/launchd.sh"
 
 # The service must be told to use the real printer. The library default is
 # `fake`, which writes a PNG preview and returns success -- so without this the
@@ -29,36 +49,26 @@ if [[ "${1:-}" == "--uninstall" ]]; then
   launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
   launchctl bootout "gui/$(id -u)/$BACKUP_LABEL" 2>/dev/null || true
   rm -f "$PLIST" "$BACKUP_PLIST"
-  tailscale serve --https=443 off 2>/dev/null || true
-  echo "Removed both launchd agents and turned off tailscale serve."
+  # The hooks are this checkout's own (install-hooks.sh resolves them from
+  # $REPO), so removing them is right for any instance. tailscale serve is not:
+  # there is one :443 handler for the machine and it belongs to the real one.
+  "$REPO/scripts/claude/install-hooks.sh" --uninstall || true
+  if (( IS_DEFAULT_INSTANCE )); then
+    tailscale serve --https=443 off 2>/dev/null || true
+    echo "Removed both launchd agents, the post-merge hook, and tailscale serve."
+  else
+    echo "Removed both $LABEL agents and the post-merge hook."
+    echo "tailscale serve belongs to the default instance and was left alone."
+  fi
   echo "Backups in $REPO/var/backups were left alone."
   exit 0
 fi
 
 mkdir -p "$HOME/Library/LaunchAgents" "$REPO/var/log"
 
-# `launchctl bootout` returns before the job is actually gone, and bootstrapping
-# the same label while the old one is still tearing down fails with
-# "Bootstrap failed: 5: Input/output error" -- having already unloaded the
-# running service. So wait for the label to disappear, then retry.
-reload_agent() {
-  local label="$1" plist="$2" domain="gui/$(id -u)"
-
-  launchctl bootout "$domain/$label" 2>/dev/null || true
-  for _ in $(seq 1 40); do
-    launchctl print "$domain/$label" >/dev/null 2>&1 || break
-    sleep 0.25
-  done
-
-  for attempt in 1 2 3 4 5; do
-    if launchctl bootstrap "$domain" "$plist" 2>/dev/null; then
-      return 0
-    fi
-    sleep 1
-  done
-  echo "Could not load $label. Try: launchctl bootstrap $domain $plist" >&2
-  return 1
-}
+# Record what is being installed so /health can report it, and so the first
+# `deploy.sh --if-changed` after an install has something to compare against.
+git -C "$REPO" rev-parse HEAD > "$REPO/var/deployed-revision" 2>/dev/null || true
 
 cat > "$PLIST" <<PLIST_EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -86,8 +96,10 @@ cat > "$PLIST" <<PLIST_EOF
     <key>PATH</key><string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <!-- Homebrew's libzbar is outside the default dyld search path. -->
     <key>DYLD_FALLBACK_LIBRARY_PATH</key><string>/opt/homebrew/lib:/usr/local/lib:/usr/lib</string>
-    <!-- Without this the app falls back to the `fake` backend and silently
-         writes preview PNGs instead of printing. -->
+    <!-- Without this the app falls back to the \`fake\` backend and silently
+         writes preview PNGs instead of printing. The backticks are escaped
+         because this heredoc is unquoted: bare ones ran \`fake\` as a command
+         and dropped the word from the comment. -->
     <key>MOVING_PRINTER_BACKEND</key><string>$PRINTER_BACKEND</string>
   </dict>
 </dict>
@@ -97,11 +109,7 @@ PLIST_EOF
 reload_agent "$LABEL" "$PLIST"
 
 echo "Waiting for the service…"
-for _ in $(seq 1 40); do
-  curl -fsS -m 1 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && break
-  sleep 0.5
-done
-curl -fsS -m 2 "http://127.0.0.1:$PORT/health" >/dev/null \
+wait_for_health "http://127.0.0.1:$PORT/health" 40 \
   || { echo "Service did not come up. See $REPO/var/log/moving.err.log"; exit 1; }
 echo "  listening on 127.0.0.1:$PORT"
 
@@ -144,11 +152,19 @@ echo
 "$UV" run --project "$REPO" moving backup
 
 # serve, not funnel: reachable from your own tailnet devices, never the public
-# internet.
-tailscale serve --bg "$PORT" >/dev/null
-echo
-tailscale serve status
-echo
+# internet. Only for the default instance: there is one :443 handler per
+# machine, so pointing it at a second instance would silently take the real one
+# off the tailnet URL that is printed on every label.
+if (( IS_DEFAULT_INSTANCE )); then
+  tailscale serve --bg "$PORT" >/dev/null
+  echo
+  tailscale serve status
+  echo
+else
+  echo
+  echo "Non-default instance ($LABEL on $PORT): tailscale serve left as it is."
+  echo
+fi
 # --- printer ---------------------------------------------------------------
 echo
 echo "Printer backend: $PRINTER_BACKEND"
@@ -167,7 +183,15 @@ else
   echo "  Editor Lite mode OFF."
 fi
 
+# --- automatic redeploys ---------------------------------------------------
+# .git/hooks is not version-controlled, so the post-merge hook has to be
+# installed, and this is the one command everybody already runs. Without it,
+# merged work sits undeployed until somebody remembers to come back here.
+echo
+"$REPO/scripts/claude/install-hooks.sh"
+
 echo
 echo "Installed:"
 echo "  $LABEL         starts at login, restarts if it dies"
 echo "  $BACKUP_LABEL  nightly at 03:17, keeps 14"
+echo "  post-merge hook        a merge that moves main runs scripts/claude/deploy.sh"
