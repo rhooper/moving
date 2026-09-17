@@ -16,6 +16,27 @@ from ..labels.layout import FONT_PATH
 
 WEB_ROOT = ROOT / "web"
 
+#: Written by scripts/claude/deploy.sh (and install-service.sh) with the commit
+#: being deployed, just before the launchd agent is restarted. Gitignored along
+#: with the rest of var/.
+REVISION_FILE = ROOT / "var" / "deployed-revision"
+
+
+def deployed_revision() -> str:
+    """The commit this process was started from, or ``"unknown"``.
+
+    Read **once, at startup** rather than per request, and that is the whole
+    point: a value re-read on each request would report the new commit the
+    moment the file was written, whether or not the restart that was supposed
+    to follow ever happened. Read at startup, /health answering with the new
+    revision is proof that this process is running that code -- which is what
+    the deploy script checks before calling a deploy successful.
+    """
+    try:
+        return REVISION_FILE.read_text().strip() or "unknown"
+    except OSError:
+        return "unknown"
+
 
 def get_config(request: Request) -> Config:
     return request.app.state.config
@@ -70,6 +91,7 @@ def require_api_key(
 def create_app(config: Config | None = None) -> FastAPI:
     app = FastAPI(title="Moving Box Tracker", version="0.1.0")
     app.state.config = config or from_env()
+    app.state.revision = deployed_revision()
 
     from . import admin, boxes, labels, photos, rooms
 
@@ -81,7 +103,7 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     @app.get("/health")
     def health() -> dict[str, str]:
-        return {"status": "ok"}
+        return {"status": "ok", "revision": app.state.revision}
 
     @app.get("/b/{code}")
     def scanned(code: str, conn: sqlite3.Connection = Depends(get_conn)):

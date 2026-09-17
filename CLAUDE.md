@@ -19,6 +19,8 @@ scripts/claude/try_vision.py     # call the real model (slow, non-deterministic)
 uv run pytest                    # printer forced to `fake` in conftest
 scripts/claude/install-service.sh          # launchd + tailscale serve (persistent https)
 scripts/claude/install-service.sh --uninstall
+scripts/claude/deploy.sh         # backup, test, restart, verify — normally automatic
+scripts/claude/install-hooks.sh  # wire up the post-merge hook (install-service.sh calls it)
 uv run ruff check src tests scripts
 scripts/claude/smoke.sh          # end-to-end against a running server
 scripts/claude/render_samples.py # contact sheet of sample labels to eyeball
@@ -98,6 +100,63 @@ routes hang off `original_router`. Its `routes` attribute is a *string* — walk
 that and you iterate its characters and silently inspect nothing. This
 initially made `test_api_structure.py` pass while testing almost no routes, so
 that file now has a test guarding its own route walk.
+
+## Deployment is automatic, and the details matter
+
+**Merging to `main` in the main checkout redeploys.** `scripts/claude/hooks/post-merge`
+is the hook; `install-hooks.sh` drops a shim into `.git/hooks/post-merge` that
+execs it, and `install-service.sh` runs that installer. Before this existed,
+several rounds of finished work sat merged and undeployed while the features
+were reported missing.
+
+- **Never deploy from a worktree.** `.git/hooks` lives in the *common* git dir,
+  so the hook fires for every worktree in the repo. Both the hook and
+  `deploy.sh` compare `--absolute-git-dir` against `--git-common-dir` and bail
+  when they differ. A worktree is also the wrong tree: the agent serves the
+  main checkout, and worktrees get deleted.
+- **The backup runs first, before the tests, not after them.** `db.migrate()`
+  re-globs the migrations directory on *every* `db.connect()`, and the service
+  opens a connection per request — so the moment a merge lands a new migration
+  file on disk, the still-running old process will apply it to the live
+  database on its next request. The backup has to be in front of that window,
+  and the window is not closeable from a deploy script.
+- **`/health` reports `revision`**, read **once at startup** from
+  `var/deployed-revision` (written by `deploy.sh` just before the restart).
+  Reading it per request would report the new commit the instant the file was
+  written, whether or not the restart happened — which is precisely the failure
+  the whole thing exists to catch. `deploy.sh` treats a mismatch as a failure.
+- **Tests are the gate.** A red suite aborts before anything touches launchd,
+  so the old build keeps serving. `--if-changed` (what the hook passes) is a
+  silent no-op only when the recorded revision matches *and* `/health` answers;
+  a service that is down gets redeployed even if the commit has not moved.
+- `MOVING_NO_DEPLOY=1` skips the hook. `MOVING_SERVICE_LABEL` /
+  `MOVING_SERVICE_PORT` override the agent label and port in both
+  `install-service.sh` and `deploy.sh` — that is how the deploy path gets
+  exercised against a throwaway agent without touching the live one.
+
+**`CDPATH` is set in this user's shell, and it corrupts `$(cd … && pwd)`.**
+When `cd` resolves a *relative* path through `CDPATH`, bash prints the
+destination to stdout — so `$(cd "$(git rev-parse --git-common-dir)" && pwd -P)`
+comes back as *two* lines, and every path comparison built on it silently
+fails. It first showed up as the worktree guard refusing the main checkout, and
+as `install-hooks.sh` creating a directory with a newline in its name. Every
+script under `scripts/claude/` clears `CDPATH` before doing anything.
+
+**`launchctl print` exits non-zero for a label that is not loaded**, which under
+`set -euo pipefail` killed `deploy.sh` mid-restart — at exactly the moment the
+service was down. `agent_pid` in `scripts/claude/lib/launchd.sh` returns 0 with
+empty output instead. Same family of trap: `x && y` as a statement is the last
+command in its context, so `set -e` exits on it when `x` is false; use `if`.
+
+**`reload_agent` lives in `scripts/claude/lib/launchd.sh`**, sourced by both
+`install-service.sh` and `deploy.sh`. There is one copy on purpose — `launchctl
+bootout` is asynchronous, and bootstrapping the same label too soon fails with
+"Bootstrap failed: 5: Input/output error" *after* having already unloaded the
+service, leaving nothing listening.
+
+**The plist heredoc in `install-service.sh` is unquoted**, so backticks in its
+XML comments run as commands. That silently executed `fake` and dropped the
+word from the generated comment; they are escaped now.
 
 ## Conventions
 

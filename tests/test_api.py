@@ -3,6 +3,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from movingbox.api import app as app_module
 from movingbox.api.app import create_app
 
 
@@ -127,6 +128,43 @@ def test_a_box_scanned_by_its_code_resolves_to_its_page(client):
     response = client.get(f"/b/{code}", follow_redirects=False)
 
     assert response.status_code in (200, 307)
+
+
+class TestDeployedRevision:
+    """/health reports the commit the process started from.
+
+    This is what scripts/claude/deploy.sh checks to tell "the service restarted
+    on the new code" from "the service is up", which are not the same thing --
+    the whole reason the deploy is automated is that finished work kept sitting
+    merged but not actually served.
+    """
+
+    def test_health_reports_the_revision_recorded_at_startup(self, config, tmp_path, monkeypatch):
+        recorded = tmp_path / "deployed-revision"
+        recorded.write_text("0d302631c0ffee\n")
+        monkeypatch.setattr(app_module, "REVISION_FILE", recorded)
+
+        with TestClient(create_app(config)) as c:
+            assert c.get("/health").json() == {"status": "ok", "revision": "0d302631c0ffee"}
+
+    def test_a_missing_file_is_unknown_rather_than_an_error(self, config, tmp_path, monkeypatch):
+        monkeypatch.setattr(app_module, "REVISION_FILE", tmp_path / "nope")
+
+        with TestClient(create_app(config)) as c:
+            assert c.get("/health").json()["revision"] == "unknown"
+
+    def test_the_revision_is_not_re_read_per_request(self, config, tmp_path, monkeypatch):
+        # Writing the file is not deploying: the file is written *before* the
+        # restart, so a per-request read would claim the new build was live
+        # while the old process was still serving.
+        recorded = tmp_path / "deployed-revision"
+        recorded.write_text("old\n")
+        monkeypatch.setattr(app_module, "REVISION_FILE", recorded)
+
+        with TestClient(create_app(config)) as c:
+            recorded.write_text("new\n")
+
+            assert c.get("/health").json()["revision"] == "old"
 
 
 class TestAuth:

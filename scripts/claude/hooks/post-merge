@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Purpose: redeploy the live service when work lands on main, so that finished
+#          work cannot sit merged-but-undeployed.
+#
+#          .git/hooks is not version-controlled, so this file is the hook and
+#          scripts/claude/install-hooks.sh installs a one-line shim into
+#          .git/hooks/post-merge that execs it. install-service.sh runs that
+#          installer, so a normal install wires deployment up as well.
+#
+#          Quiet by design. Hooks are shared by every worktree in the repo, so
+#          this runs after every merge anywhere; only a merge that actually
+#          moves main in the main checkout should print anything at all.
+#
+# Usage:   fires automatically after `git merge` / `git pull`. Safe to run by
+#          hand from the top of a checkout to test it:
+#              scripts/claude/hooks/post-merge
+#          Set MOVING_NO_DEPLOY=1 to skip (e.g. while bisecting).
+set -uo pipefail
+
+# See the note in deploy.sh: with CDPATH set, a relative `cd` prints where it
+# went, which would end up inside the command substitutions below.
+CDPATH=""
+
+# Hooks inherit the git environment of the command that triggered them. GIT_DIR
+# especially would make everything below describe the merge rather than this
+# checkout, so drop it before asking git anything.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_QUARANTINE_PATH
+
+# A GUI git client hands hooks a minimal PATH; uv and git may both be in
+# Homebrew's prefix.
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+[[ "${MOVING_NO_DEPLOY:-}" == "1" ]] && exit 0
+
+command -v git >/dev/null 2>&1 || exit 0
+repo="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+cd "$repo" || exit 0
+
+# Not from a worktree: the launchd agent serves the main checkout, and the
+# worktrees under .claude/worktrees get deleted.
+git_dir="$(git rev-parse --absolute-git-dir 2>/dev/null)" || exit 0
+common_dir="$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P)" || exit 0
+[[ "$git_dir" == "$common_dir" ]] || exit 0
+
+# Only main is deployed. Merging into a topic branch is not a release.
+[[ "$(git symbolic-ref --quiet --short HEAD 2>/dev/null)" == "main" ]] || exit 0
+
+deploy="$repo/scripts/claude/deploy.sh"
+[[ -x "$deploy" ]] || exit 0
+
+# deploy.sh refuses a dirty tree, loudly and with a non-zero exit. That is right
+# when a person ran it; after a merge it would just be noise, so say one line.
+if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+  echo "post-merge: working tree is dirty, so the service was not redeployed."
+  echo "post-merge: run scripts/claude/deploy.sh once it is clean."
+  exit 0
+fi
+
+# --if-changed returns silently when the service is already healthy on this
+# commit, which is the common case for a merge that changed nothing we serve.
+if ! "$deploy" --if-changed; then
+  echo "post-merge: DEPLOY FAILED. main has moved but the service has NOT." >&2
+  echo "post-merge: fix it, then run scripts/claude/deploy.sh -- see the output above." >&2
+fi
+
+# Never fail the merge. Git ignores a post-merge hook's exit status anyway, and
+# a deploy problem is not a reason to make a completed merge look broken.
+exit 0

@@ -11,11 +11,20 @@
 # Usage:   scripts/claude/install-service.sh [--uninstall]
 set -euo pipefail
 
-LABEL="ca.toybox.moving"
+# See the note in deploy.sh: with CDPATH set, a relative `cd` prints its target
+# into the surrounding $( ). Nothing here uses a relative cd today; clearing it
+# keeps that from becoming a trap for the next edit.
+CDPATH=""
+
+LABEL="${MOVING_SERVICE_LABEL:-ca.toybox.moving}"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-PORT=8787
+PORT="${MOVING_SERVICE_PORT:-8787}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 UV="$(command -v uv)"
+
+# reload_agent / wait_for_health live in one place, shared with deploy.sh.
+# shellcheck source=lib/launchd.sh
+source "$REPO/scripts/claude/lib/launchd.sh"
 
 # The service must be told to use the real printer. The library default is
 # `fake`, which writes a PNG preview and returns success -- so without this the
@@ -30,6 +39,7 @@ if [[ "${1:-}" == "--uninstall" ]]; then
   launchctl bootout "gui/$(id -u)/$BACKUP_LABEL" 2>/dev/null || true
   rm -f "$PLIST" "$BACKUP_PLIST"
   tailscale serve --https=443 off 2>/dev/null || true
+  "$REPO/scripts/claude/install-hooks.sh" --uninstall || true
   echo "Removed both launchd agents and turned off tailscale serve."
   echo "Backups in $REPO/var/backups were left alone."
   exit 0
@@ -37,28 +47,9 @@ fi
 
 mkdir -p "$HOME/Library/LaunchAgents" "$REPO/var/log"
 
-# `launchctl bootout` returns before the job is actually gone, and bootstrapping
-# the same label while the old one is still tearing down fails with
-# "Bootstrap failed: 5: Input/output error" -- having already unloaded the
-# running service. So wait for the label to disappear, then retry.
-reload_agent() {
-  local label="$1" plist="$2" domain="gui/$(id -u)"
-
-  launchctl bootout "$domain/$label" 2>/dev/null || true
-  for _ in $(seq 1 40); do
-    launchctl print "$domain/$label" >/dev/null 2>&1 || break
-    sleep 0.25
-  done
-
-  for attempt in 1 2 3 4 5; do
-    if launchctl bootstrap "$domain" "$plist" 2>/dev/null; then
-      return 0
-    fi
-    sleep 1
-  done
-  echo "Could not load $label. Try: launchctl bootstrap $domain $plist" >&2
-  return 1
-}
+# Record what is being installed so /health can report it, and so the first
+# `deploy.sh --if-changed` after an install has something to compare against.
+git -C "$REPO" rev-parse HEAD > "$REPO/var/deployed-revision" 2>/dev/null || true
 
 cat > "$PLIST" <<PLIST_EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -86,8 +77,10 @@ cat > "$PLIST" <<PLIST_EOF
     <key>PATH</key><string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <!-- Homebrew's libzbar is outside the default dyld search path. -->
     <key>DYLD_FALLBACK_LIBRARY_PATH</key><string>/opt/homebrew/lib:/usr/local/lib:/usr/lib</string>
-    <!-- Without this the app falls back to the `fake` backend and silently
-         writes preview PNGs instead of printing. -->
+    <!-- Without this the app falls back to the \`fake\` backend and silently
+         writes preview PNGs instead of printing. The backticks are escaped
+         because this heredoc is unquoted: bare ones ran \`fake\` as a command
+         and dropped the word from the comment. -->
     <key>MOVING_PRINTER_BACKEND</key><string>$PRINTER_BACKEND</string>
   </dict>
 </dict>
@@ -97,11 +90,7 @@ PLIST_EOF
 reload_agent "$LABEL" "$PLIST"
 
 echo "Waiting for the service…"
-for _ in $(seq 1 40); do
-  curl -fsS -m 1 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && break
-  sleep 0.5
-done
-curl -fsS -m 2 "http://127.0.0.1:$PORT/health" >/dev/null \
+wait_for_health "http://127.0.0.1:$PORT/health" 40 \
   || { echo "Service did not come up. See $REPO/var/log/moving.err.log"; exit 1; }
 echo "  listening on 127.0.0.1:$PORT"
 
@@ -167,7 +156,15 @@ else
   echo "  Editor Lite mode OFF."
 fi
 
+# --- automatic redeploys ---------------------------------------------------
+# .git/hooks is not version-controlled, so the post-merge hook has to be
+# installed, and this is the one command everybody already runs. Without it,
+# merged work sits undeployed until somebody remembers to come back here.
+echo
+"$REPO/scripts/claude/install-hooks.sh"
+
 echo
 echo "Installed:"
 echo "  $LABEL         starts at login, restarts if it dies"
 echo "  $BACKUP_LABEL  nightly at 03:17, keeps 14"
+echo "  post-merge hook        a merge that moves main runs scripts/claude/deploy.sh"
