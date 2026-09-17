@@ -101,14 +101,29 @@ Either way you can type a code by hand.
 
 62 mm continuous DK-2205, black only, 696 printable dots at 300 dpi.
 
-Labels are **cut to their content**, between 25 mm and 90 mm. The tape is
-continuous, so a fixed height would just print blank tape: a typical label comes
-out around 50 mm and a bare code-and-QR one at 25 mm, which is roughly 44% less
-tape per box across a whole move.
+Labels run **along** the tape: a fixed 4 inches (1200 x 696 px), with the box's
+identity on the left and its itemised contents listed on the right. A shelf of
+same-size labels is much easier to read along than a row of ragged ones, and at
+that size there is room for the list that lets you pick the right box without
+opening it. A box with no itemised items gives the identity the whole width
+instead of printing an empty column.
+
+The design is laid out readably and turned a quarter turn at print time
+(`printer.to_raster`), so a preview is never shown sideways. Verified on tape.
 
 The destination room prints knocked out white on a solid black band. Mono tape
 has no colour to sort by, and that band is what you actually read across a room
 of stacked boxes.
+
+The older cut-to-content portrait form is still there —
+`MOVING_LABEL_ORIENTATION=portrait`, or `--orientation portrait` — sizing
+between 25 mm and 90 mm.
+
+**A label will not print for a box with nothing recorded in it.** That is the
+expensive mistake: the tape is spent, it goes on the box, and the box is then
+indistinguishable from an unlabelled one until you open it. Add a summary or
+some items, or tick *print anyway*. As with an unknown code, one empty box
+rejects the whole batch. Previewing is never gated — looking costs nothing.
 
 During development the printer backend defaults to `fake`, which writes a PNG to
 `var/labels/preview/` instead of burning tape. Tests force it.
@@ -117,7 +132,10 @@ During development the printer backend defaults to `fake`, which writes a PNG to
 uv run moving preview B-0001                    # PNG only, no printing
 uv run moving print B-0001 --backend brother_ql # over USB
 uv run moving print B-0001 --backend cups_raw   # if USB is claimed by CUPS
+uv run moving print B-0001 --orientation portrait
 ```
+
+The CLI is deliberately *not* gated on contents — it is the escape hatch.
 
 `cups_raw` needs `MOVING_PRINTER_QUEUE` set to the QL-800's queue name. It
 refuses to run without one, rather than falling back to the system default
@@ -140,6 +158,12 @@ Drafts are **never** applied automatically. The suggestion appears with every
 item ticked; untick what's wrong, edit the summary, then accept. Accepted items
 are stored with `source='ai'` so AI-derived data stays distinguishable from
 what you typed.
+
+The one-line summary can also be assembled from the items with no model at all
+("3 baking pans, kettle"). It is offered the same way — proposed, never
+applied. Plain assembly is instant, identical every time, and works offline;
+for a list you have already typed, a model would add latency without adding
+much.
 
 Measured on this machine: about 30 seconds the first time (the model has to
 load), then **~6 seconds** per photo. If the model isn't installed the error

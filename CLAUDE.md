@@ -53,10 +53,26 @@ present as the last resort.
 label id `62`, `FormFactor.ENDLESS`, `dots_total=(732, 0)`,
 `dots_printable=(696, 0)`. Render at **696 px wide**.
 
-**Labels are cut to content, not to a fixed 90 mm.** The tape is continuous, so
-`render()` sizes between `MIN_HEIGHT` (300) and `DEFAULT_HEIGHT` (1063, the
-cap). A typical label is ~590 px and a sparse one 300 px — roughly 44% less tape
-per box than a fixed height. Pass `height=` for an exact cut.
+**Labels are landscape by default: a fixed 1200 x 696 px** (4 in x 62 mm at
+300 dpi), identity left, itemised contents right. Fixed length on purpose — a
+shelf of same-size labels reads far better than ragged ones, and the size buys
+room for the contents list. With no items the identity takes the full width
+rather than printing an empty `CONTENTS` heading.
+
+**Rotation belongs to the printer, not the layout.** `layout.render()` returns
+an image that reads normally; `printer.to_raster()` turns a landscape design a
+quarter turn so its 696 dots land across the tape. `build_instructions` rotates
+*before* its width check — otherwise a correctly sized landscape label is
+rejected for being 1200 px wide. The rotation direction was settled on tape,
+not in software; it is correct as written.
+
+`orientation="portrait"` is the older cut-to-content form, still supported and
+still tested, sizing between `MIN_HEIGHT` (300) and `DEFAULT_HEIGHT` (1063).
+`MOVING_LABEL_ORIENTATION` selects the default.
+
+**Printing refuses a box with no recorded contents** (`allow_empty` off by
+default, 409). Previewing is not gated, and neither is the CLI — that is the
+escape hatch. One empty box rejects the whole batch, as an unknown code does.
 
 **`brother_ql` is stale, in two specific ways:**
 1. It warns `brother_ql.devicedependent is deprecated` on import (suppressed at
@@ -179,6 +195,10 @@ word from the generated comment; they are escaped now.
   `update_box`. They have dedicated calls so every transition reaches the event
   log. `schemas.Strict` forbids unknown fields, so a PATCH carrying `status`
   fails 422 rather than being silently dropped.
+- **Summaries can be assembled from items without a model**
+  (`summarise.from_items`). Offered as a suggestion, never applied — the same
+  rule as a photo draft. Plain assembly because the items have already been
+  typed or reviewed: it should be instant, identical every time, and offline.
 - **AI output is provenance-tagged**: items from a vision draft get
   `source='ai'`. **Never auto-apply a draft** — `ai.draft_for_box` returns a
   proposal and writes nothing to the box; the PWA's review panel applies it
