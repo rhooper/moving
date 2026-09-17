@@ -50,10 +50,11 @@ def create_app(config: Config | None = None) -> FastAPI:
     app = FastAPI(title="Moving Box Tracker", version="0.1.0")
     app.state.config = config or from_env()
 
-    from . import boxes, rooms
+    from . import boxes, labels, rooms
 
     app.include_router(boxes.router, dependencies=[Depends(require_api_key)])
     app.include_router(rooms.router, dependencies=[Depends(require_api_key)])
+    app.include_router(labels.router, dependencies=[Depends(require_api_key)])
 
     @app.get("/health")
     def health() -> dict[str, str]:

@@ -220,6 +220,36 @@ def list_boxes(
     return boxes
 
 
+def record_print(
+    conn: sqlite3.Connection, code: str, *, actor: str | None = None
+) -> dict[str, Any]:
+    """Note that a label was printed.
+
+    The count increments rather than resets: labels get lost and boxes get
+    re-taped, and knowing a label was printed three times explains why more
+    than one label with the same code is in circulation.
+    """
+    box = _require(conn, code)
+    conn.execute(
+        """
+        UPDATE boxes
+           SET label_print_count = label_print_count + 1,
+               label_printed_at  = datetime('now')
+         WHERE id = ?
+        """,
+        (box["id"],),
+    )
+    _record(conn, box["id"], "print", to_value=code, actor=actor)
+    return get_box(conn, code)
+
+
+def room_name(conn: sqlite3.Connection, room_id: int | None) -> str | None:
+    if room_id is None:
+        return None
+    row = conn.execute("SELECT name FROM rooms WHERE id = ?", (room_id,)).fetchone()
+    return row["name"] if row else None
+
+
 # --- items ---------------------------------------------------------------
 
 

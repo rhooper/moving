@@ -58,6 +58,12 @@ class ItemCreate(Strict):
     source: Literal["manual", "ai"] = "manual"
 
 
+class PrintRequest(Strict):
+    codes: list[str] = Field(min_length=1)
+    copies: int = Field(default=1, ge=1, le=10)
+    height: int | None = None  # exact cut height; omit to fit content
+
+
 class RoomCreate(Strict):
     name: str = Field(min_length=1)
     kind: Literal["source", "destination", "both"] = "destination"
