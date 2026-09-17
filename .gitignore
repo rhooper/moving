@@ -1,0 +1,22 @@
+# Runtime data — the database and photos are backed up separately, not versioned
+var/
+*.db
+*.db-wal
+*.db-shm
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Worktrees (work discipline: feature work is isolated here)
+.worktrees/
+
+# macOS
+.DS_Store
+
+# Local secrets
+.env

@@ -1,0 +1,46 @@
+[project]
+name = "movingbox"
+version = "0.1.0"
+description = "Packing tracker for a house move: box inventory, QR labels on a Brother QL-800, and a scanning PWA."
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "python-multipart>=0.0.12",   # photo uploads
+    "pillow>=11.0",               # label raster + thumbnails
+    "segno>=1.6",                 # QR generation
+    "brother-ql>=0.9.4",          # QL-800 raster protocol
+    "pyusb>=1.2",                 # USB backend for brother_ql
+    "httpx>=0.27",                # Ollama / Claude vision providers
+    "reportlab>=4.2",             # manifest PDF
+]
+
+[project.scripts]
+moving = "movingbox.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.7",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/movingbox"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Tests must never reach the physical printer.
+env = ["MOVING_PRINTER_BACKEND=fake"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
