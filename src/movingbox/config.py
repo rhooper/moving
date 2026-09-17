@@ -20,6 +20,7 @@ class Config:
     db_path: Path
     photo_dir: Path
     label_preview_dir: Path
+    backup_dir: Path | None = None  # defaults to db_path's parent / "backups"
     base_url: str = DEFAULT_BASE_URL
     api_key: str | None = None
     # `fake` writes a PNG preview instead of printing. Anything else needs the
@@ -42,6 +43,7 @@ def from_env(env: dict[str, str] | None = None) -> Config:
         db_path=Path(e.get("MOVING_DB_PATH", var / "moving.db")),
         photo_dir=Path(e.get("MOVING_PHOTO_DIR", var / "photos")),
         label_preview_dir=Path(e.get("MOVING_LABEL_PREVIEW_DIR", var / "labels" / "preview")),
+        backup_dir=Path(e.get("MOVING_BACKUP_DIR", var / "backups")),
         base_url=e.get("MOVING_BASE_URL", DEFAULT_BASE_URL).rstrip("/"),
         api_key=e.get("MOVING_API_KEY") or None,
         printer_backend=e.get("MOVING_PRINTER_BACKEND", "fake"),

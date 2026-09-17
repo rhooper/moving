@@ -17,11 +17,16 @@ PORT=8787
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 UV="$(command -v uv)"
 
+BACKUP_LABEL="$LABEL.backup"
+BACKUP_PLIST="$HOME/Library/LaunchAgents/$BACKUP_LABEL.plist"
+
 if [[ "${1:-}" == "--uninstall" ]]; then
   launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-  rm -f "$PLIST"
+  launchctl bootout "gui/$(id -u)/$BACKUP_LABEL" 2>/dev/null || true
+  rm -f "$PLIST" "$BACKUP_PLIST"
   tailscale serve --https=443 off 2>/dev/null || true
-  echo "Removed the launchd agent and turned off tailscale serve."
+  echo "Removed both launchd agents and turned off tailscale serve."
+  echo "Backups in $REPO/var/backups were left alone."
   exit 0
 fi
 
@@ -70,10 +75,51 @@ curl -fsS -m 2 "http://127.0.0.1:$PORT/health" >/dev/null \
   || { echo "Service did not come up. See $REPO/var/log/moving.err.log"; exit 1; }
 echo "  listening on 127.0.0.1:$PORT"
 
+# --- nightly backup -------------------------------------------------------
+# Separate agent rather than a thread in the service: a backup that only runs
+# while the web app happens to be healthy is not a backup. StartCalendarInterval
+# also catches up after the Mac has been asleep, which a sleep-loop would not.
+cat > "$BACKUP_PLIST" <<PLIST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$BACKUP_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$UV</string>
+    <string>run</string>
+    <string>--project</string><string>$REPO</string>
+    <string>moving</string>
+    <string>backup</string>
+  </array>
+  <key>WorkingDirectory</key><string>$REPO</string>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>17</integer></dict>
+  <key>StandardOutPath</key><string>$REPO/var/log/backup.out.log</string>
+  <key>StandardErrorPath</key><string>$REPO/var/log/backup.err.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+</dict>
+</plist>
+PLIST_EOF
+
+launchctl bootout "gui/$(id -u)/$BACKUP_LABEL" 2>/dev/null || true
+launchctl bootstrap "gui/$(id -u)" "$BACKUP_PLIST"
+
+# Take one now, so the install is proven rather than assumed and there is a
+# backup from this moment rather than from 03:17 tomorrow.
+echo
+"$UV" run --project "$REPO" moving backup
+
 # serve, not funnel: reachable from your own tailnet devices, never the public
 # internet.
 tailscale serve --bg "$PORT" >/dev/null
 echo
 tailscale serve status
 echo
-echo "Installed. It now starts at login and restarts if it dies."
+echo "Installed:"
+echo "  $LABEL         starts at login, restarts if it dies"
+echo "  $BACKUP_LABEL  nightly at 03:17, keeps 14"

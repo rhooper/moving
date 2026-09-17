@@ -6,7 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import db, search, store
+from . import backup, db, export, search, store
 from .config import from_env
 from .labels import layout, printer
 
@@ -113,6 +113,63 @@ def cmd_print(args) -> int:
     return 0
 
 
+def cmd_backup(args) -> int:
+    config = from_env()
+    try:
+        written = backup.create(config, keep=args.keep)
+    except backup.BackupFailed as failure:
+        print(f"Backup failed: {failure}", file=sys.stderr)
+        return 1
+    size_mb = written.stat().st_size / 1_048_576
+    kept = backup.existing(config)
+    print(f"{written}  ({size_mb:.1f} MB)")
+    print(f"{len(kept)} backup{'' if len(kept) == 1 else 's'} kept in {backup.directory(config)}")
+    return 0
+
+
+def cmd_export(args) -> int:
+    config = from_env()
+    conn = db.connect(config.db_path)
+    try:
+        text = export.to_csv(conn) if args.format == "csv" else export.to_json(conn)
+    finally:
+        conn.close()
+
+    if args.output:
+        out = Path(args.output)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(text, encoding="utf-8")
+        print(f"{out}  ({len(text):,} bytes)")
+    else:
+        print(text, end="" if text.endswith("\n") else "\n")
+    return 0
+
+
+def cmd_manifest(args) -> int:
+    config = from_env()
+    conn = db.connect(config.db_path)
+    try:
+        groups = export.manifest(conn)
+    finally:
+        conn.close()
+
+    if not groups:
+        print("No boxes yet.")
+        return 0
+
+    width = max(len(g["room"]) for g in groups)
+    total_boxes = total_weight = 0
+    for group in groups:
+        weight = f"{group['weight_kg']:.1f} kg" if group["weight_kg"] else "-"
+        unweighed = f"  ({group['unweighed']} unweighed)" if group["unweighed"] else ""
+        print(f"{group['room']:<{width}}  {group['count']:>3}  {weight:>9}{unweighed}")
+        total_boxes += group["count"]
+        total_weight += group["weight_kg"]
+    print(f"{'':<{width}}  {'---':>3}")
+    print(f"{'Total':<{width}}  {total_boxes:>3}  {total_weight:>6.1f} kg")
+    return 0
+
+
 def cmd_reindex(args) -> int:
     config = from_env()
     conn = db.connect(config.db_path)
@@ -172,6 +229,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="override MOVING_PRINTER_BACKEND (default: fake, which only writes a preview)",
     )
     print_.set_defaults(func=cmd_print)
+
+    back = sub.add_parser("backup", help="write a verified backup and prune old ones")
+    back.add_argument("--keep", type=int, default=backup.DEFAULT_KEEP)
+    back.set_defaults(func=cmd_backup)
+
+    exp = sub.add_parser("export", help="dump everything to json or csv")
+    exp.add_argument("--format", choices=("json", "csv"), default="json")
+    exp.add_argument("-o", "--output", help="write to a file instead of stdout")
+    exp.set_defaults(func=cmd_export)
+
+    man = sub.add_parser("manifest", help="box counts and weight per destination room")
+    man.set_defaults(func=cmd_manifest)
 
     reindex = sub.add_parser("reindex", help="rebuild the search index")
     reindex.set_defaults(func=cmd_reindex)
