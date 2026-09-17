@@ -5,6 +5,16 @@ import os
 # silently does nothing unless pytest-env is installed.
 os.environ["MOVING_PRINTER_BACKEND"] = "fake"
 
+# pyzbar resolves libzbar through ctypes.util.find_library, which on macOS does
+# not search Homebrew's prefix. ctypes reads this from os.environ at call time
+# (unlike DYLD_LIBRARY_PATH, which dyld caches at exec), so setting it here --
+# before pyzbar is imported -- is enough, and beats making everyone remember to
+# export it. Harmless on platforms where zbar is already on the search path.
+os.environ.setdefault(
+    "DYLD_FALLBACK_LIBRARY_PATH",
+    "/opt/homebrew/lib:/usr/local/lib:/usr/lib",
+)
+
 import pytest  # noqa: E402
 
 from movingbox import db  # noqa: E402
