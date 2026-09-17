@@ -243,6 +243,13 @@ def record_print(
     return get_box(conn, code)
 
 
+def code_of(conn: sqlite3.Connection, box_id: int) -> str | None:
+    """The code of a box by row id. Callers that only hold an id need it to
+    say *which box* changed, since a code is what a client re-fetches by."""
+    row = conn.execute("SELECT code FROM boxes WHERE id = ?", (box_id,)).fetchone()
+    return row["code"] if row else None
+
+
 def room_name(conn: sqlite3.Connection, room_id: int | None) -> str | None:
     if room_id is None:
         return None
@@ -269,6 +276,15 @@ def list_items(conn: sqlite3.Connection, code: str) -> list[dict[str, Any]]:
     box = _require(conn, code)
     rows = conn.execute("SELECT * FROM items WHERE box_id = ? ORDER BY id", (box["id"],))
     return [dict(r) for r in rows]
+
+
+def code_for_item(conn: sqlite3.Connection, item_id: int) -> str | None:
+    """The code of the box an item belongs to, or None if there is no such item."""
+    row = conn.execute(
+        "SELECT boxes.code FROM items JOIN boxes ON boxes.id = items.box_id WHERE items.id = ?",
+        (item_id,),
+    ).fetchone()
+    return row["code"] if row else None
 
 
 def delete_item(conn: sqlite3.Connection, item_id: int) -> bool:

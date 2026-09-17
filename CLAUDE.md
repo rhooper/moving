@@ -68,6 +68,22 @@ per box than a fixed height. Pass `height=` for an exact cut.
    `luxardolabs/brother_ql`. Everything goes through the `PrinterBackend`
    protocol so that swap touches one file.
 
+**A live refresh is an interruption, and the PWA treats it as one.** The list
+updates rows *in place* keyed by box code (`reconcile` in `web/live.js`):
+rebuilding the markup would destroy every `<a>`, so a tap that began on one
+lands on whatever node replaced it and you open the wrong box. On top of that
+a refresh is held back entirely while a field is focused or dirty, while an
+unaccepted AI draft is on screen, while a pointer is down, and for 600 ms
+after — the click has not landed when the finger lifts. Held refreshes raise
+the `#live` banner instead, and the new-box form and scanner are never
+refreshed at all (`affects()` matches no view name for them).
+
+**The websocket key travels in the query string** because a browser's
+`WebSocket` constructor takes a URL and nothing else — `X-API-Key` cannot be
+attached to the handshake. That does put the key in uvicorn's access log
+(`"WebSocket /api/events?key=..." [accepted]`), which is acceptable only
+because this runs on a tailnet and usually has no key set at all.
+
 **`cv2.QRCodeDetector` cannot be trusted** — it failed to decode a valid
 version-3 QR that was pixel-identical to segno's own reference render. Tests use
 **zbar** (`brew install zbar`), the engine real scanners are built on. pyzbar
@@ -129,6 +145,22 @@ that file now has a test guarding its own route walk.
   endpoint runs on the event loop — the sqlite handle then crosses threads and
   sqlite3 refuses it outright. Photo upload hit this for real.
   `tests/test_api_structure.py` enforces it.
+- **The change socket (`/api/events`) must stay database-free.** A websocket
+  endpoint has no choice about being `async def`, so the rule above cannot be
+  satisfied by making it sync — it has to need no connection at all. That is
+  why the channel carries only an event kind and a box code and clients
+  refetch over REST; `test_no_websocket_takes_a_database_connection` guards it.
+  Publishing crosses the same boundary in the other direction: routes publish
+  from the threadpool, the queue lives on the loop, and `asyncio.Queue` is not
+  thread-safe — hence `loop.call_soon_threadsafe` in `events._Subscriber`.
+- **Mutations are announced by the route, not by `store`.** `store` is shared
+  with the CLI, which runs in another process and could not reach a connected
+  phone anyway. So a CLI change is deliberately silent; the phone finds out on
+  its next refresh.
+- **Writes carry `X-Client-Id`, and the event carries it back as `origin`.**
+  The device that made a change has already redrawn from the response; without
+  the tag it redraws again on its own echo, which is how half-typed text
+  disappears. `web/live.js` `affects()` drops events whose origin is itself.
 - **Photos are normalised on the way in**: downscaled to 2048 px, EXIF
   orientation baked in and all other metadata stripped (indoor photos carry
   GPS, and this database gets exported), deduplicated by sha256 so the phone's
@@ -188,12 +220,21 @@ behind `tailscale serve`.
 § Decided against): no pre-printed blank label batches, no offline write sync,
 no DK-2251 two-colour printing, no cloud vision provider.
 
+Live updates were added after that: `/api/events` broadcasts which box changed,
+and `web/live.js` reconnects with jittered backoff, falls back to polling, and
+decides when a refresh is safe. 251 tests passing.
+
 Known limitations that are real, not decisions:
 
 - `cups_raw` is unusable here because the QL-800 registers no CUPS queue. USB
   works; this only matters if macOS ever claims the device.
 - The phone UI for photos and drafting is verified by API and syntax check, but
   has not been exercised on a real handset.
+- The same is true of the live-update client. The server half is tested through
+  a real uvicorn/websockets stack, and the decision logic in `web/live.js` is
+  tested directly, but `LiveChannel`'s wiring to a browser `WebSocket` — and
+  the tap-target behaviour it exists to protect — has only been reasoned about,
+  not watched on a handset.
 
 The original build order and phase gates are kept for history in
 `~/.claude/plans/create-a-packing-tracking-atomic-tarjan.md`.

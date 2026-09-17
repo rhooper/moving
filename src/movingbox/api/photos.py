@@ -10,7 +10,8 @@ from fastapi.responses import FileResponse
 from .. import ai, storage, store
 from ..config import Config
 from ..vision import base
-from .app import get_config, get_conn, get_vision_provider
+from . import events
+from .app import get_config, get_conn, get_events, get_vision_provider
 from .schemas import CaptionUpdate, DraftRequest
 
 router = APIRouter(tags=["photos"])
@@ -25,6 +26,7 @@ def upload(
     file: UploadFile = File(...),
     conn: sqlite3.Connection = Depends(get_conn),
     config: Config = Depends(get_config),
+    changes: events.Publisher = Depends(get_events),
 ) -> dict:
     # Deliberately sync, and reading through file.file rather than `await
     # file.read()`. An async endpoint runs on the event loop while the sync
@@ -35,12 +37,18 @@ def upload(
         raise HTTPException(status_code=413, detail=f"photo is larger than {MAX_UPLOAD} bytes")
 
     try:
-        return storage.save_photo(conn, config, code, data, filename=file.filename or "photo.jpg")
+        photo = storage.save_photo(conn, config, code, data, filename=file.filename or "photo.jpg")
     except store.UnknownBox as missing:
         raise HTTPException(status_code=404, detail=f"No box {code}") from missing
     except storage.NotAnImage as bad:
         # 415, not 400: the request was well formed, the payload was not usable.
         raise HTTPException(status_code=415, detail=str(bad)) from bad
+
+    # Announced even when the sha256 matched an existing photo and nothing was
+    # written: the phone retrying an upload is exactly when another device
+    # most wants to know a photo landed.
+    changes.publish(events.PHOTOS_CHANGED, code)
+    return photo
 
 
 @router.get("/api/boxes/{code}/photos")
@@ -77,12 +85,18 @@ def serve(
 
 @router.patch("/photos/{photo_id}")
 def update_caption(
-    photo_id: int, body: CaptionUpdate, conn: sqlite3.Connection = Depends(get_conn)
+    photo_id: int,
+    body: CaptionUpdate,
+    conn: sqlite3.Connection = Depends(get_conn),
+    changes: events.Publisher = Depends(get_events),
 ) -> dict:
     try:
-        return storage.set_caption(conn, photo_id, body.caption)
+        photo = storage.set_caption(conn, photo_id, body.caption)
     except LookupError as missing:
         raise HTTPException(status_code=404, detail=f"No photo {photo_id}") from missing
+
+    changes.publish(events.PHOTOS_CHANGED, store.code_of(conn, photo["box_id"]))
+    return photo
 
 
 @router.delete("/photos/{photo_id}", status_code=204)
@@ -90,9 +104,14 @@ def delete(
     photo_id: int,
     conn: sqlite3.Connection = Depends(get_conn),
     config: Config = Depends(get_config),
+    changes: events.Publisher = Depends(get_events),
 ) -> Response:
+    # Which box it belonged to, read before the row goes: the notification
+    # names a box, and the photo id will refer to nothing by the time it lands.
+    photo = storage.get_photo(conn, photo_id)
     if not storage.delete_photo(conn, config, photo_id):
         raise HTTPException(status_code=404, detail=f"No photo {photo_id}")
+    changes.publish(events.PHOTOS_CHANGED, store.code_of(conn, photo["box_id"]))
     return Response(status_code=204)
 
 

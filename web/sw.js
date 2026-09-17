@@ -3,10 +3,11 @@
 // box" is worse than an honest failure, and write queueing is deliberately out
 // of scope for now (see README, "Not built").
 
-const VERSION = "v2";
+const VERSION = "v3";
 const SHELL = [
   "/",
   "/app.js",
+  "/live.js",
   "/scan.js",
   "/text.js",
   "/jsQR.js",

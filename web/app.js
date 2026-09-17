@@ -1,10 +1,24 @@
 // Moving boxes -- phone-first PWA. Hash routing so a scanned label can land on
 // /#/b/CODE without needing server-side routes for every view.
 
+import {
+  LiveChannel,
+  SETTLE_MS,
+  affects,
+  hasUnsavedEdits,
+  holdRefresh,
+  reconcile,
+} from "/live.js";
 import { splitItems } from "/text.js";
 
 const STATUSES = ["open", "packed", "loaded", "delivered", "unpacked"];
 const app = document.getElementById("app");
+
+// Who this tab is, for the lifetime of this page. It rides on every write as
+// X-Client-Id and comes back on the resulting notification, so this tab can
+// tell its own echo from somebody else's change. Uniqueness among the few
+// devices in one house is all that is needed, so Math.random is enough.
+const clientId = `${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
 
 // --- api ------------------------------------------------------------------
 
@@ -25,6 +39,7 @@ async function request(url, options = {}) {
   if (typeof options.body === "string") headers["content-type"] = "application/json";
   const key = keyStore.get();
   if (key) headers["X-API-Key"] = key;
+  headers["X-Client-Id"] = clientId;
 
   const response = await fetch(url, { ...options, headers });
 
@@ -76,7 +91,23 @@ function flagsOf(box) {
   ].filter(Boolean);
 }
 
-function show(markup) { app.innerHTML = markup; }
+function show(markup) {
+  app.innerHTML = markup;
+  markPristine(app);
+}
+
+// Remember what every field held the moment it was drawn. That is the only
+// way a later refresh can tell "nobody has touched this" from "half typed",
+// and it costs one walk of a small form.
+function markPristine(scope) {
+  for (const field of scope.querySelectorAll("input, textarea, select")) {
+    field.dataset.initial = fieldValue(field);
+  }
+}
+
+function fieldValue(field) {
+  return field.type === "checkbox" ? String(field.checked) : field.value;
+}
 
 // Any button that reaches the server goes through this. Without it a slow
 // action looks identical to a dead button, which is exactly how a print job
@@ -152,12 +183,72 @@ function showError(message) {
 
 // --- views ----------------------------------------------------------------
 
+const boxesPath = (query) =>
+  query ? `/search?q=${encodeURIComponent(query)}` : "/boxes?limit=100";
+
+const listHeading = (boxes, query) =>
+  query ? `Matches for “${query}”` : `${boxes.length} box${boxes.length === 1 ? "" : "es"}`;
+
+// A live refresh updates the rows in place (see reconcile in live.js) rather
+// than rebuilding the list's markup, so a row stays the same element across a
+// refresh and a thumb already on it still opens the box it was aimed at.
+//
+// These rows are built with DOM calls and textContent, so no value is ever
+// interpolated into markup and escape() has nothing to do here.
+function rowFor(box) {
+  const row = document.createElement("li");
+  row.dataset.key = box.code;
+  const link = document.createElement("a");
+  link.setAttribute("href", `#/b/${encodeURIComponent(box.code)}`);
+  for (const cls of ["c", "s", "w"]) {
+    const span = document.createElement("span");
+    span.className = cls;
+    link.append(span);
+  }
+  row.append(link);
+  return row;
+}
+
+function fillRow(row, box) {
+  const [code, summary, where] = row.querySelectorAll("span");
+  setText(code, box.code);
+  setText(summary, box.content_summary || "Nothing written down yet");
+  setText(where, box.current_location || box.status);
+}
+
+function setText(node, value) {
+  if (node && node.textContent !== value) node.textContent = value;
+}
+
+const patchBoxList = (list, boxes) =>
+  reconcile(list, boxes, { key: (box) => box.code, create: rowFor, update: fillRow });
+
+// Which page the browser thinks it is on. A background refresh has to prove
+// it is still the right one before it paints: tapping a row starts a
+// navigation that finishes long before a refetch begun a moment earlier does,
+// and without this the list would land back on top of the box you just opened.
+const here = () => location.hash || "#/";
+
+async function refreshBoxes(query, at) {
+  const boxes = await api(boxesPath(query));
+  if (here() !== at) return;
+  const list = document.getElementById("boxlist");
+  if (!list || !boxes.length) {
+    // Crossing into or out of the empty state changes the whole page, not
+    // just the rows, so there is nothing to patch.
+    await viewBoxes(query);
+    return;
+  }
+  patchBoxList(list, boxes);
+  setText(document.getElementById("list-heading"), listHeading(boxes, query));
+}
+
 async function viewBoxes(query) {
-  const boxes = await api(query ? `/search?q=${encodeURIComponent(query)}` : "/boxes?limit=100");
+  const boxes = await api(boxesPath(query));
 
   const list = boxes.length
-    ? `<ul class="boxlist">${boxes.map((b) => `
-        <li><a href="#/b/${escape(b.code)}">
+    ? `<ul class="boxlist" id="boxlist">${boxes.map((b) => `
+        <li data-key="${escape(b.code)}"><a href="#/b/${escape(b.code)}">
           <span class="c">${escape(b.code)}</span>
           <span class="s">${escape(b.content_summary || "Nothing written down yet")}</span>
           <span class="w">${escape(b.current_location || b.status)}</span>
@@ -176,7 +267,7 @@ async function viewBoxes(query) {
       <button class="btn" type="submit">Search</button>
     </form>
     <div class="section">
-      <h2>${query ? `Matches for “${escape(query)}”` : `${boxes.length} box${boxes.length === 1 ? "" : "es"}`}</h2>
+      <h2 id="list-heading">${escape(listHeading(boxes, query))}</h2>
       ${list}
     </div>`);
 
@@ -185,9 +276,11 @@ async function viewBoxes(query) {
     const value = new FormData(event.target).get("q").trim();
     location.hash = value ? `#/search/${encodeURIComponent(value)}` : "#/";
   });
+
+  watch({ name: "list", query, refresh: (at) => refreshBoxes(query, at) });
 }
 
-async function viewBox(code, { keepBanner = false } = {}) {
+async function viewBox(code, { keepBanner = false, at = null } = {}) {
   const held = keepBanner ? document.getElementById("say")?.outerHTML : null;
   const path = `/boxes/${encodeURIComponent(code)}`;
   const [box, items, rooms, photos, press] = await Promise.all([
@@ -197,6 +290,10 @@ async function viewBox(code, { keepBanner = false } = {}) {
     api(`${path}/photos`),
     api("/printer").catch(() => null),
   ]);
+  // Five requests take a moment, and a thumb can navigate away inside it. A
+  // background refresh says which page it was drawing for and gives up if
+  // that is no longer the page. Foreground calls pass nothing and always win.
+  if (at !== null && here() !== at) return;
   const room = rooms.find((r) => r.id === box.destination_room_id);
   const flags = flagsOf(box);
 
@@ -432,6 +529,9 @@ async function viewBox(code, { keepBanner = false } = {}) {
     try { await operation(); await viewBox(code); }
     catch (error) { showError(error.message); }
   }
+
+  // Last, so a half-built page is never the thing a refresh redraws.
+  watch({ name: "box", code, refresh: (at) => viewBox(code, { keepBanner: true, at }) });
 }
 
 async function viewNew() {
@@ -485,6 +585,145 @@ async function viewNew() {
   });
 }
 
+// --- live updates ---------------------------------------------------------
+//
+// Two devices are packing the same house, so the screen has to follow the
+// database rather than the last reload. The server only ever says *which box*
+// changed; the refresh below refetches through the same endpoints the first
+// draw used, so there is one code path deciding what a box looks like and a
+// dropped or duplicated notification costs a wasted GET and nothing more.
+//
+// The hard part is not the socket. It is that a refresh is an interruption:
+// it can take the keyboard away mid-word, throw away an unsaved edit, discard
+// an AI draft nobody accepted yet, or -- worst -- move a row out from under a
+// thumb that is already coming down on it. So every refresh asks permission
+// first, and when the answer is no it waits and says so instead.
+
+// The view currently on screen, and how to bring it up to date. Views that
+// are not in this list -- the new-box form, the scanner -- are never
+// refreshed at all: `affects` matches nothing for them.
+let view = null;
+let pending = false;
+let flushTimer = null;
+
+// Gesture state. `pointerDown` is the tap hazard proper; `lastTouch` keeps the
+// screen still for a moment afterwards, because the click has not landed yet
+// when the finger lifts.
+let pointerDown = false;
+let lastTouch = 0;
+
+function watch(next) {
+  view = { ...next, clientId, at: here() };
+  // Whatever was just drawn is current by definition.
+  pending = false;
+  notice.hidden = true;
+}
+
+function holdState() {
+  const draft = document.getElementById("draft-panel");
+  return {
+    pointerDown,
+    lastTouch,
+    editing: hasUnsavedEdits(editableFields()),
+    // A draft exists only in the DOM until somebody accepts it. A redraw
+    // would throw away a proposal that cost ten seconds of a vision model.
+    drafting: Boolean(draft && draft.firstElementChild),
+  };
+}
+
+function editableFields() {
+  return Array.from(app.querySelectorAll("input, textarea, select"))
+    .filter((field) => field.type !== "file")
+    .map((field) => ({
+      value: fieldValue(field),
+      initial: field.dataset.initial ?? "",
+      focused: document.activeElement === field,
+    }));
+}
+
+function requestRefresh() {
+  if (!view || !view.refresh) return;
+  // Nothing on a screen that is off needs to be right; `wake` catches up.
+  if (document.hidden) { pending = true; return; }
+  if (holdRefresh(holdState())) {
+    pending = true;
+    notice.hidden = false;
+    scheduleFlush();
+    return;
+  }
+  runRefresh();
+}
+
+async function runRefresh() {
+  if (!view || !view.refresh) return;
+  pending = false;
+  notice.hidden = true;
+  const target = view;
+  try {
+    await target.refresh(target.at);
+  } catch {
+    // A background refresh that fails must leave the screen alone. Replacing
+    // a working page with an error because a poll lost the wifi for a second
+    // would be worse than showing something a few seconds stale.
+  }
+}
+
+function scheduleFlush() {
+  clearTimeout(flushTimer);
+  flushTimer = setTimeout(flush, SETTLE_MS);
+}
+
+function flush() {
+  flushTimer = null;
+  if (!pending || !view) return;
+  const hold = holdState();
+  // Still mid-edit or mid-draft: the notice stays up and the person decides.
+  // Waking this again is the job of the focusout/change listeners below, not
+  // of a timer that would otherwise tick forever behind a focused field.
+  if (hold.editing || hold.drafting) return;
+  if (holdRefresh(hold)) { scheduleFlush(); return; }
+  runRefresh();
+}
+
+const notice = document.getElementById("live");
+notice.addEventListener("click", () => runRefresh());
+
+addEventListener("pointerdown", () => {
+  pointerDown = true;
+  lastTouch = Date.now();
+}, { capture: true, passive: true });
+
+for (const kind of ["pointerup", "pointercancel"]) {
+  addEventListener(kind, () => {
+    pointerDown = false;
+    lastTouch = Date.now();
+    if (pending) scheduleFlush();
+  }, { capture: true, passive: true });
+}
+
+// Scrolling is a gesture too: re-rendering under a moving list makes it jump.
+addEventListener("scroll", () => { lastTouch = Date.now(); }, { capture: true, passive: true });
+
+// Leaving a field, or committing a dropdown, is the moment a held refresh
+// becomes safe again.
+for (const kind of ["focusout", "change"]) {
+  addEventListener(kind, () => { if (pending) scheduleFlush(); }, { capture: true, passive: true });
+}
+
+function socketUrl() {
+  const scheme = location.protocol === "https:" ? "wss:" : "ws:";
+  const key = keyStore.get();
+  // The key goes in the query because a browser's WebSocket constructor takes
+  // a URL and nothing else -- there is no way to attach a header to the
+  // handshake. Usually there is no key at all: this runs on a tailnet.
+  return `${scheme}//${location.host}/api/events${key ? `?key=${encodeURIComponent(key)}` : ""}`;
+}
+
+const live = new LiveChannel({
+  url: socketUrl,
+  onEvent: (event) => { if (affects(event, view)) requestRefresh(); },
+});
+
 // --- routing --------------------------------------------------------------
 
 const routes = [
@@ -497,6 +736,12 @@ const routes = [
 
 async function route() {
   const hash = location.hash || "#/";
+  // Nothing is watched until a view says so. A view that throws, and every
+  // view without a refresh of its own, therefore ends up unwatched rather
+  // than inheriting the previous page's idea of what to redraw.
+  view = null;
+  pending = false;
+  notice.hidden = true;
   for (const [pattern, handler] of routes) {
     const match = hash.match(pattern);
     if (match) {
@@ -512,6 +757,7 @@ async function route() {
 
 addEventListener("hashchange", route);
 route();
+live.start();
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js").catch(() => { /* http, or blocked */ });

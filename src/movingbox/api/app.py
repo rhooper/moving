@@ -2,23 +2,38 @@
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from collections.abc import Iterator
 from urllib.parse import quote
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.websockets import WebSocketDisconnect
 
 from .. import db, store
 from ..config import ROOT, Config, from_env
 from ..labels.layout import FONT_PATH
+from . import events
 
 WEB_ROOT = ROOT / "web"
 
 
 def get_config(request: Request) -> Config:
     return request.app.state.config
+
+
+def get_events(
+    request: Request, x_client_id: str | None = Header(default=None)
+) -> events.Publisher:
+    """The change channel, bound to the device that made this request.
+
+    Tagging each event with its origin is what lets that device ignore its own
+    echo: it has already redrawn from the response it got, and redrawing again
+    a moment later is how a half-typed item name disappears.
+    """
+    return events.Publisher(request.app.state.events, origin=x_client_id)
 
 
 def get_conn(config: Config = Depends(get_config)) -> Iterator[sqlite3.Connection]:
@@ -67,9 +82,26 @@ def require_api_key(
         raise HTTPException(status_code=401, detail="Missing or invalid X-API-Key")
 
 
+async def _until_the_client_goes(socket: WebSocket) -> None:
+    """Finish when the browser hangs up.
+
+    Nothing else ever reads this socket, so without a reader a phone that
+    walked out of range would leave the sending coroutine parked on its queue
+    until the next heartbeat failed. Anything the client sends is discarded:
+    the channel is one-way by design.
+    """
+    try:
+        while True:
+            if (await socket.receive())["type"] == "websocket.disconnect":
+                return
+    except (WebSocketDisconnect, RuntimeError):
+        return
+
+
 def create_app(config: Config | None = None) -> FastAPI:
     app = FastAPI(title="Moving Box Tracker", version="0.1.0")
     app.state.config = config or from_env()
+    app.state.events = events.Hub()
 
     from . import admin, boxes, labels, photos, rooms
 
@@ -82,6 +114,46 @@ def create_app(config: Config | None = None) -> FastAPI:
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.websocket("/api/events")
+    async def changes(socket: WebSocket) -> None:
+        """Tell connected clients which box just changed.
+
+        Deliberately takes no `get_conn`: a websocket endpoint must be `async
+        def`, and an async endpoint holding a connection opened in the
+        threadpool is the exact crash documented on get_conn. It needs none --
+        every message is a kind and a code, and clients re-fetch over REST.
+
+        The key travels in the query string because it has to: a browser's
+        WebSocket constructor takes a URL and nothing else, so X-API-Key
+        cannot be attached to the handshake. That does put the key in the
+        server's access log, which is why `/api/events` is refused outright
+        rather than degraded when the key is wrong.
+        """
+        settings: Config = socket.app.state.config
+        if settings.api_key is not None and socket.query_params.get("key") != settings.api_key:
+            # Closing before accepting rejects the handshake outright, which
+            # is what a browser reports as a failed connection.
+            await socket.close(code=1008)
+            return
+
+        await socket.accept()
+        hub: events.Hub = socket.app.state.events
+        hanging_up = asyncio.create_task(_until_the_client_goes(socket))
+        try:
+            with hub.subscribe() as queue:
+                while not hanging_up.done():
+                    try:
+                        message = await asyncio.wait_for(queue.get(), timeout=hub.heartbeat)
+                    except TimeoutError:
+                        message = {"kind": events.PING}
+                    if hanging_up.done():
+                        break
+                    await socket.send_json(message)
+        except WebSocketDisconnect:
+            pass
+        finally:
+            hanging_up.cancel()
 
     @app.get("/b/{code}")
     def scanned(code: str, conn: sqlite3.Connection = Depends(get_conn)):

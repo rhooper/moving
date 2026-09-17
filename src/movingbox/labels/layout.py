@@ -239,9 +239,7 @@ def from_box(
     if box.get("weight_kg"):
         footer_parts.append(f"{box['weight_kg']:g} kg")
 
-    source = " ".join(
-        part for part in (source_name, box.get("source_location")) if part
-    ) or None
+    source = " ".join(part for part in (source_name, box.get("source_location")) if part) or None
 
     return LabelData(
         code=box["code"],

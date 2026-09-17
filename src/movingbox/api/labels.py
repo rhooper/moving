@@ -11,7 +11,8 @@ from fastapi.responses import Response
 from .. import store
 from ..config import Config
 from ..labels import layout, printer
-from .app import get_config, get_conn
+from . import events
+from .app import get_config, get_conn, get_events
 from .schemas import PrintRequest
 
 router = APIRouter(prefix="/api/labels", tags=["labels"])
@@ -47,6 +48,7 @@ def print_labels(
     body: PrintRequest,
     conn: sqlite3.Connection = Depends(get_conn),
     config: Config = Depends(get_config),
+    changes: events.Publisher = Depends(get_events),
 ) -> dict:
     # Resolve every code before printing anything. A partly-printed batch
     # wastes tape and leaves you unsure which labels actually came out.
@@ -68,6 +70,9 @@ def print_labels(
                 detail=(f"Could not print {code}: {failure}. {printer.status(config)['detail']}"),
             ) from failure
         store.record_print(conn, code)
+        # Per label, not per batch: a long batch should light up each box page
+        # as its tape comes out, not all at the end.
+        changes.publish(events.LABEL_PRINTED, code)
         printed.append({"code": code, "output": str(written)})
 
     return {"printed": printed, **printer.status(config)}

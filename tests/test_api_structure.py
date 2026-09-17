@@ -2,6 +2,8 @@
 
 import inspect
 
+from starlette.routing import WebSocketRoute
+
 from movingbox.api.app import create_app, get_conn
 
 
@@ -67,4 +69,24 @@ def test_no_route_using_the_database_is_async(config):
         "these routes take a database connection but are async: "
         + ", ".join(offenders)
         + " -- make them sync `def`"
+    )
+
+
+def test_no_websocket_takes_a_database_connection(config):
+    """The same rule, from the other end.
+
+    A websocket endpoint has no choice about being `async def`, so the
+    invariant above cannot be satisfied by making it sync -- it has to need no
+    database at all. That is what forces the change channel to carry only an
+    event kind and a box code and let clients re-fetch: it is the one shape
+    that needs nothing from sqlite.
+    """
+    sockets = [r for r in all_routes(create_app(config)) if isinstance(r, WebSocketRoute)]
+
+    assert [r.path for r in sockets] == ["/api/events"], "the change socket moved or vanished"
+    offenders = [r.path for r in sockets if uses(r.dependant, get_conn)]
+    assert offenders == [], (
+        "these websockets take a database connection: "
+        + ", ".join(offenders)
+        + " -- an async endpoint plus a threadpool sqlite handle is a crash"
     )
