@@ -6,7 +6,7 @@ import sqlite3
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
-from .. import store
+from .. import store, summarise
 from .app import get_conn
 from .schemas import BoxWrite, ItemCreate, LocationChange, StatusChange
 
@@ -97,6 +97,17 @@ def delete_item(item_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> R
     if not store.delete_item(conn, item_id):
         raise HTTPException(status_code=404, detail=f"No item {item_id}")
     return Response(status_code=204)
+
+
+@router.get("/boxes/{code}/summary-suggestion")
+def suggest_summary(code: str, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    """A summary assembled from the box's items.
+
+    Proposed, never applied -- the same rule as a photo draft. The caller puts
+    it in the field and decides whether to keep it.
+    """
+    _require(conn, code)
+    return {"summary": summarise.from_items(store.list_items(conn, code))}
 
 
 @router.get("/boxes/{code}/events")

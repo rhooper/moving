@@ -102,12 +102,35 @@ def status(config: Config, find_device=None) -> dict:
     }
 
 
+def to_raster(image: Image.Image) -> Image.Image:
+    """Orient a readable design for the tape.
+
+    The printer always lays PRINTABLE_WIDTH dots across the tape, so a
+    landscape design -- laid out along the tape and therefore that many dots
+    *tall* -- is rotated a quarter turn. Portrait designs pass through.
+    """
+    if image.width == PRINTABLE_WIDTH:
+        return image
+    if image.height == PRINTABLE_WIDTH:
+        # expand=True keeps every pixel; -90 puts the start of the design at
+        # the leading edge of the tape, so it reads the same way up as the
+        # preview once the label is turned.
+        return image.rotate(-90, expand=True)
+    raise ValueError(
+        f"a label must be {PRINTABLE_WIDTH}px on one side to fit 62mm tape; "
+        f"this one is {image.width}x{image.height}"
+    )
+
+
 def build_instructions(image: Image.Image, *, model: str, label: str) -> bytes:
     """Convert a rendered label into QL raster instructions.
 
     Testable without hardware, which is most of the value: it proves the
     geometry is one the printer will accept before any tape is involved.
     """
+    # Rotate first: a landscape design is the right size, just the wrong way
+    # round, and rejecting it for its width would be wrong.
+    image = to_raster(image)
     if image.width != PRINTABLE_WIDTH:
         # brother_ql would try to rescale, and its rescale path calls
         # PIL.Image.ANTIALIAS -- removed in Pillow 10 -- so the real failure

@@ -29,6 +29,9 @@ class Config:
     printer_model: str = "QL-800"
     printer_queue: str | None = None  # CUPS queue name, for the cups_raw backend
     label_id: str = "62"  # 62 mm continuous DK-2205; 696 printable dots
+    #: "landscape" is a fixed 4 inches along the tape with room for the
+    #: itemised contents; "portrait" is the older cut-to-content form.
+    label_orientation: str = "landscape"
     ollama_url: str = "http://localhost:11434"
     vision_model: str = "qwen3-vl:30b"
 
@@ -50,6 +53,7 @@ def from_env(env: dict[str, str] | None = None) -> Config:
         printer_model=e.get("MOVING_PRINTER_MODEL", "QL-800"),
         printer_queue=e.get("MOVING_PRINTER_QUEUE") or None,
         label_id=e.get("MOVING_LABEL_ID", "62"),
+        label_orientation=e.get("MOVING_LABEL_ORIENTATION", "landscape"),
         ollama_url=e.get("MOVING_OLLAMA_URL", "http://localhost:11434").rstrip("/"),
         vision_model=e.get("MOVING_VISION_MODEL", "qwen3-vl:30b"),
     )

@@ -57,7 +57,7 @@ class TestPrintFailures:
             yield c
 
     def test_a_hardware_failure_is_reported_not_a_bare_500(self, client, config, monkeypatch):
-        code = client.post("/api/boxes", json={}).json()["code"]
+        code = client.post("/api/boxes", json={"content_summary": "pots and pans"}).json()["code"]
 
         class Broken:
             def print_label(self, image, *, code, copies=1):
@@ -73,7 +73,7 @@ class TestPrintFailures:
 
     def test_a_failed_print_is_not_recorded_as_printed(self, client, monkeypatch):
         # A print count that rises when nothing came out is worse than useless.
-        code = client.post("/api/boxes", json={}).json()["code"]
+        code = client.post("/api/boxes", json={"content_summary": "pots and pans"}).json()["code"]
 
         class Broken:
             def print_label(self, image, *, code, copies=1):

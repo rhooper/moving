@@ -49,10 +49,11 @@ def main() -> None:
     if golden:
         # The golden cases live with their test, so there is one definition.
         sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-        from tests.test_label_golden import CASES
+        from tests.test_label_golden import CASES, ORIENTATIONS
 
         for name, data in CASES.items():
-            layout.render(data).save(outdir / f"label_{name}.png")
+            image = layout.render(data, orientation=ORIENTATIONS[name])
+            image.save(outdir / f"label_{name}.png")
             print(f"golden {name} -> {outdir / f'label_{name}.png'}")
         return
 

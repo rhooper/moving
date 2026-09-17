@@ -26,17 +26,33 @@ def _label_for(conn: sqlite3.Connection, code: str, config: Config) -> layout.La
         base_url=config.base_url,
         room_name=store.room_name(conn, box["destination_room_id"]),
         source_name=store.room_name(conn, box["source_room_id"]),
+        items=store.list_items(conn, code),
     )
+
+
+def has_contents(conn: sqlite3.Connection, code: str) -> bool:
+    """Whether anything is recorded about what is in the box."""
+    box = store.get_box(conn, code)
+    if box is None:
+        return False
+    if (box.get("content_summary") or "").strip():
+        return True
+    return bool(store.list_items(conn, code))
 
 
 @router.get("/preview/{code}.png")
 def preview(
     code: str,
     height: int | None = Query(default=None, description="Exact cut height; omit to fit content"),
+    orientation: str | None = Query(default=None, description="landscape or portrait"),
     conn: sqlite3.Connection = Depends(get_conn),
     config: Config = Depends(get_config),
 ) -> Response:
-    image = layout.render(_label_for(conn, code, config), height=height)
+    image = layout.render(
+        _label_for(conn, code, config),
+        height=height,
+        orientation=orientation or config.label_orientation,
+    )
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
     return Response(content=buffer.getvalue(), media_type="image/png")
@@ -52,12 +68,30 @@ def print_labels(
     # wastes tape and leaves you unsure which labels actually came out.
     labels = [(code, _label_for(conn, code, config)) for code in body.codes]
 
+    if not body.allow_empty:
+        blank = [code for code in body.codes if not has_contents(conn, code)]
+        if blank:
+            # 409, not 400: the request is fine, the box's state is not.
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Nothing is recorded in {', '.join(blank)}. Add contents first, "
+                    f"or tick 'print anyway' to label an empty box."
+                ),
+            )
+
     backend = printer.get_backend(config)
     printed = []
     for code, data in labels:
         try:
             written = backend.print_label(
-                layout.render(data, height=body.height), code=code, copies=body.copies
+                layout.render(
+                    data,
+                    height=body.height,
+                    orientation=body.orientation or config.label_orientation,
+                ),
+                code=code,
+                copies=body.copies,
             )
         except Exception as failure:  # noqa: BLE001 - every backend fails differently
             # 502: we are the gateway to the hardware, and the hardware failed.

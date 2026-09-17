@@ -62,6 +62,11 @@ class PrintRequest(Strict):
     codes: list[str] = Field(min_length=1)
     copies: int = Field(default=1, ge=1, le=10)
     height: int | None = None  # exact cut height; omit to fit content
+    orientation: Literal["landscape", "portrait"] | None = None
+    #: Print a box whose contents are not recorded. Off by default: a label
+    #: with no contents costs tape and leaves the box indistinguishable from
+    #: an unlabelled one until it is opened.
+    allow_empty: bool = False
 
 
 class CaptionUpdate(Strict):

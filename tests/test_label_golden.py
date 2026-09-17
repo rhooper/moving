@@ -17,6 +17,15 @@ from movingbox.labels import layout
 
 GOLDEN = Path(__file__).parent / "golden"
 
+#: Which renderer each golden exercises. Landscape is the default in use;
+#: portrait is kept because it is still reachable and still cut-to-content.
+ORIENTATIONS = {
+    "typical": "portrait",
+    "sparse": "portrait",
+    "landscape": "landscape",
+    "landscape_full": "landscape",
+}
+
 CASES = {
     "typical": layout.LabelData(
         code="B-0042",
@@ -31,6 +40,26 @@ CASES = {
         code="B-0007",
         url="https://moving.example.ts.net/b/B-0007",
     ),
+    "landscape": layout.LabelData(
+        code="B-0042",
+        url="https://moving.example.ts.net/b/B-0042",
+        room="Kitchen",
+        source="Basement shelf 3",
+        summary="pots, 3 baking pans, kettle, 2 cutting boards",
+        flags=("FRAGILE",),
+        footer="box 3 of 5 - 12.4 kg",
+        items=["stock pot", "3 baking pans", "kettle", "2 cutting boards", "colander"],
+    ),
+    "landscape_full": layout.LabelData(
+        code="B-0123",
+        url="https://moving.example.ts.net/b/B-0123",
+        room="Upstairs Back Bedroom",
+        source="Living room bookcase",
+        summary="paperbacks A-M, photo albums, box files, atlas, framed prints",
+        flags=("FRAGILE", "OPEN FIRST", "HEAVY"),
+        footer="box 11 of 14 - 18.2 kg",
+        items=[f"item number {n}" for n in range(24)],
+    ),
 }
 
 
@@ -43,7 +72,7 @@ def test_label_matches_its_golden_reference(name):
             f"  uv run python scripts/claude/render_samples.py tests/golden --golden"
         )
 
-    rendered = layout.render(CASES[name])
+    rendered = layout.render(CASES[name], orientation=ORIENTATIONS[name])
     reference = Image.open(reference_path)
 
     assert rendered.size == reference.size, (

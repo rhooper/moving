@@ -1,4 +1,9 @@
-"""Label rendering for 62 mm continuous DK-2205 tape on a QL-800."""
+"""Label rendering for 62 mm continuous DK-2205 tape on a QL-800.
+
+These cover the *portrait* renderer, which is cut to content along the tape.
+Landscape (the default, a fixed 4 inches) is covered in test_landscape.py, so
+every render() call here passes orientation explicitly.
+"""
 
 import pytest
 
@@ -34,13 +39,13 @@ def a_label(**overrides) -> layout.LabelData:
 def test_label_is_the_printable_width_of_62mm_tape(conn):
     # brother_ql reports dots_printable=(696, 0) for label '62'. Rendering any
     # other width means the printer scales or clips it.
-    image = layout.render(a_label())
+    image = layout.render(a_label(), orientation="portrait")
 
     assert image.width == layout.PRINTABLE_WIDTH == 696
 
 
 def test_label_is_monochrome_for_black_only_tape(conn):
-    image = layout.render(a_label())
+    image = layout.render(a_label(), orientation="portrait")
 
     assert image.mode == "1"
 
@@ -50,19 +55,19 @@ def test_the_rendered_qr_decodes_back_to_the_box_url(conn):
     # the quiet zone are wrong the label looks fine and scans not at all.
     data = a_label()
 
-    assert decode_qr(layout.render(data)) == data.url
+    assert decode_qr(layout.render(data, orientation="portrait")) == data.url
 
 
 def test_the_qr_still_decodes_with_a_long_url(conn):
     data = a_label(url="https://moving.example.ts.net/b/B-0042?from=scan&ref=truck")
 
-    assert decode_qr(layout.render(data)) == data.url
+    assert decode_qr(layout.render(data, orientation="portrait")) == data.url
 
 
 def test_a_summary_far_too_long_is_truncated_not_overflowed(conn):
     data = a_label(summary="thing, " * 400)
 
-    image = layout.render(data)
+    image = layout.render(data, orientation="portrait")
 
     # Never longer than the cap, but it should have filled the tape rather than
     # been truncated down to nothing.
@@ -76,7 +81,7 @@ def test_a_summary_far_too_long_is_truncated_not_overflowed(conn):
 def test_a_box_with_almost_no_data_still_renders(conn):
     sparse = layout.LabelData(code="B-0001", url="https://test.example.ts.net/b/B-0001")
 
-    image = layout.render(sparse)
+    image = layout.render(sparse, orientation="portrait")
 
     assert decode_qr(image) == sparse.url
 
@@ -84,7 +89,7 @@ def test_a_box_with_almost_no_data_still_renders(conn):
 def test_a_very_long_room_name_is_shrunk_to_fit(conn):
     data = a_label(room="Upstairs Back Bedroom Wardrobe")
 
-    image = layout.render(data)
+    image = layout.render(data, orientation="portrait")
 
     assert image.width == layout.PRINTABLE_WIDTH
 
@@ -92,14 +97,14 @@ def test_a_very_long_room_name_is_shrunk_to_fit(conn):
 def test_rendering_is_deterministic(conn):
     # Golden-image comparison is only meaningful if the same input gives the
     # same bytes -- hence a bundled font rather than a system one.
-    first = layout.render(a_label())
-    second = layout.render(a_label())
+    first = layout.render(a_label(), orientation="portrait")
+    second = layout.render(a_label(), orientation="portrait")
 
     assert first.tobytes() == second.tobytes()
 
 
 def test_label_height_can_be_overridden_for_a_longer_cut(conn):
-    image = layout.render(a_label(), height=1400)
+    image = layout.render(a_label(), height=1400, orientation="portrait")
 
     assert image.height == 1400
 
@@ -139,7 +144,7 @@ class TestFromBox:
 @pytest.mark.parametrize("bad", [0, -5, 100])
 def test_an_unprintable_height_is_rejected(conn, bad):
     with pytest.raises(ValueError):
-        layout.render(a_label(), height=bad)
+        layout.render(a_label(), height=bad, orientation="portrait")
 
 
 class TestSourceOnLabel:

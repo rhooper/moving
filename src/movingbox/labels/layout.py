@@ -38,6 +38,14 @@ BAND_PADDING = 20
 #: Scratch canvas to lay out on before cropping to the measured height.
 _WORK_HEIGHT = 4000
 
+#: 4 inches at 300 dpi. A landscape label is laid out along the tape rather
+#: than across it, giving room for the itemised contents beside the identity.
+#: The printer still lays 696 dots across the tape, so the design is rotated at
+#: raster time -- see printer.to_raster.
+LANDSCAPE_LENGTH = 1200
+#: Fraction of the length given to the identity block; the rest lists contents.
+IDENTITY_SHARE = 0.55
+
 FONT_PATH = Path(__file__).resolve().parent / "fonts" / "Inter.ttf"
 
 
@@ -50,6 +58,8 @@ class LabelData:
     summary: str | None = None
     flags: tuple[str, ...] = field(default_factory=tuple)
     footer: str | None = None
+    #: Itemised contents, already rendered as display strings ("3 baking pans").
+    items: list[str] = field(default_factory=list)
 
 
 @lru_cache(maxsize=64)
@@ -133,6 +143,26 @@ def _chips(draw, x: int, y: int, max_width: int, flags: tuple[str, ...]) -> int:
 
 
 def render(
+    data: LabelData,
+    *,
+    width: int = PRINTABLE_WIDTH,
+    height: int | None = None,
+    orientation: str = "landscape",
+) -> Image.Image:
+    """Render a label as a readable image.
+
+    The result reads normally on screen whichever orientation is used;
+    rotating a landscape design onto the tape is the printer's job
+    (printer.to_raster), so that a preview is never shown sideways.
+    """
+    if orientation == "landscape":
+        return _render_landscape(data)
+    if orientation != "portrait":
+        raise ValueError(f"orientation must be 'landscape' or 'portrait', not {orientation!r}")
+    return _render_portrait(data, width=width, height=height)
+
+
+def _render_portrait(
     data: LabelData, *, width: int = PRINTABLE_WIDTH, height: int | None = None
 ) -> Image.Image:
     """Render a label. Returns a 1-bit image ready for the printer.
@@ -213,12 +243,25 @@ def render(
     return canvas.point(lambda p: 255 if p > 128 else 0).convert("1")
 
 
+def display_items(items: list[dict]) -> list[str]:
+    """Item rows as the short strings that go on the label."""
+    lines = []
+    for item in items or []:
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        qty = item.get("qty") or 1
+        lines.append(f"{qty} {name}" if qty and qty > 1 else name)
+    return lines
+
+
 def from_box(
     box: dict,
     *,
     base_url: str,
     room_name: str | None = None,
     source_name: str | None = None,
+    items: list[dict] | None = None,
 ) -> LabelData:
     """Build label content from a box row.
 
@@ -239,9 +282,7 @@ def from_box(
     if box.get("weight_kg"):
         footer_parts.append(f"{box['weight_kg']:g} kg")
 
-    source = " ".join(
-        part for part in (source_name, box.get("source_location")) if part
-    ) or None
+    source = " ".join(part for part in (source_name, box.get("source_location")) if part) or None
 
     return LabelData(
         code=box["code"],
@@ -251,4 +292,121 @@ def from_box(
         summary=box.get("content_summary"),
         flags=tuple(flags),
         footer=" - ".join(footer_parts) or None,
+        items=display_items(items or []),
     )
+
+
+def _render_landscape(data: LabelData) -> Image.Image:
+    """A 4-inch label: identity on the left, itemised contents on the right.
+
+    Fixed length rather than cut-to-content. A row of boxes with labels of
+    matching size is far easier to read along a shelf, and at this size there
+    is room for the contents list that makes opening the right box possible.
+    """
+    width, height = LANDSCAPE_LENGTH, PRINTABLE_WIDTH
+    canvas = Image.new("L", (width, height), 255)
+    draw = ImageDraw.Draw(canvas)
+
+    split = int(width * IDENTITY_SHARE)
+    left_width = split - 2 * MARGIN
+
+    # --- identity column ---
+    qr = _qr(data.url, 210)
+    qr_x = split - MARGIN - qr.width
+    canvas.paste(qr, (qr_x, MARGIN))
+
+    code_font = _fit(draw, data.code, qr_x - MARGIN - 16, start=96, weight=800)
+    draw.text((MARGIN, MARGIN), data.code, font=code_font, fill=0, anchor="lt")
+
+    y = MARGIN + code_font.size + 12
+    if data.flags:
+        y = _chips(draw, MARGIN, y, qr_x - MARGIN - 16, data.flags)
+    y = max(y, MARGIN + qr.height) + 14
+
+    if data.room:
+        band_height = 78
+        draw.rectangle([0, y, split - MARGIN // 2, y + band_height], fill=0)
+        room_font = _fit(
+            draw, data.room.upper(), left_width - 2 * BAND_PADDING, start=58, weight=800
+        )
+        draw.text(
+            (MARGIN + (left_width - 2 * BAND_PADDING) // 2 + BAND_PADDING, y + band_height // 2),
+            data.room.upper(),
+            font=room_font,
+            fill=255,
+            anchor="mm",
+        )
+        y += band_height + 12
+
+    if data.source:
+        source_font = _font(26, weight=500)
+        for line in _wrap(draw, f"from: {data.source}", source_font, left_width)[:2]:
+            draw.text((MARGIN, y), line, font=source_font, fill=0, anchor="lt")
+            y += source_font.size + 4
+        y += 6
+
+    footer_font = _font(24, weight=500)
+    footer_room = (footer_font.size + 10) if data.footer else 0
+
+    if data.summary:
+        summary_font = _font(28, weight=400)
+        line_height = summary_font.size + 5
+        room_for = max(0, (height - MARGIN - footer_room - y) // line_height)
+        lines = _wrap(draw, data.summary, summary_font, left_width)
+        if len(lines) > room_for:
+            lines = lines[:room_for]
+            if lines:
+                lines[-1] = lines[-1].rstrip(" ,") + "..."
+        for line in lines:
+            draw.text((MARGIN, y), line, font=summary_font, fill=0, anchor="lt")
+            y += line_height
+
+    if data.footer:
+        draw.text(
+            (MARGIN, height - MARGIN - footer_font.size),
+            data.footer,
+            font=footer_font,
+            fill=0,
+            anchor="lt",
+        )
+
+    # --- contents column ---
+    draw.line([(split, MARGIN), (split, height - MARGIN)], fill=0, width=2)
+
+    item_x = split + MARGIN
+    item_width = width - item_x - MARGIN
+    heading = _font(22, weight=700)
+    draw.text((item_x, MARGIN), "CONTENTS", font=heading, fill=0, anchor="lt")
+    item_y = MARGIN + heading.size + 8
+
+    item_font = _font(26, weight=400)
+    line_height = item_font.size + 6
+    room_for = max(0, (height - MARGIN - item_y) // line_height)
+
+    shown = data.items[:room_for]
+    hidden = len(data.items) - len(shown)
+    if hidden > 0 and shown:
+        # Spend the last line saying how much is not listed, rather than
+        # stopping mid-list and implying the box holds only what is printed.
+        shown = shown[:-1]
+        hidden = len(data.items) - len(shown)
+
+    for item in shown:
+        text = item
+        while draw.textlength(text, font=item_font) > item_width and len(text) > 4:
+            text = text[:-2]
+        if text != item:
+            text = text.rstrip(" ,") + "..."
+        draw.text((item_x, item_y), text, font=item_font, fill=0, anchor="lt")
+        item_y += line_height
+
+    if hidden > 0:
+        draw.text(
+            (item_x, item_y),
+            f"+ {hidden} more",
+            font=_font(24, weight=600),
+            fill=0,
+            anchor="lt",
+        )
+
+    return canvas.point(lambda p: 255 if p > 128 else 0).convert("1")

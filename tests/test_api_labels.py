@@ -1,4 +1,9 @@
-"""Label preview and print endpoints."""
+"""Label preview and print endpoints.
+
+Boxes here are created with a summary: printing a box whose contents are not
+recorded is refused (see test_print_gate.py), and these tests are about the
+printing path rather than that gate.
+"""
 
 import io
 
@@ -18,7 +23,7 @@ def client(config):
 
 
 def test_the_preview_is_a_png(client):
-    code = client.post("/api/boxes", json={}).json()["code"]
+    code = client.post("/api/boxes", json={"content_summary": "pots and pans"}).json()["code"]
 
     response = client.get(f"/api/labels/preview/{code}.png")
 
@@ -55,7 +60,7 @@ def test_previewing_an_unknown_box_is_404(client):
 
 
 def test_printing_writes_through_the_fake_backend(client, config):
-    code = client.post("/api/boxes", json={}).json()["code"]
+    code = client.post("/api/boxes", json={"content_summary": "pots and pans"}).json()["code"]
 
     response = client.post("/api/labels/print", json={"codes": [code]})
 
@@ -64,7 +69,7 @@ def test_printing_writes_through_the_fake_backend(client, config):
 
 
 def test_printing_is_recorded_on_the_box(client):
-    code = client.post("/api/boxes", json={}).json()["code"]
+    code = client.post("/api/boxes", json={"content_summary": "pots and pans"}).json()["code"]
 
     client.post("/api/labels/print", json={"codes": [code]})
 
@@ -78,7 +83,7 @@ def test_printing_is_recorded_on_the_box(client):
 def test_reprinting_increments_rather_than_resets(client):
     # Labels get lost and boxes get re-taped; knowing a label was reprinted
     # explains why two labels with the same code exist.
-    code = client.post("/api/boxes", json={}).json()["code"]
+    code = client.post("/api/boxes", json={"content_summary": "pots and pans"}).json()["code"]
 
     client.post("/api/labels/print", json={"codes": [code]})
     client.post("/api/labels/print", json={"codes": [code]})
@@ -87,8 +92,8 @@ def test_reprinting_increments_rather_than_resets(client):
 
 
 def test_printing_several_boxes_in_one_request(client, config):
-    first = client.post("/api/boxes", json={}).json()["code"]
-    second = client.post("/api/boxes", json={}).json()["code"]
+    first = client.post("/api/boxes", json={"content_summary": "pots and pans"}).json()["code"]
+    second = client.post("/api/boxes", json={"content_summary": "pots and pans"}).json()["code"]
 
     response = client.post("/api/labels/print", json={"codes": [first, second]})
 
@@ -97,7 +102,7 @@ def test_printing_several_boxes_in_one_request(client, config):
 
 
 def test_printing_an_unknown_box_is_404_and_prints_nothing(client, config):
-    good = client.post("/api/boxes", json={}).json()["code"]
+    good = client.post("/api/boxes", json={"content_summary": "pots and pans"}).json()["code"]
 
     response = client.post("/api/labels/print", json={"codes": [good, "B-9999"]})
 
