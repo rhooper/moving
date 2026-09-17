@@ -16,9 +16,20 @@ set -euo pipefail
 # keeps that from becoming a trap for the next edit.
 CDPATH=""
 
-LABEL="${MOVING_SERVICE_LABEL:-ca.toybox.moving}"
+# MOVING_SERVICE_LABEL / MOVING_SERVICE_PORT let a throwaway second instance be
+# installed alongside the real one -- which is how the deploy path gets tested
+# without restarting the service people are using. `tailscale serve` is the one
+# thing a second instance must not touch: there is a single :443 handler for the
+# whole machine, so it is only configured for the default install.
+DEFAULT_LABEL="ca.toybox.moving"
+DEFAULT_PORT=8787
+LABEL="${MOVING_SERVICE_LABEL:-$DEFAULT_LABEL}"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-PORT="${MOVING_SERVICE_PORT:-8787}"
+PORT="${MOVING_SERVICE_PORT:-$DEFAULT_PORT}"
+IS_DEFAULT_INSTANCE=0
+if [[ "$LABEL" == "$DEFAULT_LABEL" && "$PORT" == "$DEFAULT_PORT" ]]; then
+  IS_DEFAULT_INSTANCE=1
+fi
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 UV="$(command -v uv)"
 
@@ -38,9 +49,17 @@ if [[ "${1:-}" == "--uninstall" ]]; then
   launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
   launchctl bootout "gui/$(id -u)/$BACKUP_LABEL" 2>/dev/null || true
   rm -f "$PLIST" "$BACKUP_PLIST"
-  tailscale serve --https=443 off 2>/dev/null || true
+  # The hooks are this checkout's own (install-hooks.sh resolves them from
+  # $REPO), so removing them is right for any instance. tailscale serve is not:
+  # there is one :443 handler for the machine and it belongs to the real one.
   "$REPO/scripts/claude/install-hooks.sh" --uninstall || true
-  echo "Removed both launchd agents and turned off tailscale serve."
+  if (( IS_DEFAULT_INSTANCE )); then
+    tailscale serve --https=443 off 2>/dev/null || true
+    echo "Removed both launchd agents, the post-merge hook, and tailscale serve."
+  else
+    echo "Removed both $LABEL agents and the post-merge hook."
+    echo "tailscale serve belongs to the default instance and was left alone."
+  fi
   echo "Backups in $REPO/var/backups were left alone."
   exit 0
 fi
@@ -133,11 +152,19 @@ echo
 "$UV" run --project "$REPO" moving backup
 
 # serve, not funnel: reachable from your own tailnet devices, never the public
-# internet.
-tailscale serve --bg "$PORT" >/dev/null
-echo
-tailscale serve status
-echo
+# internet. Only for the default instance: there is one :443 handler per
+# machine, so pointing it at a second instance would silently take the real one
+# off the tailnet URL that is printed on every label.
+if (( IS_DEFAULT_INSTANCE )); then
+  tailscale serve --bg "$PORT" >/dev/null
+  echo
+  tailscale serve status
+  echo
+else
+  echo
+  echo "Non-default instance ($LABEL on $PORT): tailscale serve left as it is."
+  echo
+fi
 # --- printer ---------------------------------------------------------------
 echo
 echo "Printer backend: $PRINTER_BACKEND"
