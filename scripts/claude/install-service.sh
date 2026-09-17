@@ -32,6 +32,29 @@ fi
 
 mkdir -p "$HOME/Library/LaunchAgents" "$REPO/var/log"
 
+# `launchctl bootout` returns before the job is actually gone, and bootstrapping
+# the same label while the old one is still tearing down fails with
+# "Bootstrap failed: 5: Input/output error" -- having already unloaded the
+# running service. So wait for the label to disappear, then retry.
+reload_agent() {
+  local label="$1" plist="$2" domain="gui/$(id -u)"
+
+  launchctl bootout "$domain/$label" 2>/dev/null || true
+  for _ in $(seq 1 40); do
+    launchctl print "$domain/$label" >/dev/null 2>&1 || break
+    sleep 0.25
+  done
+
+  for attempt in 1 2 3 4 5; do
+    if launchctl bootstrap "$domain" "$plist" 2>/dev/null; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "Could not load $label. Try: launchctl bootstrap $domain $plist" >&2
+  return 1
+}
+
 cat > "$PLIST" <<PLIST_EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -63,8 +86,7 @@ cat > "$PLIST" <<PLIST_EOF
 </plist>
 PLIST_EOF
 
-launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
+reload_agent "$LABEL" "$PLIST"
 
 echo "Waiting for the service…"
 for _ in $(seq 1 40); do
@@ -106,8 +128,7 @@ cat > "$BACKUP_PLIST" <<PLIST_EOF
 </plist>
 PLIST_EOF
 
-launchctl bootout "gui/$(id -u)/$BACKUP_LABEL" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$BACKUP_PLIST"
+reload_agent "$BACKUP_LABEL" "$BACKUP_PLIST"
 
 # Take one now, so the install is proven rather than assumed and there is a
 # backup from this moment rather than from 03:17 tomorrow.
