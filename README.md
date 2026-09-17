@@ -14,7 +14,9 @@ Answers two questions reliably:
 
 ```bash
 uv sync
+uv run moving seed-rooms               # a starter set of rooms
 uv run moving serve                    # http://localhost:8787
+scripts/claude/smoke.sh                # prove it works end to end
 ```
 
 The camera will not work over plain HTTP on a LAN address — see **HTTPS is
@@ -42,15 +44,32 @@ is also the base URL encoded into every printed QR code.
 
 ## Labels
 
-62 mm continuous DK-2205, black only, 696 printable dots at 300 dpi. Default
-label is 62 × 90 mm.
+62 mm continuous DK-2205, black only, 696 printable dots at 300 dpi.
+
+Labels are **cut to their content**, between 25 mm and 90 mm. The tape is
+continuous, so a fixed height would just print blank tape: a typical label comes
+out around 50 mm and a bare code-and-QR one at 25 mm, which is roughly 44% less
+tape per box across a whole move.
+
+The destination room prints knocked out white on a solid black band. Mono tape
+has no colour to sort by, and that band is what you actually read across a room
+of stacked boxes.
 
 During development the printer backend defaults to `fake`, which writes a PNG to
 `var/labels/preview/` instead of burning tape. Tests force it.
 
 ```bash
-MOVING_PRINTER_BACKEND=brother_ql uv run moving print B-0001
+uv run moving preview B-0001                    # PNG only, no printing
+uv run moving print B-0001 --backend brother_ql # over USB
+uv run moving print B-0001 --backend cups_raw   # if USB is claimed by CUPS
 ```
+
+`cups_raw` needs `MOVING_PRINTER_QUEUE` set to the QL-800's queue name. It
+refuses to run without one, rather than falling back to the system default
+printer and firing a 40 KB raster at whatever laser printer is first in the list.
+
+Turn **Editor Lite mode off** on the printer, or it presents as a mass-storage
+device and ignores raster jobs.
 
 ## AI contents drafting
 

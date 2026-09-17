@@ -21,8 +21,10 @@ moving = "movingbox.cli:main"
 
 [dependency-groups]
 dev = [
+    "httpx2>=2.13.0",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
+    "pyzbar>=0.1.9",
     "ruff>=0.7",
 ]
 
@@ -35,8 +37,15 @@ packages = ["src/movingbox"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# Tests must never reach the physical printer.
-env = ["MOVING_PRINTER_BACKEND=fake"]
+# Warnings are errors: this is what caught sqlite connections leaking out of
+# tests. Third-party deprecations we cannot fix are ignored individually rather
+# than by relaxing the default.
+filterwarnings = [
+    "error",
+    "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning",
+]
+# The printer is forced to `fake` in tests/conftest.py, not here: pytest ignores
+# an `env` key unless pytest-env is installed, and does so silently.
 
 [tool.ruff]
 line-length = 100
@@ -44,3 +53,14 @@ target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.flake8-bugbear]
+# Depends/Query/Header in argument defaults is how FastAPI declares dependencies;
+# B008's "no function call in a default" rule is a false positive for them.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Header",
+    "fastapi.Path",
+    "fastapi.Body",
+]

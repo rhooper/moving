@@ -12,8 +12,11 @@ __pycache__/
 .ruff_cache/
 *.egg-info/
 
-# Worktrees (work discipline: feature work is isolated here)
+# Worktrees (work discipline: feature work is isolated here).
+# .claude/worktrees is where the native EnterWorktree tool places them; without
+# this the whole worktree tree shows up as untracked in the main checkout.
 .worktrees/
+.claude/worktrees/
 
 # macOS
 .DS_Store
