@@ -28,14 +28,28 @@ mandatory** below.
 `http://192.168.x.x:8787` the camera silently fails: no scanning, no photo
 capture, no PWA install prompt. `localhost` is exempt; a LAN IP is not.
 
-Tailscale issues a real certificate, which solves this:
+Tailscale issues a real certificate, which solves this. To run it permanently:
 
 ```bash
-tailscale serve --bg 8787
+scripts/claude/install-service.sh
 ```
 
-The app is then reachable at `https://moving.example.ts.net`, which
-is also the base URL encoded into every printed QR code.
+That installs a launchd agent (starts at login, restarts if it dies) on
+127.0.0.1:8787 and points `tailscale serve` at it. The app is then reachable at
+**https://moving.example.ts.net**, which is also the base URL encoded
+into every printed QR code. Remove it with `--uninstall`.
+
+It uses `tailscale serve`, not `funnel`: reachable from your own tailnet
+devices, never the public internet.
+
+## Scanning
+
+The stock phone camera reads a label and opens the box page — no app needed.
+For scanning many boxes in a row, the app's own Scan view is faster.
+
+`BarcodeDetector` (native, fast) is Chrome and Edge only, so on Firefox and
+Safari the app falls back to jsQR, vendored locally so it works offline too.
+Either way you can type a code by hand.
 
 > **The base URL is baked into printed tape.** Changing the hostname later means
 > reprinting labels. The in-app scanner is tolerant — it strips the host and

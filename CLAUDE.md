@@ -13,6 +13,8 @@ uv run moving preview B-0001     # render a label to PNG, no printing
 uv run moving print  B-0001      # honours MOVING_PRINTER_BACKEND (default: fake)
 uv run moving reindex            # rebuild the FTS index
 uv run pytest                    # printer forced to `fake` in conftest
+scripts/claude/install-service.sh          # launchd + tailscale serve (persistent https)
+scripts/claude/install-service.sh --uninstall
 uv run ruff check src tests scripts
 scripts/claude/smoke.sh          # end-to-end against a running server
 scripts/claude/render_samples.py # contact sheet of sample labels to eyeball
@@ -25,6 +27,21 @@ tailscale serve --bg 8787        # HTTPS, required for camera access
 secure-context only. On a LAN IP they fail *silently* — no error, just no
 camera. `localhost` is exempt. `tailscale serve` provisions a real cert for
 `moving.example.ts.net`, which is also the QR base URL.
+
+Consequences that are easy to get wrong:
+- **The `/b/{code}` redirect must stay relative.** Tailscale terminates TLS and
+  proxies plain HTTP, so an absolute redirect rebuilt from the request says
+  `http://` and drops the phone out of a secure context. Two tests guard this.
+- **uvicorn runs with `proxy_headers`, trusting loopback only**, so anything
+  derived from `request.url` reports https.
+- **`serve` binds 127.0.0.1**, not 0.0.0.0 — `tailscale serve` proxies to
+  loopback, and binding everything would add an unauthenticated LAN listener.
+- `tailscale serve`, never `tailscale funnel`: tailnet devices only.
+
+**`BarcodeDetector` is Chrome/Edge only — the phone here runs Firefox.** So
+`web/scan.js` falls back to jsQR, vendored at `web/jsQR.js` (MIT) rather than
+loaded from a CDN, so scanning also works offline. Manual code entry is always
+present as the last resort.
 
 **Label geometry, read from `brother_ql.labels` rather than assumed:**
 label id `62`, `FormFactor.ENDLESS`, `dots_total=(732, 0)`,
@@ -117,6 +134,18 @@ tool shell — test with
 `curl --resolve moving.example.ts.net:443:$(tailscale ip -4)` — but
 resolves fine from a phone.
 
-Next: phases 5–9 (PWA shell, scanner, admin, AI drafting, backups/deploy). Build
-order and gates are in
+Phases 5, 6 and the deploy half of 9 are also done: the PWA shell (box detail,
+status track, location, items, create-and-print), the camera scanner, and a
+launchd agent behind `tailscale serve` so `https://moving.example.ts.net`
+stays up across reboots. 99 tests passing.
+
+Design note: the PWA deliberately mirrors the printed label — Inter (served from
+the package, not duplicated), the code set huge as the hero, room in the same
+black knockout band, true black rather than a tinted near-black. The point is
+that after scanning a physical object the screen confirms it is the same one.
+
+Still to do: phase 7 (admin table, bulk print, manifest PDF, export), phase 8
+(AI photo drafting — `qwen3-vl:30b` is pulled and ready, nothing wired yet), and
+the backup half of phase 9. Plus the phase-2 list in README that was
+deliberately deferred. Build order is in
 `~/.claude/plans/create-a-packing-tracking-atomic-tarjan.md`.
