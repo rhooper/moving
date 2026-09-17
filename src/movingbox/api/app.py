@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
+from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from .. import db, store
-from ..config import Config, from_env
+from ..config import ROOT, Config, from_env
+from ..labels.layout import FONT_PATH
+
+WEB_ROOT = ROOT / "web"
 
 
 def get_config(request: Request) -> Config:
@@ -62,9 +67,26 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     @app.get("/b/{code}")
     def scanned(code: str, conn: sqlite3.Connection = Depends(get_conn)):
-        """Where a scanned QR code lands. Redirects into the PWA."""
+        """Where a scanned QR code lands. Redirects into the PWA.
+
+        The Location is **relative** on purpose. Tailscale terminates TLS and
+        proxies plain HTTP to us, so an absolute redirect rebuilt from the
+        request would say `http://` and drop the phone out of HTTPS — which
+        breaks the camera, since getUserMedia needs a secure context.
+        """
         if store.get_box(conn, code) is None:
             raise HTTPException(status_code=404, detail=f"No box {code}")
-        return RedirectResponse(url=f"/#/b/{code}", status_code=307)
+        return RedirectResponse(url=f"/#/b/{quote(code)}", status_code=307)
+
+    # The label's typeface, served from the package rather than duplicated into
+    # web/ so there is one copy of the file in the repo.
+    @app.get("/Inter.ttf", include_in_schema=False)
+    def font() -> FileResponse:
+        return FileResponse(FONT_PATH, media_type="font/ttf")
+
+    # Mounted last: every route above wins, so /api and /b are not shadowed.
+    # html=True serves index.html at / so the hash router can take over.
+    if WEB_ROOT.is_dir():
+        app.mount("/", StaticFiles(directory=WEB_ROOT, html=True), name="web")
 
     return app

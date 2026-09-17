@@ -41,6 +41,12 @@ def cmd_serve(args) -> int:
         host=args.host,
         port=args.port,
         reload=args.reload,
+        # Tailscale terminates TLS and proxies plain HTTP here, setting
+        # X-Forwarded-Proto: https. Without trusting that, anything derived
+        # from request.url reports http:// and would downgrade the phone out
+        # of a secure context -- which silently kills the camera.
+        proxy_headers=True,
+        forwarded_allow_ips=args.trust_proxy,
     )
     return 0
 
@@ -137,9 +143,17 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     serve = sub.add_parser("serve", help="run the API and web UI")
-    serve.add_argument("--host", default="0.0.0.0")
+    # Loopback by default: `tailscale serve` proxies to 127.0.0.1, so binding
+    # every interface would also expose the app unauthenticated on the LAN.
+    serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8787)
     serve.add_argument("--reload", action="store_true")
+    serve.add_argument(
+        "--trust-proxy",
+        default="127.0.0.1",
+        help="hosts whose X-Forwarded-* headers are trusted "
+        "(default: loopback, i.e. tailscale serve)",
+    )
     serve.set_defaults(func=cmd_serve)
 
     preview = sub.add_parser("preview", help="render a label to a PNG without printing")
