@@ -40,11 +40,11 @@ BAND_PADDING = 20
 #: Scratch canvas to lay out on before cropping to the measured height.
 _WORK_HEIGHT = 4000
 
-#: 4 inches at 300 dpi. A landscape label is laid out along the tape rather
+#: 3 inches at 300 dpi. A landscape label is laid out along the tape rather
 #: than across it, giving room for the itemised contents beside the identity.
 #: The printer still lays 696 dots across the tape, so the design is rotated at
 #: raster time -- see printer.to_raster.
-LANDSCAPE_LENGTH = 1200
+LANDSCAPE_LENGTH = 900
 #: Fraction of the length given to the identity block; the rest lists contents.
 IDENTITY_SHARE = 0.55
 
@@ -127,6 +127,59 @@ def _qr(url: str, target: int, border: int = 4) -> Image.Image:
     return image
 
 
+def _fragile_icon(size: int) -> Image.Image:
+    """The goblet that means fragile. White on black, to sit inside a chip."""
+    image = Image.new("L", (size, size), 0)
+    draw = ImageDraw.Draw(image)
+    unit = size / 16
+
+    # Bowl: a cup tapering to the stem.
+    draw.polygon(
+        [
+            (3 * unit, 2 * unit),
+            (13 * unit, 2 * unit),
+            (9.5 * unit, 8.5 * unit),
+            (6.5 * unit, 8.5 * unit),
+        ],
+        fill=255,
+    )
+    # Stem and foot.
+    draw.rectangle([7.3 * unit, 8.5 * unit, 8.7 * unit, 12.5 * unit], fill=255)
+    draw.rectangle([4.5 * unit, 12.5 * unit, 11.5 * unit, 14 * unit], fill=255)
+    # A crack, so it reads as *broken* glass rather than a drink.
+    draw.line(
+        [(11 * unit, 3 * unit), (8.6 * unit, 5 * unit), (10.4 * unit, 6.4 * unit)],
+        fill=0,
+        width=max(2, int(unit * 0.9)),
+    )
+    return image
+
+
+def _heavy_icon(size: int) -> Image.Image:
+    """A weight. Reads instantly and needs no words."""
+    image = Image.new("L", (size, size), 0)
+    draw = ImageDraw.Draw(image)
+    unit = size / 16
+
+    # Handle: narrower than the body, or the whole thing reads as a padlock.
+    draw.arc([5.5 * unit, 2 * unit, 10.5 * unit, 7.5 * unit], 180, 360,
+             fill=255, width=max(2, int(unit * 1.2)))
+    # Body: a kettlebell-ish trapezoid, clearly wider at the base.
+    draw.polygon(
+        [
+            (5 * unit, 6 * unit),
+            (11 * unit, 6 * unit),
+            (14 * unit, 14 * unit),
+            (2 * unit, 14 * unit),
+        ],
+        fill=255,
+    )
+    return image
+
+
+ICONS = {"FRAGILE": _fragile_icon, "HEAVY": _heavy_icon}
+
+
 def _chips(draw, x: int, y: int, max_width: int, flags: tuple[str, ...]) -> int:
     """Draw flags as inverted chips, wrapping within ``max_width``.
 
@@ -134,15 +187,30 @@ def _chips(draw, x: int, y: int, max_width: int, flags: tuple[str, ...]) -> int:
     the most urgent thing on the label and has to survive being read at a
     glance, upside down, across a room.
     """
-    font = _font(30, weight=800)
-    pad_x, chip_h, gap = 14, 44, 8
+    # 60% larger than it was: FRAGILE is the most urgent thing on the label and
+    # was losing to the box number.
+    font = _font(48, weight=800)
+    pad_x, chip_h, gap = 18, 68, 10
+    icon_size = int(chip_h * 0.72)
     left, top = x, y
+
     for flag in flags:
-        width = int(draw.textlength(flag, font=font)) + 2 * pad_x
+        icon = ICONS.get(flag)
+        text_width = int(draw.textlength(flag, font=font))
+        width = text_width + 2 * pad_x + (icon_size + 10 if icon else 0)
         if left > x and left + width > x + max_width:
             left, top = x, top + chip_h + gap
+
         draw.rectangle([left, top, left + width, top + chip_h], fill=0)
-        draw.text((left + width // 2, top + chip_h // 2), flag, font=font, fill=255, anchor="mm")
+        text_x = left + pad_x
+        if icon:
+            glyph = icon(icon_size)
+            # The canvas is greyscale and the chip is black, so pasting the
+            # white-on-black glyph straight in is the whole job.
+            return_y = top + (chip_h - icon_size) // 2
+            draw._image.paste(glyph, (text_x, return_y), glyph)
+            text_x += icon_size + 10
+        draw.text((text_x, top + chip_h // 2), flag, font=font, fill=255, anchor="lm")
         left += width + gap
     return top + chip_h
 
@@ -329,11 +397,13 @@ def _render_landscape(data: LabelData) -> Image.Image:
     left_width = split - 2 * MARGIN
 
     # --- identity column ---
-    qr = _qr(data.url, 210)
+    # 15% bigger: it is scanned in poor light, often at arm's length.
+    qr = _qr(data.url, 242)
     qr_x = split - MARGIN - qr.width
     canvas.paste(qr, (qr_x, MARGIN))
 
-    code_font = _fit(draw, data.code, qr_x - MARGIN - 16, start=96, weight=800)
+    # 20% bigger: the number is how you find the box on a shelf.
+    code_font = _fit(draw, data.code, qr_x - MARGIN - 16, start=115, weight=800)
     draw.text((MARGIN, MARGIN), data.code, font=code_font, fill=0, anchor="lt")
 
     y = MARGIN + code_font.size + 12
@@ -342,12 +412,14 @@ def _render_landscape(data: LabelData) -> Image.Image:
     y = max(y, MARGIN + qr.height) + 14
 
     if data.room:
-        band_height = 78
+        # 25% larger type, and a third of its height in padding above and
+        # below: the room is what you read from across a room of boxes.
+        room_font = _fit(
+            draw, data.room.upper(), left_width - 2 * BAND_PADDING, start=72, weight=800
+        )
+        band_height = int(room_font.size * 1.66)
         band_right = (split - MARGIN // 2) if has_items else width
         draw.rectangle([0, y, band_right, y + band_height], fill=0)
-        room_font = _fit(
-            draw, data.room.upper(), left_width - 2 * BAND_PADDING, start=58, weight=800
-        )
         draw.text(
             (MARGIN + (left_width - 2 * BAND_PADDING) // 2 + BAND_PADDING, y + band_height // 2),
             data.room.upper(),
@@ -357,29 +429,22 @@ def _render_landscape(data: LabelData) -> Image.Image:
         )
         y += band_height + 12
 
-    if data.source:
-        source_font = _font(26, weight=500)
-        for line in _wrap(draw, f"from: {data.source}", source_font, left_width)[:2]:
-            draw.text((MARGIN, y), line, font=source_font, fill=0, anchor="lt")
-            y += source_font.size + 4
-        y += 6
+    # Where it came from, its weight and its position in a run are all
+    # deliberately absent: at 3 inches the space belongs to what is in the box.
 
     if data.title:
         # The name of a loose thing is the point of its label -- as big as it
         # can be and still fit, where a box would be listing its contents.
-        title_font = _fit(draw, data.title, left_width, start=72, weight=800)
+        title_font = _fit(draw, data.title, left_width, start=86, weight=800)
         for line in _wrap(draw, data.title, title_font, left_width)[:2]:
             draw.text((MARGIN, y), line, font=title_font, fill=0, anchor="lt")
             y += title_font.size + 6
         y += 8
 
-    footer_font = _font(24, weight=500)
-    footer_room = (footer_font.size + 10) if data.footer else 0
-
     if data.summary:
-        summary_font = _font(28, weight=400)
-        line_height = summary_font.size + 5
-        room_for = max(0, (height - MARGIN - footer_room - y) // line_height)
+        summary_font = _font(34, weight=400)
+        line_height = summary_font.size + 6
+        room_for = max(0, (height - MARGIN - y) // line_height)
         lines = _wrap(draw, data.summary, summary_font, left_width)
         if len(lines) > room_for:
             lines = lines[:room_for]
@@ -389,15 +454,6 @@ def _render_landscape(data: LabelData) -> Image.Image:
             draw.text((MARGIN, y), line, font=summary_font, fill=0, anchor="lt")
             y += line_height
 
-    if data.footer:
-        draw.text(
-            (MARGIN, height - MARGIN - footer_font.size),
-            data.footer,
-            font=footer_font,
-            fill=0,
-            anchor="lt",
-        )
-
     if not has_items:
         return canvas.point(lambda p: 255 if p > 128 else 0).convert("1")
 
@@ -406,12 +462,12 @@ def _render_landscape(data: LabelData) -> Image.Image:
 
     item_x = split + MARGIN
     item_width = width - item_x - MARGIN
-    heading = _font(22, weight=700)
+    heading = _font(24, weight=700)
     draw.text((item_x, MARGIN), "CONTENTS", font=heading, fill=0, anchor="lt")
     item_y = MARGIN + heading.size + 8
 
-    item_font = _font(26, weight=400)
-    line_height = item_font.size + 6
+    item_font = _font(32, weight=400)
+    line_height = item_font.size + 7
     room_for = max(0, (height - MARGIN - item_y) // line_height)
 
     shown = data.items[:room_for]
@@ -435,7 +491,7 @@ def _render_landscape(data: LabelData) -> Image.Image:
         draw.text(
             (item_x, item_y),
             f"+ {hidden} more",
-            font=_font(24, weight=600),
+            font=_font(28, weight=600),
             fill=0,
             anchor="lt",
         )

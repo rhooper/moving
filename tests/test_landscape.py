@@ -27,12 +27,12 @@ def decode(image):
     return found[0].data.decode() if found else ""
 
 
-def test_a_landscape_label_is_four_inches_along_the_tape(conn):
+def test_a_landscape_label_is_three_inches_along_the_tape(conn):
     image = layout.render(a_label(), orientation="landscape")
 
-    # 1200 dots at 300 dpi = 4 inches; 696 dots is the tape's printable width.
+    # 900 dots at 300 dpi = 3 inches; 696 dots is the tape's printable width.
     assert (image.width, image.height) == (layout.LANDSCAPE_LENGTH, layout.PRINTABLE_WIDTH)
-    assert layout.LANDSCAPE_LENGTH == 1200
+    assert layout.LANDSCAPE_LENGTH == 900
 
 
 def test_the_design_is_readable_before_the_printer_rotates_it(conn):
