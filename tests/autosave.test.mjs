@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { Autosaver, lineFor, policyFor } from "../web/autosave.js";
+import { Autosaver, lineFor, policyFor, retryAfter } from "../web/autosave.js";
 
 // --- a clock we control -----------------------------------------------------------
 
@@ -635,8 +635,10 @@ test("typing counts as saving: the pause is part of the save, not a wait before 
 test("a field that saves only when left says how to save it", () => {
   // Otherwise the location looks exactly like a field that is broken: you
   // type, and nothing ever says Saved.
+  // Short on purpose: beside an Undo button on a narrow phone, a longer
+  // sentence wraps to three lines and pushes the page down as you type.
   assert.equal(lineFor([{ state: "unsaved", policy: "commit" }]).text,
-               "Saves when you leave the field or press Return");
+               "Saves when you leave the field");
 });
 
 test("a save that landed says so, and an undo says so", () => {
@@ -657,4 +659,131 @@ test("a failure is a warning, and outranks everything else in the form", () => {
   ], "saved");
 
   assert.deepEqual(line, { text: "Not saved yet — will retry", warn: true });
+});
+
+// --- a save the server refused -----------------------------------------------------------------
+//
+// Out of wifi range is worth retrying for ever. "No such box" -- it was deleted
+// for good on the other phone -- is not: the answer will be the same every
+// thirty seconds until the tab is closed, and "will retry" would be a lie.
+
+test("the page can say a failure is not worth retrying", async () => {
+  const refusing = (failures, error) => (error.message === "offline" ? null : 2000);
+  const { auto, timers, rec } = saver({ retryDelay: refusing });
+  auto.track("summary", "pots");
+  rec.fail();
+  auto.edit("summary", "pans", "change");
+  await settle();
+
+  assert.equal(timers.pending(), 0, "a retry was scheduled anyway");
+  assert.equal(auto.state("summary"), "failed");
+
+  // Still there, still sendable by hand.
+  rec.fail(false);
+  auto.commit("summary");
+  await settle();
+  assert.equal(auto.state("summary"), "clean");
+});
+
+test("the default wait is there for the page to build its own rule on", () => {
+  assert.deepEqual([0, 1, 2, 3, 4, 5].map(retryAfter), [2000, 4000, 8000, 16000, 30000, 30000]);
+});
+
+test("a refusal is shown as what it is, with the reason, and no promise to retry", () => {
+  const line = lineFor([{ state: "failed", policy: "pause", refused: "Box not found" }]);
+
+  assert.deepEqual(line, { text: "Not saved — Box not found", warn: true });
+});
+
+// --- waiting for the saves that are out ------------------------------------------------------
+//
+// The page is about to be redrawn from the server, or Undo was pressed straight
+// after typing. Either way what happens next must come *after* the save that
+// is in flight: a redraw fetched a moment too early shows the old text as if
+// it were current, and an undo racing a save can reach the server first.
+
+test("idle resolves once every save in flight has landed", async () => {
+  const { auto, rec } = saver();
+  auto.track("summary", "pots");
+  rec.hold();
+  auto.edit("summary", "pans", "change");
+  await settle();
+
+  let idle = false;
+  const waited = auto.idle().then(() => { idle = true; });
+  await settle();
+  assert.equal(idle, false, "idle resolved with a save still out");
+
+  rec.release();
+  await waited;
+  assert.equal(auto.state("summary"), "clean");
+});
+
+test("idle waits for the follow-up save too, when the field was typed in meanwhile", async () => {
+  const { auto, rec } = saver();
+  auto.track("summary", "pots");
+  rec.hold();
+  auto.edit("summary", "pans", "change");
+  await settle();
+  auto.edit("summary", "pans and lids", "change");   // queued behind the one in flight
+
+  const waited = auto.idle();
+  rec.release();
+  await waited;
+
+  assert.deepEqual(rec.calls, [["summary", "pans"], ["summary", "pans and lids"]]);
+  assert.equal(auto.state("summary"), "clean");
+});
+
+test("idle does not wait for a failure to be retried", async () => {
+  const { auto, rec } = saver({ retryDelay: () => 30000 });
+  auto.track("summary", "pots");
+  rec.fail();
+  auto.edit("summary", "pans", "change");
+
+  await auto.idle();
+
+  assert.equal(auto.state("summary"), "failed");
+});
+
+test("idle with nothing out resolves at once", async () => {
+  const { auto } = saver();
+  auto.track("summary", "pots");
+  await auto.idle();
+});
+
+// --- giving up an edit that never got there ---------------------------------------------------
+//
+// "Not saved yet", with Undo beside it. The newest thing to take back is then
+// the unsaved edit itself, and taking it back needs no server: the server
+// never had it. Undoing the *save beneath it* instead would go back two steps.
+
+test("an edit that failed to save can be given up, back to what the server has", async () => {
+  const { auto, timers, rec } = saver({ retryDelay: () => 2000 });
+  auto.track("summary", "pots");
+  auto.edit("summary", "pans", "change");
+  await settle();
+  rec.fail();
+  auto.edit("summary", "pans and lids", "change");
+  await settle();
+  const sent = rec.calls.length;
+
+  assert.equal(auto.revert("summary"), "pans");
+
+  assert.equal(auto.state("summary"), "clean");
+  assert.equal(auto.value("summary"), "pans");
+  timers.advance(60000);
+  await settle();
+  assert.equal(rec.calls.length, sent, "something was sent: a retry survived, or revert saved");
+  // The save beneath it is untouched, and still undoable.
+  rec.fail(false);
+  assert.deepEqual(await auto.undo(), { key: "summary", value: "pots" });
+});
+
+test("reverting a field that is not tracked, or has nothing unsaved, is harmless", () => {
+  const { auto } = saver();
+  auto.track("summary", "pots");
+
+  assert.equal(auto.revert("summary"), "pots");
+  assert.equal(auto.revert("nonsense"), undefined);
 });
