@@ -34,6 +34,15 @@ class Config:
     label_orientation: str = "landscape"
     ollama_url: str = "http://localhost:11434"
     vision_model: str = "qwen3-vl:30b"
+    #: "ollama", or "stub": a canned provider that sleeps and returns a fixed
+    #: draft, for building and checking the UI without a model.
+    vision_provider: str = "ollama"
+    vision_stub_seconds: float = 3.0
+    #: Whether the app starts the background thread that analyses uploaded
+    #: photos. **Off unless asked for**, so a Config built directly -- which is
+    #: what every test does -- never starts a thread that talks to a model.
+    #: from_env turns it on: the running service is the one place it belongs.
+    auto_analyse: bool = False
 
     def replace(self, **changes) -> Config:
         return dataclasses.replace(self, **changes)
@@ -56,4 +65,7 @@ def from_env(env: dict[str, str] | None = None) -> Config:
         label_orientation=e.get("MOVING_LABEL_ORIENTATION", "landscape"),
         ollama_url=e.get("MOVING_OLLAMA_URL", "http://localhost:11434").rstrip("/"),
         vision_model=e.get("MOVING_VISION_MODEL", "qwen3-vl:30b"),
+        vision_provider=e.get("MOVING_VISION_PROVIDER", "ollama"),
+        vision_stub_seconds=float(e.get("MOVING_VISION_STUB_SECONDS", "3")),
+        auto_analyse=e.get("MOVING_AUTO_ANALYSE", "1") not in ("0", "false", "no", "off"),
     )

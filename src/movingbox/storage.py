@@ -133,7 +133,15 @@ def list_photos(conn: sqlite3.Connection, code: str) -> list[dict[str, Any]]:
     rows = conn.execute(
         "SELECT * FROM photos WHERE box_id = ? ORDER BY is_primary DESC, id", (box["id"],)
     )
-    return [dict(r) for r in rows]
+    return [with_analysis(conn, dict(r)) for r in rows]
+
+
+def with_analysis(conn: sqlite3.Connection, photo: dict[str, Any]) -> dict[str, Any]:
+    """The photo plus where its background analysis has got to (or None)."""
+    from . import analysis  # local: analysis imports store, which storage also does
+
+    photo["analysis"] = analysis.state_of(conn, photo["id"])
+    return photo
 
 
 def get_photo(conn: sqlite3.Connection, photo_id: int) -> dict[str, Any] | None:
@@ -183,6 +191,9 @@ def delete_photo(conn: sqlite3.Connection, config: Config, photo_id: int) -> boo
             (config.photo_dir / name).unlink(missing_ok=True)
 
     conn.execute("DELETE FROM photos WHERE id = ?", (photo_id,))
+    # ai_jobs.photo_id has no foreign key (see migration 0006), so the jobs a
+    # photo owns go with it here rather than by cascade.
+    conn.execute("DELETE FROM ai_jobs WHERE photo_id = ?", (photo_id,))
     # Promote another photo so a box that still has photos does not lose its
     # cover. Only when the *cover* went: promoting unconditionally used to be
     # harmless when the cover was always the oldest photo, but once it is

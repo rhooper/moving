@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnect
 
-from .. import db, store
+from .. import analysis, db, store
 from ..config import ROOT, Config, from_env
 from ..labels import printer as printing
 from ..labels.layout import FONT_PATH
@@ -79,15 +79,30 @@ def get_conn(config: Config = Depends(get_config)) -> Iterator[sqlite3.Connectio
         conn.close()
 
 
-def get_vision_provider(config: Config = Depends(get_config)):
-    """The vision provider for drafting. Overridden in tests with a stub.
+def build_vision_provider(config: Config):
+    """The configured vision provider. One place, for routes and the worker.
 
-    Built per request rather than at startup so a config change (or Ollama
-    coming back up) does not need a restart.
+    Built per use rather than at startup so Ollama coming back up does not
+    need a restart.
     """
+    if config.vision_provider == "stub":
+        from ..vision.stub import StubProvider
+
+        return StubProvider(config.vision_stub_seconds)
+
     from ..vision.ollama import OllamaProvider
 
     return OllamaProvider(config.ollama_url)
+
+
+def get_vision_provider(config: Config = Depends(get_config)):
+    """The vision provider for drafting. Overridden in tests with a stub."""
+    return build_vision_provider(config)
+
+
+def get_analyst(request: Request):
+    """The background photo worker, or None where it is not running (tests)."""
+    return request.app.state.analyst
 
 
 def require_api_key(
@@ -134,15 +149,30 @@ def create_app(config: Config | None = None) -> FastAPI:
         watcher = printing.AutoOffWatcher(settings)
         app.state.printer_watcher = watcher
         watcher.start()
+
+        # Photo analysis runs here rather than in the request that uploaded the
+        # photo: a vision model takes seconds to tens of seconds, and nobody
+        # should hold a phone still for that. Off unless the config asks -- a
+        # Config built directly, as every test builds one, never starts it.
+        if settings.auto_analyse:
+            app.state.analyst = analysis.Analyst(
+                settings,
+                provider_factory=lambda: build_vision_provider(settings),
+                publish=app.state.events.publish,
+            )
+            app.state.analyst.start()
         try:
             yield
         finally:
             watcher.stop()
+            if app.state.analyst is not None:
+                app.state.analyst.stop()
 
     app = FastAPI(title="Moving Box Tracker", version="0.1.0", lifespan=lifespan)
     app.state.config = settings
     app.state.revision = deployed_revision()
     app.state.events = events.Hub()
+    app.state.analyst = None
 
     from . import admin, boxes, labels, photos, rooms
     from . import settings as settings_routes

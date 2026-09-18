@@ -1,9 +1,13 @@
-"""Drafting box contents from photographs.
+"""Drafting box contents from photographs, on request.
 
-A draft is a *proposal*. It is recorded, returned, and never applied: the model
-suggests, a person accepts. Auto-applying would silently overwrite contents
-someone typed, and would blur the line between what was observed and what was
-guessed -- which is exactly the line ``items.source`` exists to keep.
+A draft from *this* module is a proposal: recorded, returned, never applied.
+It is the explicit, whole-box "what do you see?" call.
+
+Photos are different since 2026-09-18: `analysis.py` analyses every uploaded
+photo in the background and **does** apply what it finds, at the user's
+request. It keeps the half of the old rule that mattered -- it never touches an
+item or a summary a person typed, and everything it adds is tagged
+``items.source = 'ai'`` -- so the line between observed and guessed survives.
 """
 
 from __future__ import annotations
