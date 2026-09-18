@@ -88,7 +88,7 @@ def build_vision_provider(config: Config):
     if config.vision_provider == "stub":
         from ..vision.stub import StubProvider
 
-        return StubProvider(config.vision_stub_seconds)
+        return StubProvider(config.vision_stub_seconds, config.vision_detail_model)
 
     from ..vision.ollama import OllamaProvider
 

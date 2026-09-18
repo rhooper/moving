@@ -54,12 +54,21 @@ BOX_UPDATED = "box.updated"
 
 
 def enqueue(
-    conn: sqlite3.Connection, config: Config, photo_id: int, *, again: bool = False
+    conn: sqlite3.Connection,
+    config: Config,
+    photo_id: int,
+    *,
+    again: bool = False,
+    detail: bool = False,
 ) -> int | None:
     """Queue one photo for analysis. Returns the job id, or None if not queued.
 
     Idempotent: a phone retrying an upload dedupes to the same photo, and that
     photo must not be analysed twice. `again=True` is the explicit re-run.
+
+    `detail=True` is the closer look: the slower, more careful model, run only
+    when somebody asks. What it finds is merged like anything else, so it adds
+    to the quick read rather than replacing it.
     """
     photo = conn.execute(
         """
@@ -87,11 +96,17 @@ def enqueue(
 
     cursor = conn.execute(
         """
-        INSERT INTO ai_jobs (box_id, photo_id, provider, model, prompt_version, status)
-        VALUES (?, ?, ?, ?, ?, 'pending')
+        INSERT INTO ai_jobs (box_id, photo_id, provider, model, prompt_version, status, detail)
+        VALUES (?, ?, ?, ?, ?, 'pending', ?)
         """,
-        (photo["box_id"], photo_id, config.vision_provider, config.vision_model,
-         base.PROMPT_VERSION),
+        (
+            photo["box_id"],
+            photo_id,
+            config.vision_provider,
+            config.vision_detail_model if detail else config.vision_model,
+            base.PROMPT_VERSION,
+            int(detail),
+        ),
     )
     return cursor.lastrowid
 
@@ -158,6 +173,8 @@ def state_of(conn: sqlite3.Connection, photo_id: int) -> dict[str, Any] | None:
         "remaining_ms": 0,
         "total_ms": 0,
         "items_found": None,
+        # Whether this was the closer look rather than the quick read.
+        "detail": bool(job["detail"]),
         # What was seen in *this* photo -- not the record's merged list, which
         # may hold more (other photos, things typed) or less (items since
         # renamed or removed). The photo viewer shows these beside the picture.
