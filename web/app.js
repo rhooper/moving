@@ -544,6 +544,34 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
     button.addEventListener("click", () => act(() =>
       api(`/items/${encodeURIComponent(button.dataset.remove)}`, { method: "DELETE" })));
   }
+  // What it is / what is in it. Saved explicitly: the field is also where a
+  // suggestion or a draft lands, and those are offered, never applied.
+  const summaryForm = document.getElementById("summary-form");
+  summaryForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const value = new FormData(summaryForm).get("content_summary").trim();
+    act(() => api(path, {
+      method: "PATCH", body: JSON.stringify({ content_summary: value || null }) }));
+  });
+
+  // Kind, where it is going, where it came from. An unset room is null, not
+  // the empty string a <select> reports.
+  const destinationForm = document.getElementById("destination");
+  destinationForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = new FormData(destinationForm);
+    const roomId = (name) => (form.get(name) ? Number(form.get(name)) : null);
+    act(() => api(path, {
+      method: "PATCH",
+      body: JSON.stringify({
+        kind: form.get("kind"),
+        destination_room_id: roomId("destination_room_id"),
+        source_room_id: roomId("source_room_id"),
+        source_location: form.get("source_location").trim() || null,
+      }),
+    }));
+  });
+
   document.getElementById("location").addEventListener("submit", (event) => {
     event.preventDefault();
     const value = new FormData(event.target).get("current_location").trim();
