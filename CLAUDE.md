@@ -434,6 +434,18 @@ word from the generated comment; they are escaped now.
   -- a programmatic `.value =` fires no input event, so Cancel would stay
   hidden with something to cancel. "From contents" has no Undo of its own on
   purpose: one way to back out, in one vocabulary.
+- **The app's word for a record is "item"** (nav: Items / Scan / New / Settings;
+  "6 items"), since a record may be a box, a tub or a loose thing. "Box" survives
+  where it means the *kind*. Beware the overlap: `kind = "item"` is one kind of
+  item, and the things inside a box are still "items" in the code (`items`
+  table, `items.changed`). The Python package, API paths (`/api/boxes`) and
+  table names were deliberately **not** renamed -- labels in circulation and
+  the QR URLs (`/b/CODE`) depend on them, and a rename buys nothing.
+- **A list row's last cell is what it is, over how far along it is**
+  (`rowStatus` in `covers.js`). One function on purpose: the first draw used to
+  show the kind while the live-update path overwrote it with the location, and
+  the two disagreed silently. The current location is no longer in the list; it
+  hid the status, and it has the whole record page.
 - **`node --check web/app.js` proves nothing.** On a `.js` file containing
   `import`, Node 23.3 exits 0 without parsing it as a module, so a missing brace
   passes. It was the syntax guard for a day of patches before a subagent
