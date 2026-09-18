@@ -180,6 +180,11 @@ were reported missing.
   `MOVING_SERVICE_PORT` override the agent label and port in both
   `install-service.sh` and `deploy.sh` — that is how the deploy path gets
   exercised against a throwaway agent without touching the live one.
+- **`/sw.js` is served with its cache version substituted to the deployed
+  revision** (route in `app.py`, tests in `test_service_worker.py`) — never
+  hand-bump `VERSION` in `web/sw.js` again. It was a hand-bumped literal once,
+  nobody bumped it, and deployed phones ran a stale app.js against the new API
+  until buttons errored. Dev (revision `unknown`) serves the file as written.
 
 **`CDPATH` is set in this user's shell, and it corrupts `$(cd … && pwd)`.**
 When `cd` resolves a *relative* path through `CDPATH`, bash prints the
