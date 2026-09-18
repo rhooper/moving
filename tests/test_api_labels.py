@@ -39,7 +39,9 @@ def test_the_preview_qr_resolves_to_this_boxs_page(client, config):
     response = client.get(f"/api/labels/preview/{code}.png")
     image = Image.open(io.BytesIO(response.content))
 
-    decoded = [d.data.decode() for d in pyzbar.decode(image)]
+    decoded = [
+        d.data.decode() for d in pyzbar.decode(image, symbols=[pyzbar.ZBarSymbol.QRCODE])
+    ]
     assert decoded == [f"{config.base_url}/b/{code}"]
 
 

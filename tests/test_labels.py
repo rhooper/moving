@@ -18,7 +18,8 @@ pyzbar = pytest.importorskip(
 
 def decode_qr(image) -> str:
     """Read the QR back out of a rendered label, the way a phone would."""
-    found = pyzbar.decode(image)
+    # QR only: the label also carries a Code 128 of the box number.
+    found = pyzbar.decode(image, symbols=[pyzbar.ZBarSymbol.QRCODE])
     return found[0].data.decode() if found else ""
 
 

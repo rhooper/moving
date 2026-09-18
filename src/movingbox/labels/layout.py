@@ -23,6 +23,7 @@ import segno
 from PIL import Image, ImageDraw, ImageFont
 
 from .. import kinds
+from . import code128
 
 #: Printable dots across 62 mm tape at 300 dpi, per brother_ql.labels.
 PRINTABLE_WIDTH = 696
@@ -40,11 +41,11 @@ BAND_PADDING = 20
 #: Scratch canvas to lay out on before cropping to the measured height.
 _WORK_HEIGHT = 4000
 
-#: 3 inches at 300 dpi. A landscape label is laid out along the tape rather
+#: 3.3 inches at 300 dpi. A landscape label is laid out along the tape rather
 #: than across it, so the code, QR and room band get the long dimension.
 #: The printer still lays 696 dots across the tape, so the design is rotated at
 #: raster time -- see printer.to_raster.
-LANDSCAPE_LENGTH = 900
+LANDSCAPE_LENGTH = 990
 
 FONT_PATH = Path(__file__).resolve().parent / "fonts" / "Inter.ttf"
 
@@ -102,16 +103,20 @@ def _wrap(draw, text: str, font, max_width: int) -> list[str]:
     return lines
 
 
-def _qr(url: str, target: int, border: int = 4) -> Image.Image:
+def _qr(url: str, target: int = 0, border: int = 4, module: int | None = None) -> Image.Image:
     """A QR drawn at an integer module size.
 
     Scaling a QR by a non-integer factor blurs module edges and is a common
     reason labels stop scanning, so the size is snapped down to a whole number
     of pixels per module instead of resampled to fit.
+
+    That snapping makes `target` a trap: 210 and 242 both come out at 5 px per
+    module, so "make the QR 15% bigger" once changed a number and nothing on
+    the tape. Pass `module` to say what you actually mean.
     """
     matrix = [list(row) for row in segno.make(url, error="m").matrix]
     modules = len(matrix) + 2 * border
-    scale = max(1, target // modules)
+    scale = module or max(1, target // modules)
     size = modules * scale
 
     image = Image.new("L", (size, size), 255)
@@ -178,7 +183,7 @@ ICONS = {"FRAGILE": _fragile_icon, "HEAVY": _heavy_icon}
 
 
 def _chips(
-    draw, x: int, y: int, max_width: int, flags: tuple[str, ...], scale: float = 1.0
+    draw, x: int, y: int, max_width: int, flags: tuple[str, ...], size: int = 48
 ) -> int:
     """Draw flags as inverted chips, wrapping within ``max_width``.
 
@@ -188,7 +193,8 @@ def _chips(
     """
     # 60% larger than it was: FRAGILE is the most urgent thing on the label and
     # was losing to the box number.
-    font = _font(round(48 * scale), weight=800)
+    scale = size / 48
+    font = _font(size, weight=800)
     pad_x, chip_h, gap = round(18 * scale), round(68 * scale), round(10 * scale)
     icon_size = int(chip_h * 0.72)
     left, top = x, y
@@ -360,128 +366,193 @@ def from_box(
     )
 
 
-#: Type scales tried for a landscape label, largest first. 1.5 is the asked-for
-#: size; 1.0 is the size everything was proven to fit at, so it always ends.
-LANDSCAPE_SCALES = (1.5, 1.4, 1.3, 1.2, 1.1, 1.0)
+# --- the landscape label: fixed sizes, no dynamic type --------------------------
+#
+# Every label sets the same element at the same size, so a shelf of boxes
+# reads as one system. These are the 50%-larger sizes; what lets them be fixed
+# is the 3.3 inch length and chips that sit side by side instead of stacking.
+CODE_SIZE = 160      # fits B-0042, Z06-001 and CAM-001 beside the QR
+CHIP_SIZE = 72       # FRAGILE and HEAVY share one row at this size
+ROOM_SIZE = 108      # fits MAIN BEDROOM, the longest room in the house
+SUMMARY_SIZE = 59    # 51 + 2 pt (8 dots at 300 dpi); two lines always fit
 
-#: Summary lines a label must have room for before a scale counts as fitting
-#: (or fewer, if the whole summary is shorter than that).
-_SUMMARY_LINES = 2
+#: Pixels per QR module, and modules of quiet zone. The module size *is* the
+#: QR's size -- see _qr. 6 px is the next real step up from 5 (+20%).
+QR_MODULE = 6
+#: Two modules rather than the textbook four: the QR sits flush in the corner,
+#: and the tape's own unprintable edge supplies more white above it.
+QR_QUIET = 2
+
+#: OPEN FIRST is a double rule around the whole label rather than a chip: it
+#: takes no room from anything else, and it reads from further away than a word
+#: does. Run right to the very edge of the tape; both lines and the gap between
+#: them stay inside MARGIN, so no text ever touches them.
+BORDER_LINE = 5
+BORDER_GAP = 5
+
+#: Where the room band starts, on every label. Fixed rather than derived: the
+#: chips, the barcode and the summary all work around it, never the reverse.
+BAND_TOP = 232
+#: White above and below the band.
+BAND_GAP = 10
+
+#: Code 128 of the box number, in the gap between the number and the band --
+#: for a keyboard-wedge reader, which types what it scans. Thin on purpose; 3 px
+#: modules are 10 mil at 300 dpi, comfortable for any laser or CCD reader.
+BARCODE_MODULE = 3
+BARCODE_HEIGHT = 40
+BARCODE_TOP = 162
+#: Clear of the OPEN FIRST double rule by a full ten-module quiet zone, on
+#: every label, so the rule is never read as another bar.
+BARCODE_LEFT = 2 * BORDER_LINE + BORDER_GAP + 10 * BARCODE_MODULE
 
 
-def landscape_scale(data: LabelData) -> float:
-    """The type scale this label prints at: the largest one it fits at."""
-    return _fit_landscape(data)[0]
+def _landscape_fonts(draw, data: LabelData, width: int, qr_width: int) -> dict:
+    """The fonts a label is set in. Fixed -- with one guard.
+
+    `_fit` starts at the fixed size and only shrinks when the text physically
+    cannot fit: a code prefix nobody has configured yet must not print over
+    the QR, and a new room name must not run off the band. For the codes and
+    rooms in use it never triggers, and a test pins that.
+    """
+    code_room = width - qr_width - MARGIN - 16
+    band_room = width - 2 * MARGIN - 2 * BAND_PADDING
+    return {
+        "code": _fit(draw, data.code, code_room, start=CODE_SIZE, weight=800),
+        "room": _fit(draw, (data.room or "").upper(), band_room, start=ROOM_SIZE, weight=800),
+        "chip": _font(CHIP_SIZE, weight=800),
+        "summary": _font(SUMMARY_SIZE, weight=400),
+        # A loose thing's name is set exactly like a box's summary. It used to
+        # be fitted as large as it would go, so "Bicycle" printed enormous and
+        # a longer name did not.
+        "title": _font(SUMMARY_SIZE, weight=400),
+    }
+
+
+def type_sizes(data: LabelData) -> dict[str, int]:
+    """The point size of every element on this label."""
+    draw = ImageDraw.Draw(Image.new("L", (1, 1)))
+    qr = _qr(data.url, border=QR_QUIET, module=QR_MODULE)
+    fonts = _landscape_fonts(draw, data, LANDSCAPE_LENGTH, qr.width)
+    return {name: font.size for name, font in fonts.items()}
 
 
 def _render_landscape(data: LabelData) -> Image.Image:
-    """A 3-inch label, laid out along the tape: all identity, no inventory.
+    """A 3.3-inch label, laid out along the tape: all identity, no inventory.
 
-    Fixed length rather than cut-to-content. A row of boxes with labels of
-    matching size is far easier to read along a shelf. The itemised contents
-    are deliberately not printed -- they are one scan away in the app.
-
-    Type is set half as big again as the layout it grew from, where the label
-    can afford it. It cannot always: handling chips cannot share a row beside
-    the QR, so two flags at 1.5x squeeze the summary out and three push the
-    room band off the tape. The scale steps down a notch at a time until the
-    label fits, and only that far.
+    Fixed length and fixed type. A row of boxes with labels of matching size
+    is far easier to read along a shelf. The itemised contents are
+    deliberately not printed -- they are one scan away in the app.
     """
-    return _fit_landscape(data)[1]
-
-
-def _fit_landscape(data: LabelData) -> tuple[float, Image.Image]:
-    for scale in LANDSCAPE_SCALES:
-        canvas, fits = _draw_landscape(data, scale)
-        if fits:
-            break
-    return scale, canvas.point(lambda p: 255 if p > 128 else 0).convert("1")
-
-
-def _draw_landscape(data: LabelData, scale: float) -> tuple[Image.Image, bool]:
-    """One attempt at `scale`. Returns the canvas and whether everything fit."""
-
-    def s(size: float) -> int:
-        return round(size * scale)
-
     width, height = LANDSCAPE_LENGTH, PRINTABLE_WIDTH
     canvas = Image.new("L", (width, height), 255)
     draw = ImageDraw.Draw(canvas)
 
-    # The identity has the whole label. The itemised contents used to take
-    # the right-hand 45%; they are one scan away in the app, and the tape is
-    # for finding the box from across a room.
-    split = width
-    left_width = split - 2 * MARGIN
+    if "OPEN FIRST" in data.flags:
+        # Drawn first, so the QR's quiet zone and the room band sit over it.
+        for inset in (0, BORDER_LINE + BORDER_GAP):
+            draw.rectangle(
+                [inset, inset, width - inset - 1, height - inset - 1],
+                outline=0,
+                width=BORDER_LINE,
+            )
 
-    # --- identity column ---
-    # 15% bigger: it is scanned in poor light, often at arm's length.
-    qr = _qr(data.url, 242)
-    qr_x = split - MARGIN - qr.width
-    canvas.paste(qr, (qr_x, MARGIN))
+    # Flush in the top right corner: no margin, only its own quiet zone.
+    qr = _qr(data.url, border=QR_QUIET, module=QR_MODULE)
+    canvas.paste(qr, (width - qr.width, 0))
 
-    # 20% bigger: the number is how you find the box on a shelf.
-    code_font = _fit(draw, data.code, qr_x - MARGIN - 16, start=s(115), weight=800)
-    draw.text((MARGIN, MARGIN), data.code, font=code_font, fill=0, anchor="lt")
+    fonts = _landscape_fonts(draw, data, width, qr.width)
+    draw.text((MARGIN, MARGIN), data.code, font=fonts["code"], fill=0, anchor="lt")
 
-    y = MARGIN + code_font.size + 12
-    if data.flags:
-        y = _chips(draw, MARGIN, y, qr_x - MARGIN - 16, data.flags, scale)
-    y = max(y, MARGIN + qr.height) + 14
+    # Skipped, not shrunk, if it cannot keep its quiet zone short of the QR: a
+    # barcode that does not scan is worse than none.
+    quiet = 10 * BARCODE_MODULE
+    try:
+        bars = code128.width(data.code, BARCODE_MODULE)
+    except ValueError:
+        bars = None  # a character Code 128 set B cannot carry
+    if bars is not None and BARCODE_LEFT + bars + quiet <= width - qr.width:
+        code128.draw(
+            draw, BARCODE_LEFT, BARCODE_TOP, data.code,
+            module=BARCODE_MODULE, height=BARCODE_HEIGHT,
+        )
+    # The room band starts here on every label. The chips used to sit above it
+    # and push it down, so a shelf of boxes had its bands at two heights; they
+    # live at the bottom now, and the band holds still.
+    # (A QR taller than expected -- a much longer base URL -- pushes it down
+    # rather than being printed over.)
+    y = max(BAND_TOP, qr.height + BAND_GAP)
+
+    # Anchored to the bottom margin, whatever else is on the label.
+    floor = height - MARGIN
+    chips = tuple(flag for flag in data.flags if flag != "OPEN FIRST")
+    if chips:
+        chip_height = round(68 * CHIP_SIZE / 48)
+        _chips(draw, MARGIN, floor - chip_height, width - 2 * MARGIN, chips, CHIP_SIZE)
+        floor -= chip_height + BAND_GAP
 
     if data.room:
-        # 25% larger type, and a third of its height in padding above and
-        # below: the room is what you read from across a room of boxes.
-        room_font = _fit(
-            draw, data.room.upper(), left_width - 2 * BAND_PADDING, start=s(72), weight=800
-        )
-        band_height = int(room_font.size * 1.66)
-        band_right = width
-        draw.rectangle([0, y, band_right, y + band_height], fill=0)
+        # A third of the type's height in padding above and below: the room is
+        # what you read from across a room of boxes.
+        band_height = int(ROOM_SIZE * 1.66)
+        draw.rectangle([0, y, width, y + band_height], fill=0)
         draw.text(
-            (MARGIN + (left_width - 2 * BAND_PADDING) // 2 + BAND_PADDING, y + band_height // 2),
+            (width // 2, y + band_height // 2),
             data.room.upper(),
-            font=room_font,
+            font=fonts["room"],
             fill=255,
             anchor="mm",
         )
-        y += band_height + 12
+        y += band_height + BAND_GAP
 
     # Where it came from, its weight and its position in a run are all
-    # deliberately absent: at 3 inches the space belongs to what is in the box.
-
-    if data.title:
-        # The name of a loose thing is the point of its label -- as big as it
-        # can be and still fit, where a box would be listing its contents.
-        title_font = _fit(draw, data.title, left_width, start=s(86), weight=800)
-        for line in _wrap(draw, data.title, title_font, left_width)[:2]:
-            draw.text((MARGIN, y), line, font=title_font, fill=0, anchor="lt")
-            y += title_font.size + 6
-        y += 8
-
-    # Everything above is furniture that must be on the label whole.
-    fits = y <= height - MARGIN
-
-    if data.summary:
-        # As big as the scale allows, shrinking toward its original size before
-        # a single word is cut: smaller words beat missing ones.
-        floor = 34
-        for size in range(s(34), floor - 1, -2):
-            summary_font = _font(size, weight=400)
-            line_height = summary_font.size + 6
-            room_for = max(0, (height - MARGIN - y) // line_height)
-            lines = _wrap(draw, data.summary, summary_font, left_width)
-            if len(lines) <= room_for:
-                break
-        # A scale only counts as fitting if the summary keeps a useful amount
-        # of room; otherwise the next notch down gets a turn.
-        fits = fits and room_for >= min(_SUMMARY_LINES, len(lines))
+    # deliberately absent: the space belongs to what is in the box.
+    text = data.title or data.summary
+    if text:
+        font = fonts["title" if data.title else "summary"]
+        line_height = font.size + 6
+        # `floor` is the bottom margin, or the top of the chips when there are
+        # any: the text stops short of them rather than printing through.
+        room_for = max(0, (floor - y) // line_height)
+        lines = _wrap(draw, text, font, width - 2 * MARGIN)
         if len(lines) > room_for:
             lines = lines[:room_for]
             if lines:
                 lines[-1] = lines[-1].rstrip(" ,") + "..."
         for line in lines:
-            draw.text((MARGIN, y), line, font=summary_font, fill=0, anchor="lt")
+            draw.text((MARGIN, y), line, font=font, fill=0, anchor="lt")
             y += line_height
 
-    return canvas, fits
+    return canvas.point(lambda p: 255 if p > 128 else 0).convert("1")
+
+
+# --- the stub: one inch, number and QR ---------------------------------------------
+#
+# For the moment a box is created, before anything is in it. It reads *across*
+# the tape -- a quarter turn from the main label -- because that is the only
+# way a big number and a scannable QR both fit in an inch. Being already the
+# tape's width, printer.to_raster passes it through unrotated.
+STUB_LENGTH = 300        # 1 inch at 300 dpi
+STUB_CODE_SIZE = 105     # fits B-0042 beside the QR; longer codes shrink
+STUB_QR_MODULE = 7       # the largest whole module size that fits in an inch
+
+
+def render_stub(data: LabelData) -> Image.Image:
+    """The number and the QR, and deliberately nothing else.
+
+    Room, flags and summary belong to the full label: a stub is printed before
+    packing, when those are empty or about to change.
+    """
+    width, height = PRINTABLE_WIDTH, STUB_LENGTH
+    canvas = Image.new("L", (width, height), 255)
+    draw = ImageDraw.Draw(canvas)
+
+    qr = _qr(data.url, border=QR_QUIET, module=STUB_QR_MODULE)
+    canvas.paste(qr, (width - qr.width, (height - qr.height) // 2))
+
+    font = _fit(
+        draw, data.code, width - qr.width - MARGIN - 12, start=STUB_CODE_SIZE, weight=800
+    )
+    draw.text((MARGIN, height // 2), data.code, font=font, fill=0, anchor="lm")
+
+    return canvas.point(lambda p: 255 if p > 128 else 0).convert("1")
