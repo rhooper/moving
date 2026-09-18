@@ -534,6 +534,18 @@ status track, location, items, create-and-print), the camera scanner, and a
 launchd agent behind `tailscale serve` so `https://moving.example.ts.net`
 stays up across reboots. 99 tests passing.
 
+**The home mark** (top-left on every page; `a.home` in `index.html`, source in
+`docs/design/`) is the label's QR finder pattern -- the square a scanner uses
+to find a code's corner and know which way is up -- with its core cut as a
+house. It sits in the app's own top-left corner as the origin, and it also
+reads as a home packed in a box. One evenodd path on a 16-unit grid with every
+coordinate even (ring 2, gap 2, house 8), so it is pixel-exact at 16, 24 and
+32 px -- which is why it is drawn at 32 on a phone and 24 in the desktop bar,
+never 28. Inline SVG so `currentColor` follows the theme; true black, no
+radius, no accent. Chosen over "the label as an object" (read as a dashboard,
+or as "print") and the ISO this-way-up arrows (read as "upload"). Not yet used
+as the PWA icon, which is still a white bar on black and reads as a minus sign.
+
 Design note: the PWA deliberately mirrors the printed label — Inter (served from
 the package, not duplicated), the code set huge as the hero, room in the same
 black knockout band, true black rather than a tinted near-black. The point is
