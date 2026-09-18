@@ -7,9 +7,12 @@ step, so callers (the HTTP layer, the CLI) never have to remember to.
 from __future__ import annotations
 
 import sqlite3
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from . import db, kinds, search
+
+if TYPE_CHECKING:  # pragma: no cover - import cycle at runtime
+    from .config import Config
 
 STATUSES = ("open", "packed", "loaded", "delivered", "unpacked")
 
@@ -123,12 +126,33 @@ def update_box(conn: sqlite3.Connection, code: str, **fields) -> dict[str, Any]:
     return get_box(conn, code)
 
 
-def delete_box(conn: sqlite3.Connection, code: str) -> bool:
+def delete_box(conn: sqlite3.Connection, config: Config, code: str) -> bool:
+    """Delete a record, its contents, its events and its photo files.
+
+    `config` is required rather than optional on purpose. The photo rows
+    cascade, but the JPEGs live on disk, and once the rows are gone nothing
+    points at the files -- they cannot be found again or cleaned up. Making the
+    caller supply the photo directory means the cleanup cannot be forgotten,
+    which is exactly how it was forgotten before.
+    """
     box = get_box(conn, code)
     if box is None:
         return False
+
+    # Collect the filenames first: after the delete the rows are gone.
+    doomed = conn.execute(
+        "SELECT filename, thumb_filename FROM photos WHERE box_id = ?", (box["id"],)
+    ).fetchall()
+
     conn.execute("DELETE FROM boxes WHERE id = ?", (box["id"],))
     search.reindex_box(conn, box["id"])  # clears the now-orphaned index row
+
+    # After the row is gone, so a file that has already vanished by other
+    # means cannot leave the record behind.
+    for row in doomed:
+        for name in (row["filename"], row["thumb_filename"]):
+            if name:
+                (config.photo_dir / name).unlink(missing_ok=True)
     return True
 
 

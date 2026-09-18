@@ -460,6 +460,14 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
           <input type="checkbox" id="print-anyway">
           Print anyway - nothing is recorded in this box yet
         </label>`}
+    </div>
+
+    <div class="section danger">
+      <h2>Delete</h2>
+      <p class="meta" id="delete-note"></p>
+      <div class="row">
+        <button class="btn quiet" id="delete">Delete this ${escape(shape.label.toLowerCase())}</button>
+      </div>
     </div>`);
 
   for (const button of app.querySelectorAll("[data-status]")) {
@@ -508,6 +516,31 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
       field.value = summary;
       field.focus();
       announce("Summary suggested from the contents. Save it if you like it.");
+    } catch (error) { showError(error.message); }
+  });
+
+  // Spell out what is about to be destroyed. "Are you sure?" tells you
+  // nothing; the count of photos and items, and whether a label for this code
+  // is already stuck to something, are what actually inform the decision.
+  const losing = [
+    items.length && `${items.length} item${items.length === 1 ? "" : "s"}`,
+    photos.length && `${photos.length} photo${photos.length === 1 ? "" : "s"}`,
+  ].filter(Boolean);
+  const printed = box.label_print_count || 0;
+  document.getElementById("delete-note").textContent = [
+    losing.length ? `Also deletes ${losing.join(" and ")}.` : "Nothing else is attached.",
+    printed ? `A label has been printed ${printed} time${printed === 1 ? "" : "s"} - if one is on something, it will scan to nothing.` : "",
+    // textContent, not markup: escaping here would show literal entities.
+    `${code} will not be reused.`,
+  ].filter(Boolean).join(" ");
+
+  const deleteButton = document.getElementById("delete");
+  deleteButton.addEventListener("click", async () => {
+    const detail = document.getElementById("delete-note").textContent;
+    if (!confirm(`Delete ${code}?\n\n${detail}\n\nThis cannot be undone.`)) return;
+    try {
+      await busy(deleteButton, "Deleting…", () => api(path, { method: "DELETE" }));
+      location.hash = "#/";
     } catch (error) { showError(error.message); }
   });
 

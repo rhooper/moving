@@ -270,6 +270,11 @@ ul.items button { width: auto; min-height: 2rem; padding: 0.2rem 0.5rem; border:
 }
 .anyway input { width: auto; min-height: auto; }
 
+/* Destructive, and irreversible: marked, at the bottom, and not a thing you
+   land on by accident. */
+.section.danger { border-top-color: var(--signal); }
+.section.danger h2 { color: var(--signal); }
+
 /* A button that is working says so and cannot be pressed again. */
 button.working, .btn.working { opacity: 0.65; cursor: progress; }
 button.working::before {

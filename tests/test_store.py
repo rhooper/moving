@@ -111,10 +111,10 @@ def test_removing_an_item_stops_it_matching(conn):
     assert search.search(conn, "cafetiere") == []
 
 
-def test_deleting_a_box_removes_it_from_search(conn):
+def test_deleting_a_box_removes_it_from_search(conn, config):
     box = store.create_box(conn, content_summary="winter coats")
 
-    assert store.delete_box(conn, box["code"]) is True
+    assert store.delete_box(conn, config, box["code"]) is True
     assert search.search(conn, "winter") == []
     assert store.get_box(conn, box["code"]) is None
 

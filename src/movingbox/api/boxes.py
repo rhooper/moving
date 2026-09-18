@@ -7,8 +7,9 @@ import sqlite3
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from .. import store, summarise
+from ..config import Config
 from . import events
-from .app import get_conn, get_events
+from .app import get_config, get_conn, get_events
 from .schemas import BoxWrite, ItemCreate, LocationChange, StatusChange
 
 router = APIRouter(prefix="/api", tags=["boxes"])
@@ -79,9 +80,10 @@ def update_box(
 def delete_box(
     code: str,
     conn: sqlite3.Connection = Depends(get_conn),
+    config: Config = Depends(get_config),
     changes: events.Publisher = Depends(get_events),
 ) -> Response:
-    if not store.delete_box(conn, code):
+    if not store.delete_box(conn, config, code):
         raise HTTPException(status_code=404, detail=f"No box {code}")
     changes.publish(events.BOX_DELETED, code)
     return Response(status_code=204)
