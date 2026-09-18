@@ -291,17 +291,20 @@ ul.items button { width: auto; min-height: 2rem; padding: 0.2rem 0.5rem; border:
 .anyway input { width: auto; min-height: auto; }
 
 /* An action failed; the page behind it is still good. */
-dialog#oops {
+dialog {
   width: min(28rem, calc(100vw - 2rem));
   padding: 1.25rem;
   border: 2px solid var(--ink);
   background: var(--paper);
   color: var(--ink);
 }
-dialog#oops::backdrop { background: rgb(0 0 0 / 0.55); }
-dialog#oops h2 { margin: 0 0 0.5rem; font-size: 1.125rem; font-weight: 800; letter-spacing: -0.02em; }
-dialog#oops p { margin: 0 0 1rem; overflow-wrap: anywhere; }
-dialog#oops form { margin: 0; }
+dialog::backdrop { background: rgb(0 0 0 / 0.55); }
+dialog h2 { margin: 0 0 0.5rem; font-size: 1.125rem; font-weight: 800; letter-spacing: -0.02em; }
+dialog p { margin: 0 0 1rem; overflow-wrap: anywhere; }
+dialog form { margin: 0; }
+dialog p { white-space: pre-line; }  /* a confirmation may run to two paragraphs */
+dialog .row > * { flex: 1; }
+.btn.danger { background: var(--signal); border-color: var(--signal); color: #fff; }
 
 /* Printer trouble, in the bar, on every page. */
 .badge {

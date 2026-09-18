@@ -260,6 +260,33 @@ function failed(message, title = "That did not work") {
   if (!dialog.open) dialog.showModal();
 }
 
+// Ask before destroying or hiding something. Resolves true only on the action
+// button: Escape, the backdrop's own close, and Cancel are all "no". Cancel
+// holds the focus, so a stray Enter or a double tap lands on the safe answer.
+// A native <dialog> rather than confirm(): confirm() cannot be styled, names
+// its buttons "OK" and "Cancel" whatever is at stake, and some mobile browsers
+// suppress it outright after the first one.
+function confirmed({ title, message, action }) {
+  return new Promise((resolve) => {
+    const dialog = document.createElement("dialog");
+    dialog.className = "ask";
+    dialog.innerHTML = `<h2></h2><p></p>
+      <form method="dialog" class="row">
+        <button class="btn quiet" value="no" autofocus>Cancel</button>
+        <button class="btn danger" value="yes"></button>
+      </form>`;
+    dialog.querySelector("h2").textContent = title;
+    dialog.querySelector("p").textContent = message;
+    dialog.querySelector("[value=yes]").textContent = action;
+    dialog.addEventListener("close", () => {
+      resolve(dialog.returnValue === "yes");
+      dialog.remove();
+    });
+    document.body.append(dialog);
+    dialog.showModal();
+  });
+}
+
 // --- views ----------------------------------------------------------------
 
 const boxesPath = (query) =>
@@ -677,6 +704,16 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
 
   const deleteButton = document.getElementById("delete");
   deleteButton?.addEventListener("click", async () => {
+    const sure = await confirmed({
+      title: `Delete ${code}?`,
+      message: [
+        "It leaves the list and search on every device.",
+        losing.length ? `Its ${losing.join(" and ")} go with it.` : "",
+        "Nothing is destroyed: it goes to the bin, and you can restore it from there.",
+      ].filter(Boolean).join(" "),
+      action: "Delete",
+    });
+    if (!sure) return;
     try {
       await busy(deleteButton, "Deleting…", () => api(path, { method: "DELETE" }));
       location.hash = "#/";
@@ -699,7 +736,12 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
       printed ? `A label has been printed ${printed} time${printed === 1 ? "" : "s"} - if one is on something it will scan to nothing.` : "",
       `${code} will not be reused.`,
     ].filter(Boolean).join(" ");
-    if (!confirm(`Permanently delete ${code}?\n\n${detail}\n\nThis cannot be undone.`)) return;
+    const sure = await confirmed({
+      title: `Permanently delete ${code}?`,
+      message: `${detail}\n\nThis cannot be undone.`,
+      action: "Delete permanently",
+    });
+    if (!sure) return;
     try {
       await busy(event.target, "Deleting…", () =>
         api(`${path}/purge`, { method: "DELETE" }));
@@ -754,8 +796,16 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
   });
 
   for (const button of app.querySelectorAll("[data-drop-photo]")) {
-    button.addEventListener("click", () => act(() =>
-      request(`/photos/${encodeURIComponent(button.dataset.dropPhoto)}`, { method: "DELETE" })));
+    button.addEventListener("click", async () => {
+      const sure = await confirmed({
+        title: "Delete this photo?",
+        message: "The picture file is destroyed. Photos have no bin, so this cannot be undone.",
+        action: "Delete photo",
+      });
+      if (!sure) return;
+      act(() =>
+        request(`/photos/${encodeURIComponent(button.dataset.dropPhoto)}`, { method: "DELETE" }));
+    });
   }
 
   // Not under /api: photo files and their controls sit at the root, so this

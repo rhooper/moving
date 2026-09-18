@@ -29,7 +29,7 @@ const chrome = spawn(CHROME, [
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function target() {
-  for (let i = 0; i < 50; i++) {
+  for (let i = 0; i < 150; i++) {
     try {
       const pages = await (await fetch(`http://127.0.0.1:${PORT}/json`)).json();
       const page = pages.find((p) => p.type === "page");
@@ -87,11 +87,13 @@ const IN_PAGE = async () => {
   const roomCancel = $("#destination [data-cancel]");
   const before = room.value;
   const other = Array.from(room.options).find((o) => o.value !== before);
-  room.value = other.value;
-  room.dispatchEvent(new Event("change", { bubbles: true }));
-  check("changing the destination reveals Cancel", !roomCancel.hidden);
-  roomCancel.click();
-  check("Cancel restores the destination", room.value === before, room.value);
+  if (other) {   // a database with no rooms seeded has nothing to change to
+    room.value = other.value;
+    room.dispatchEvent(new Event("change", { bubbles: true }));
+    check("changing the destination reveals Cancel", !roomCancel.hidden);
+    roomCancel.click();
+    check("Cancel restores the destination", room.value === before, room.value);
+  }
 
   // Location form.
   const where = $("#location [name=current_location]");
@@ -102,6 +104,24 @@ const IN_PAGE = async () => {
   check("editing the location reveals Cancel", !whereCancel.hidden);
   whereCancel.click();
   check("Cancel restores the location", where.value === whereBefore, where.value);
+
+  // Delete asks first. Only the Cancel path runs here -- this may be real data.
+  const del = $("#delete");
+  if (del) {
+    const here = location.hash;
+    del.click();
+    await wait(() => $("dialog.ask")?.open, "the delete confirmation");
+    check("Delete opens a confirmation instead of deleting", $("dialog.ask")?.open);
+    check("Cancel holds the focus, not the destructive button",
+          document.activeElement?.value === "no", document.activeElement?.textContent);
+    check("the confirmation names the record",
+          $("dialog.ask h2").textContent.includes(here.split("/").pop()), $("dialog.ask h2").textContent);
+    $("dialog.ask [value=no]").click();
+    await wait(() => !$("dialog.ask"), "the confirmation to close");
+    check("cancelling leaves you on the record", location.hash === here && Boolean($("#summary-form")));
+    const still = await fetch(`/api/boxes/${here.split("/").pop()}`).then((r) => r.json());
+    check("cancelling deleted nothing", !(still.box || still).deleted_at);
+  }
 
   return results;
 };
