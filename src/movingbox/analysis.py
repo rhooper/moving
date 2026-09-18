@@ -158,14 +158,26 @@ def state_of(conn: sqlite3.Connection, photo_id: int) -> dict[str, Any] | None:
         "remaining_ms": 0,
         "total_ms": 0,
         "items_found": None,
+        # What was seen in *this* photo -- not the record's merged list, which
+        # may hold more (other photos, things typed) or less (items since
+        # renamed or removed). The photo viewer shows these beside the picture.
+        "items": None,
+        "summary": None,
         "error": job["error"],
     }
 
     if job["status"] == "done":
         try:
-            state["items_found"] = len(json.loads(job["raw_response"] or "{}").get("items", []))
+            seen = json.loads(job["raw_response"] or "{}")
         except ValueError:
-            state["items_found"] = 0
+            seen = {}
+        state["items"] = [
+            {"name": item.get("name", ""), "qty": item.get("qty") or 1}
+            for item in seen.get("items", [])
+            if isinstance(item, dict) and item.get("name")
+        ]
+        state["items_found"] = len(state["items"])
+        state["summary"] = seen.get("summary") or None
         state["total_ms"] = job["duration_ms"] or 0
         return state
     if job["status"] == "error":

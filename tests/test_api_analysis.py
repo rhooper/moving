@@ -15,7 +15,7 @@ from movingbox import analysis
 from movingbox.api.app import create_app
 from movingbox.vision import base
 
-ANALYSIS_KEYS = {"status", "remaining_ms", "total_ms", "items_found", "error"}
+ANALYSIS_KEYS = {"status", "remaining_ms", "total_ms", "items_found", "error", "items", "summary"}
 
 
 def a_jpeg(colour=(120, 90, 60)) -> bytes:

@@ -134,3 +134,40 @@ export function analysisView(analysis, elapsedMs = 0) {
 function countdown(status, remainingMs) {
   return `${WORDS[status]}… ~${Math.ceil(remainingMs / 1000)} s`;
 }
+
+// What a list row says about a record beside its summary: what it is, over
+// how far along it is. One function, because the first draw and the live
+// update once disagreed about this cell -- the draw showed the kind, the
+// update overwrote it with a location -- and nobody noticed until it was read.
+//
+// Deliberately not the current location, which this cell used to show when
+// there was one: it hid the status, and it has the whole record page.
+export function rowStatus(box) {
+  return { kind: box.kind || "box", status: box.status || "open" };
+}
+
+// What the photo viewer says beside a picture: what the model saw in *this*
+// photo. Not the record's contents list, which is merged from every photo and
+// from whatever people typed -- this is the evidence for one picture, so a
+// wrong item can be traced to the photo it came from.
+export function seenIn(analysis) {
+  const base = { state: "none", heading: "Seen in this photo", summary: "", items: [], note: "" };
+  if (!analysis) {
+    return { ...base, note: "This photo has not been read." };
+  }
+  if (analysis.status === "pending" || analysis.status === "running") {
+    return { ...base, state: "busy", note: "This photo is still being read." };
+  }
+  if (analysis.status === "error") {
+    return { ...base, state: "error", note: `It could not be read: ${analysis.error || "no reason given"}` };
+  }
+  // An older server sends a count and no list; show nothing rather than break.
+  const items = Array.isArray(analysis.items) ? analysis.items : [];
+  return {
+    ...base,
+    state: "done",
+    summary: analysis.summary || "",
+    items,
+    note: items.length ? "" : "Nothing was recognised in this photo.",
+  };
+}

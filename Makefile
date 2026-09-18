@@ -9,7 +9,7 @@
 PORT ?= 8788
 
 .DEFAULT_GOAL := help
-.PHONY: help setup run test lint check ui-check proof deploy install uninstall status labels backup
+.PHONY: help setup run test lint check ui-check browser-check proof deploy install uninstall status labels backup
 
 help:  ## list targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -44,6 +44,9 @@ uninstall:  ## remove the launchd agent
 status:  ## health and printer state of the live service
 	@curl -s http://127.0.0.1:8787/health; echo
 	@curl -s http://127.0.0.1:8787/api/printer; echo
+
+browser-check:  ## EVERY browser check, writing ones included, on a throwaway server (~2 min)
+	scripts/claude/browser_checks.sh
 
 proof:  ## test print without tape: label proof sheet, inline in iTerm (CODES="B-0003 ..." adds real records)
 	uv run python scripts/claude/label_proof.py $(CODES)

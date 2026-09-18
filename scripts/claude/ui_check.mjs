@@ -264,6 +264,16 @@ const IN_NEW = async () => {
   const check = (name, passed, detail = "") => results.push([name, Boolean(passed), String(detail)]);
 
   await wait(() => document.querySelector("#new #create"), "the new form");
+
+  // The way home: top left, on every page, and it goes to the list.
+  const home = document.querySelector("a.home");
+  const box = home?.getBoundingClientRect();
+  check("the home mark is in the top-left corner",
+        Boolean(box) && box.top < 80 && box.left < window.innerWidth / 3, JSON.stringify(box));
+  check("it is a link to the list, with a name a screen reader can say",
+        home?.getAttribute("href") === "#/" && home?.getAttribute("aria-label") === "Home");
+  check("it is big enough to hit", Boolean(box) && box.height >= 44 && box.width >= 44,
+        `${box?.width}x${box?.height}`);
   const buttons = Array.from(document.querySelectorAll("#new button[type=submit]"));
   const kind = document.querySelector("#new [name=kind]");
 

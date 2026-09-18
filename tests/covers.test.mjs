@@ -221,3 +221,96 @@ test("a status this side has never heard of draws nothing rather than crashing",
   assert.equal(analysisView({ status: "paused" }).state, "none");
   assert.equal(analysisView({}).state, "none");
 });
+
+// --- what a list row says about a record, beside its summary ----------------------
+//
+// Two lines: what it is, and how far along it is. The first draw and the live
+// update used to disagree about this cell; one function means they cannot.
+
+test("a row says what the record is, over where it has got to", async () => {
+  const { rowStatus } = await import("../web/covers.js");
+
+  assert.deepEqual(rowStatus({ kind: "tub", status: "packed" }), { kind: "tub", status: "packed" });
+  assert.deepEqual(rowStatus({ kind: "item", status: "loaded" }), { kind: "item", status: "loaded" });
+});
+
+test("a record from before kinds existed is a box, and a new one is open", async () => {
+  const { rowStatus } = await import("../web/covers.js");
+
+  assert.deepEqual(rowStatus({}), { kind: "box", status: "open" });
+  assert.deepEqual(rowStatus({ kind: null, status: null }), { kind: "box", status: "open" });
+});
+
+test("where it is right now is not what this cell is for", async () => {
+  // The cell used to show the location when there was one, which hid the
+  // status. The location lives on the record page.
+  const { rowStatus } = await import("../web/covers.js");
+
+  const said = rowStatus({ kind: "box", status: "packed", current_location: "garage stack 3" });
+
+  assert.deepEqual(said, { kind: "box", status: "packed" });
+});
+
+// --- the photo viewer: what the model saw in *this* photo ------------------------------
+
+test("a read photo lists what was seen in it, with counts", async () => {
+  const { seenIn } = await import("../web/covers.js");
+
+  const seen = seenIn({
+    status: "done",
+    summary: "tea things",
+    items: [{ name: "kettle", qty: 1 }, { name: "mug", qty: 3 }],
+  });
+
+  assert.equal(seen.state, "done");
+  assert.equal(seen.heading, "Seen in this photo");
+  assert.equal(seen.summary, "tea things");
+  assert.deepEqual(seen.items, [{ name: "kettle", qty: 1 }, { name: "mug", qty: 3 }]);
+  assert.equal(seen.note, "");
+});
+
+test("a read photo with nothing in it says so rather than showing an empty list", async () => {
+  const { seenIn } = await import("../web/covers.js");
+
+  const seen = seenIn({ status: "done", summary: null, items: [] });
+
+  assert.deepEqual(seen.items, []);
+  assert.equal(seen.note, "Nothing was recognised in this photo.");
+});
+
+test("a photo still being read says that, and lists nothing yet", async () => {
+  const { seenIn } = await import("../web/covers.js");
+
+  for (const status of ["pending", "running"]) {
+    const seen = seenIn({ status, items: null, summary: null });
+    assert.equal(seen.state, "busy");
+    assert.deepEqual(seen.items, []);
+    assert.match(seen.note, /being read/);
+  }
+});
+
+test("a photo that could not be read says why", async () => {
+  const { seenIn } = await import("../web/covers.js");
+
+  const seen = seenIn({ status: "error", error: "ollama is not running", items: null });
+
+  assert.equal(seen.state, "error");
+  assert.match(seen.note, /ollama is not running/);
+});
+
+test("a photo that was never read says so", async () => {
+  // Taken before photos read themselves, or on a record with no contents.
+  const { seenIn } = await import("../web/covers.js");
+
+  assert.equal(seenIn(null).state, "none");
+  assert.match(seenIn(null).note, /not been read/);
+  assert.deepEqual(seenIn(undefined).items, []);
+});
+
+test("an old server that sends no list does not break the viewer", async () => {
+  const { seenIn } = await import("../web/covers.js");
+
+  const seen = seenIn({ status: "done", items_found: 2 });
+
+  assert.deepEqual(seen.items, []);
+});
