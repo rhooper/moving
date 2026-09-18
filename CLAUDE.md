@@ -55,39 +55,64 @@ present as the last resort.
 label id `62`, `FormFactor.ENDLESS`, `dots_total=(732, 0)`,
 `dots_printable=(696, 0)`. Render at **696 px wide**.
 
-**Labels are landscape by default: a fixed 900 x 696 px** (3 in x 62 mm at
-300 dpi; was 4 in until the 2026-09-18 redesign), **all identity**: code, QR,
-handling chips, room band, one summary line. Fixed length on purpose — a shelf
-of same-size labels reads far better than ragged ones. **The itemised contents
-column was removed on request** (same day): the list is one scan away in the
-app, and the tape is for finding the box from across a room. `LabelData` has
-no `items` field, `from_box` takes no items, and a test pins that adding items
-leaves the preview byte-identical — do not reintroduce it as a gap. One
-consequence: a box with items but no summary prints with no description at
-all, so "From contents" is the way to fill the summary.
+**Labels are landscape by default: a fixed 990 x 696 px** (3.3 in x 62 mm at
+300 dpi -- the QL-800 is 300 dpi, and its 300x600 mode is not used), **all
+identity and all fixed**. Top to bottom: box number (160 px) with the QR flush in
+the top-right corner; a thin Code 128 of the box number under it; the room band
+at `BAND_TOP` on *every* label; the summary (59 px); FRAGILE/HEAVY chips (72 px)
+side by side, anchored to the bottom margin. This layout was specified element
+by element on 2026-09-18 -- treat each of these as a decision, not a gap:
 
-**Landscape type is set 50% larger than the sizes in the code, where the label
-can afford it** (`LANDSCAPE_SCALES`, `landscape_scale()`). A flat 1.5x does not
-survive handling flags: chips cannot share a row beside the QR, so two flags
-squeeze the summary out and three push the room band off the tape. The
-renderer tries 1.5, 1.4 ... 1.0 and keeps the first scale where the furniture
-fits and the summary keeps two lines of room; 1.0 is the proven-to-fit size, so
-the search always ends. The summary additionally shrinks toward its base size
-before a word is ever cut. The QR is **not** scaled -- it was sized on tape for
-scanning distance. `make proof` is the test print without tape: the stress
-cases (0-3 flags, loose item, long code, no room) plus `CODES="B-0003 ..."`
-from the real database, drawn inline in iTerm via imgcat. The redesign also enlarged
-everything (code +20%, QR +15%, FRAGILE +60% with a broken-glass icon, HEAVY
-with a weight icon, room band 25% bigger type padded a third of its height)
-and **deliberately dropped** the source line, weight, box count and footer —
-do not reintroduce them as a gap. Icons are drawn as PIL polygons in
-`layout.py` (`_fragile_icon`/`_heavy_icon`); no icon font dependency.
+- **No dynamic font sizing.** A round of stepped scaling (1.5x down to 1.0x)
+  shipped for a few hours and was rejected: same element, same size, on every
+  label. `type_sizes()` exists so a test can pin that. The one exception is a
+  *guard*: `_fit` starts at the fixed size and shrinks only when a code or room
+  name physically cannot fit. It never triggers for the codes and rooms in use.
+- **A loose item's name is set like any summary.** It used to be fitted as
+  large as it would go, so "Bicycle" printed enormous.
+- **The QR's size is its module size** (`QR_MODULE`, px per module). `_qr`
+  snaps to whole pixels per module, so `target=210` and `target=242` both drew
+  5 px modules: a requested "+15%" once changed a number and nothing on tape.
+  6 px is the next real step (+20%). Two modules of quiet zone, not four: it
+  sits flush in the corner and the tape's unprintable edge adds white.
+- **OPEN FIRST is a double rule around the whole label**, run to the very
+  edge, not a chip. It costs no layout room. Both lines plus the gap stay
+  inside `MARGIN`.
+- **The room band never moves.** Chips used to sit above it and push it down;
+  they live at the bottom now and the summary stops short of them.
+- **Code 128 (`labels/code128.py`) is hand-written** -- for a keyboard-wedge
+  reader, payload is the box number only. The 107-row table was typed from
+  memory, so `tests/test_code128.py` makes zbar read back *every* symbol
+  value, including the eight that only occur as checksums. It starts a full
+  ten-module quiet zone clear of the OPEN FIRST rule, and is skipped rather
+  than shrunk if it cannot keep its quiet zone short of the QR. Any test that
+  decodes a label must now filter by symbol type: there are two on it.
+- **The itemised contents column was removed on request**: the list is one
+  scan away in the app. `LabelData` has no `items`, and a test pins that
+  itemising a box leaves its preview byte-identical. Consequence: a box with
+  items but no summary prints with no description, so "From contents" is how
+  to fill it. Source line, weight, box count and footer are also gone.
+- Icons are PIL polygons in `layout.py`; no icon font dependency.
+
+**The stub** (`render_stub`, `{"stub": true}` on print, `?stub=true` on
+preview) is one inch of tape with just the number and the QR, for the moment a
+box is created and still empty. It is 696 x 300 -- already the tape's width, so
+`to_raster` passes it through and it reads *across* the tape, a quarter turn
+from the main label. It is **exempt from the contents gate** (that is its
+whole purpose) and it **does** bump `label_print_count`, because the purge
+warning is about anything scannable stuck to a box. On the new-record form it
+is the first button; Enter is explicitly routed to the plain Create so the
+keyboard can never spend tape.
+
+`make proof` is the test print without tape: stress cases plus `CODES="..."`
+from the real database, one column at **1:1** (one pixel per printer dot, never
+resampled -- barcode bars are 3 dots wide), drawn inline in iTerm via imgcat.
 
 **Rotation belongs to the printer, not the layout.** `layout.render()` returns
 an image that reads normally; `printer.to_raster()` turns a landscape design a
 quarter turn so its 696 dots land across the tape. `build_instructions` rotates
 *before* its width check — otherwise a correctly sized landscape label is
-rejected for being 900 px wide. The rotation direction was settled on tape,
+rejected for being 990 px wide. The rotation direction was settled on tape,
 not in software; it is correct as written.
 
 `orientation="portrait"` is the older cut-to-content form, still supported and
@@ -329,6 +354,12 @@ word from the generated comment; they are escaped now.
   answer; Escape and the backdrop are "no". Removing a single item from a
   box's list deliberately does **not** ask -- it is one tap to re-add, and a
   modal per row would make tidying an AI draft miserable.
+- **A brand-new database can 500 once.** `db.migrate()` runs on every connect,
+  and a page load fires two requests in parallel; on a database with no schema
+  yet, both try to migrate and one gets `database is locked`. It cannot happen
+  to the live database (already migrated). It bit a throwaway test server;
+  pre-migrate with any CLI command (`moving seed-rooms`) before pointing a
+  browser at a fresh `MOVING_DB_PATH`.
 - **Forms that edit an existing record get a Cancel** (`wireCancel` in
   `app.js`, rule in `live.js` `isDirty`). Hidden until a field differs from
   what `markPristine` recorded, and it restores from that same record. Any
