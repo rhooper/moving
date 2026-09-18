@@ -53,22 +53,37 @@ present as the last resort.
 label id `62`, `FormFactor.ENDLESS`, `dots_total=(732, 0)`,
 `dots_printable=(696, 0)`. Render at **696 px wide**.
 
-**Labels are landscape by default: a fixed 1200 x 696 px** (4 in x 62 mm at
-300 dpi), identity left, itemised contents right. Fixed length on purpose — a
-shelf of same-size labels reads far better than ragged ones, and the size buys
-room for the contents list. With no items the identity takes the full width
-rather than printing an empty `CONTENTS` heading.
+**Labels are landscape by default: a fixed 900 x 696 px** (3 in x 62 mm at
+300 dpi; was 4 in until the 2026-09-18 redesign), identity left, itemised
+contents right. Fixed length on purpose — a shelf of same-size labels reads far
+better than ragged ones. With no items the identity takes the full width
+rather than printing an empty `CONTENTS` heading. The redesign also enlarged
+everything (code +20%, QR +15%, FRAGILE +60% with a broken-glass icon, HEAVY
+with a weight icon, room band 25% bigger type padded a third of its height)
+and **deliberately dropped** the source line, weight, box count and footer —
+do not reintroduce them as a gap. Icons are drawn as PIL polygons in
+`layout.py` (`_fragile_icon`/`_heavy_icon`); no icon font dependency.
 
 **Rotation belongs to the printer, not the layout.** `layout.render()` returns
 an image that reads normally; `printer.to_raster()` turns a landscape design a
 quarter turn so its 696 dots land across the tape. `build_instructions` rotates
 *before* its width check — otherwise a correctly sized landscape label is
-rejected for being 1200 px wide. The rotation direction was settled on tape,
+rejected for being 900 px wide. The rotation direction was settled on tape,
 not in software; it is correct as written.
 
 `orientation="portrait"` is the older cut-to-content form, still supported and
 still tested, sizing between `MIN_HEIGHT` (300) and `DEFAULT_HEIGHT` (1063).
 `MOVING_LABEL_ORIENTATION` selects the default.
+
+**The printer is told never to sleep, once, at startup.** `AutoOffWatcher` (a
+daemon thread started by the app's lifespan handler) polls for the QL-800 and
+writes `400 x 0x00, ESC @, ESC i U A 00 00` — the framing i3labelstation uses
+on the same model; verified live on this printer. The setting persists in the
+printer's NVRAM, so the thread stops after one success rather than polling
+forever. All USB access — this command and printing — goes through
+`printer.exclusive()` (one `threading.Lock`), because FastAPI's threadpool
+would otherwise let two jobs interleave rasters on the one device. The watcher
+does nothing when the backend is `fake`, so tests never look for hardware.
 
 **Printing refuses a box with no recorded contents** (`allow_empty` off by
 default, 409). Previewing is not gated, and neither is the CLI — that is the
@@ -320,6 +335,12 @@ no DK-2251 two-colour printing, no cloud vision provider.
 Live updates were added after that: `/api/events` broadcasts which box changed,
 and `web/live.js` reconnects with jittered backoff, falls back to polling, and
 decides when a refresh is safe. 251 tests passing.
+
+Since then (2026-09-18, 422 tests): box/item/tub kinds with per-prefix
+configurable codes, cover photos, soft delete with a bin, handling-flag
+toggles (fragile/heavy/open-first) that print as icon chips, the printer badge
+in the nav bar, the auto-power-off watcher, and the 3-inch label redesign.
+Remote: **github.com/rhooper/moving (private)** — push after merging to main.
 
 Known limitations that are real, not decisions:
 
