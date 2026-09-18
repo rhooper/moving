@@ -106,6 +106,41 @@ const IN_PAGE = async () => {
   return results;
 };
 
+// The new-record form. Looks, never submits: creating would write a real row.
+const IN_NEW = async () => {
+  const wait = async (test, what) => {
+    for (let i = 0; i < 100; i++) {
+      if (test()) return;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    throw new Error(`timed out waiting for ${what}`);
+  };
+  const results = [];
+  const check = (name, passed, detail = "") => results.push([name, Boolean(passed), String(detail)]);
+
+  await wait(() => document.querySelector("#new #create"), "the new form");
+  const buttons = Array.from(document.querySelectorAll("#new button[type=submit]"));
+  const kind = document.querySelector("#new [name=kind]");
+
+  check("the first button creates without printing",
+        buttons[0]?.id === "create" && !buttons[0].hasAttribute("data-print"), buttons[0]?.textContent);
+  check("the second button is the one that prints",
+        buttons[1]?.hasAttribute("data-print"), buttons[1]?.textContent);
+  check("the first button names the kind it makes",
+        /^Create \w+/.test(buttons[0].textContent) && !/print/i.test(buttons[0].textContent),
+        buttons[0].textContent);
+
+  const other = Array.from(kind.options).find((o) => o.value !== kind.value);
+  if (other) {
+    kind.value = other.value;
+    kind.dispatchEvent(new Event("change", { bubbles: true }));
+    check("changing the kind renames the button",
+          buttons[0].textContent === `Create ${other.textContent.trim().toLowerCase()}`,
+          buttons[0].textContent);
+  }
+  return results;
+};
+
 let failures = 1;
 try {
   const ws = new WebSocket(await target());
@@ -131,6 +166,16 @@ try {
     throw new Error(reply.result.exceptionDetails.exception?.description || "page script failed");
   }
   const results = reply.result.result.value;
+
+  await send("Page.navigate", { url: `${base}/#/new` });
+  await sleep(300);
+  const second = await send("Runtime.evaluate", {
+    expression: `(${IN_NEW.toString()})()`, awaitPromise: true, returnByValue: true,
+  });
+  if (second.result?.exceptionDetails) {
+    throw new Error(second.result.exceptionDetails.exception?.description || "new-form script failed");
+  }
+  results.push(...second.result.result.value);
   failures = 0;
   for (const [name, passed, detail] of results) {
     if (!passed) failures++;

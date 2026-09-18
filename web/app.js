@@ -368,7 +368,7 @@ async function viewBoxes(query) {
       ? `<div class="empty"><p>Nothing matches “${escape(query)}”.</p></div>`
       : `<div class="empty">
            <p>No boxes yet.</p>
-           <p><a href="#/new">Make the first one</a> and print its label.</p>
+           <p><a href="#/new">Make the first one.</a></p>
          </div>`;
 
   show(`
@@ -872,9 +872,23 @@ async function viewNew() {
         </label>
       </div>
       <div class="section">
-        <button class="btn" type="submit">Create and print label</button>
+        <button class="btn" type="submit" id="create">Create</button>
+        <button class="btn quiet" type="submit" id="create-print" data-print
+                style="margin-top:0.5rem">Create and print label</button>
       </div>
     </form>`);
+
+  // Creating is the default -- first button, and what Enter does. Printing is
+  // the deliberate second choice: tape is the one thing here that cannot be
+  // undone. The first button names what it makes, following the kind picker.
+  const kindPicker = document.querySelector("#new [name=kind]");
+  const nameCreate = () => {
+    const chosen = allKinds.find((k) => k.kind === kindPicker.value);
+    document.getElementById("create").textContent =
+      `Create ${(chosen?.label || "box").toLowerCase()}`;
+  };
+  kindPicker.addEventListener("change", nameCreate);
+  nameCreate();
 
   document.getElementById("new").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -890,16 +904,22 @@ async function viewNew() {
     const sourceId = form.get("source_room_id");
     if (sourceId) payload.source_room_id = Number(sourceId);
 
+    // Which button was pressed. Enter in a field reports the first submit
+    // button, so the keyboard default is create-without-printing too.
+    const pressed = event.submitter || document.getElementById("create");
+    const wantsLabel = pressed.hasAttribute("data-print");
+
     try {
-      const box = await api("/boxes", { method: "POST", body: JSON.stringify(payload) });
-      // Printing a box with nothing recorded is refused, and rightly so --
-      // create it and let the box page offer the override.
       let unprinted = null;
-      if (payload.content_summary) {
-        try {
-          await api("/labels/print", { method: "POST", body: JSON.stringify({ codes: [box.code] }) });
-        } catch (error) { unprinted = error.message; }
-      }
+      const box = await busy(pressed, wantsLabel ? "Creating and printing…" : "Creating…", async () => {
+        const made = await api("/boxes", { method: "POST", body: JSON.stringify(payload) });
+        if (wantsLabel) {
+          try {
+            await api("/labels/print", { method: "POST", body: JSON.stringify({ codes: [made.code] }) });
+          } catch (error) { unprinted = error.message; }
+        }
+        return made;
+      });
       location.hash = `#/b/${box.code}`;
       if (unprinted) {
         failed(`${box.code} was created, but its label did not print: ${unprinted}`,
