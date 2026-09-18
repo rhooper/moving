@@ -244,6 +244,24 @@ word from the generated comment; they are escaped now.
   orientation baked in and all other metadata stripped (indoor photos carry
   GPS, and this database gets exported), deduplicated by sha256 so the phone's
   upload retries are harmless.
+- **Exactly one cover photo per box**, enforced by a partial unique index
+  (`idx_photos_one_cover`, migration 0003) rather than by convention —
+  `photos.is_primary` predates it and nothing kept the *one* part. Two
+  consequences: `storage.set_cover` demotes before it promotes, and
+  `delete_photo` promotes a survivor **only when the deleted photo was the
+  cover**. Promoting unconditionally was harmless while the cover was always
+  the oldest photo; once it is a choice it both changes the picture silently
+  and leaves two flagged rows, which the index now refuses.
+- **`list_boxes` carries `cover_photo_id`**, so a screenful of rows draws
+  thumbnails without a request per row. It is a correlated scalar subquery in
+  the same statement, and the partial index above is what makes it a covering
+  index seek (the photo id is the index's own rowid) — bounded by `limit`, not
+  by the size of the photos table. `/api/boxes` and `/api/search` both go
+  through it, so there is one place to change.
+- **`LIST_KINDS` in `web/live.js` now includes `photos.changed`.** It was
+  deliberately excluded while a photo changed nothing the list drew; the cover
+  thumbnail put a photo *on* the row, so leaving it out meant the other phone
+  kept showing a stale picture or a blank square.
 - Scripts live in `scripts/claude/` with a purpose header.
 - Ruff's `B008` is disabled for FastAPI's `Depends`/`Query`/`Header` defaults
   via `extend-immutable-calls` — it is a false positive for that idiom.

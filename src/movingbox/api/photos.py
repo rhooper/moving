@@ -99,6 +99,30 @@ def update_caption(
     return photo
 
 
+@router.post("/photos/{photo_id}/cover")
+def make_cover(
+    photo_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+    changes: events.Publisher = Depends(get_events),
+) -> dict:
+    """Mark this photo as the one its box is recognised by in a list.
+
+    Sync `def`, like everything here that takes get_conn: an async endpoint
+    would run on the event loop while the connection was opened in a
+    threadpool worker, which sqlite3 refuses.
+
+    There is no body -- the photo id in the path is the whole request -- so
+    this needs no schema and stays out of schemas.py.
+    """
+    try:
+        photo = storage.set_cover(conn, photo_id)
+    except LookupError as missing:
+        raise HTTPException(status_code=404, detail=f"No photo {photo_id}") from missing
+
+    changes.publish(events.PHOTOS_CHANGED, store.code_of(conn, photo["box_id"]))
+    return photo
+
+
 @router.delete("/photos/{photo_id}", status_code=204)
 def delete(
     photo_id: int,

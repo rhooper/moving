@@ -21,6 +21,12 @@ const LIST_KINDS = new Set([
   "box.status",
   "box.location",
   "items.changed",
+  // A photo used to be invisible from the list, and was deliberately left out
+  // of this set. The cover thumbnail put it on the row, so a picture arriving,
+  // being deleted, or being swapped for another one now changes what the list
+  // draws -- and without this the other phone keeps showing the old picture,
+  // or an empty square, until something else happens to that box.
+  "photos.changed",
 ]);
 
 /** How long after a tap the screen stays still. Covers pointerdown through

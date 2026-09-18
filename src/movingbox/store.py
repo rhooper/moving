@@ -170,6 +170,22 @@ def set_location(
     return get_box(conn, code)
 
 
+# The photo a list row is drawn with, fetched in the same statement as the
+# rows themselves. A list is the one place a per-row follow-up request is
+# unaffordable: 200 boxes would mean 200 extra round trips just to find out
+# which picture to show, and the client cannot batch them because it does not
+# know the ids until the list arrives.
+#
+# It costs one index seek per returned row against idx_photos_one_cover (the
+# partial unique index from migration 0003, whose WHERE clause this predicate
+# matches), so the cost is bounded by `limit`, not by the size of the photos
+# table -- and it is one statement, so one connection and one round trip.
+_COVER = """(
+    SELECT id FROM photos
+     WHERE photos.box_id = boxes.id AND photos.is_primary = 1
+) AS cover_photo_id"""
+
+
 def list_boxes(
     conn: sqlite3.Connection,
     *,
@@ -209,7 +225,7 @@ def list_boxes(
 
     clause = f"WHERE {' AND '.join(where)}" if where else ""
     rows = conn.execute(
-        f"SELECT * FROM boxes {clause} ORDER BY id DESC LIMIT ? OFFSET ?",
+        f"SELECT *, {_COVER} FROM boxes {clause} ORDER BY id DESC LIMIT ? OFFSET ?",
         (*params, limit, offset),
     ).fetchall()
     boxes = [dict(r) for r in rows]

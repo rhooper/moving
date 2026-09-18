@@ -112,6 +112,18 @@ class TestWhatIsAnnounced:
 
         assert listening.receive_json() == {"kind": "photos.changed", "code": code}
 
+    def test_a_new_cover_being_chosen(self, client, code, listening):
+        # The other phone is looking at the same list, and the picture on the
+        # row it is showing has just changed.
+        photo = client.post(
+            f"/api/boxes/{code}/photos", files={"file": ("a.jpg", a_jpeg(), "image/jpeg")}
+        ).json()
+        assert listening.receive_json()["kind"] == "photos.changed"
+
+        client.post(f"/photos/{photo['id']}/cover")
+
+        assert listening.receive_json() == {"kind": "photos.changed", "code": code}
+
     def test_a_read_announces_nothing(self, client, code, listening):
         # Otherwise one phone merely looking at a box would make every other
         # phone refetch. Silence cannot be proven by waiting for it, so make a

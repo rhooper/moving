@@ -148,6 +148,29 @@ def set_caption(conn: sqlite3.Connection, photo_id: int, caption: str | None) ->
     return get_photo(conn, photo_id)
 
 
+def set_cover(conn: sqlite3.Connection, photo_id: int) -> dict[str, Any]:
+    """Make this photo the one its box is recognised by.
+
+    Demote first, promote second: the schema allows exactly one flagged photo
+    per box (see migration 0003), so the other order would collide with the
+    outgoing cover. Choosing the photo that is already the cover is a no-op
+    rather than an error -- two phones can tap the same picture.
+
+    No reindex: ``is_primary`` is not indexed text, and the captions FTS reads
+    are untouched.
+    """
+    photo = get_photo(conn, photo_id)
+    if photo is None:
+        raise LookupError(photo_id)
+
+    conn.execute(
+        "UPDATE photos SET is_primary = 0 WHERE box_id = ? AND id != ?",
+        (photo["box_id"], photo_id),
+    )
+    conn.execute("UPDATE photos SET is_primary = 1 WHERE id = ?", (photo_id,))
+    return get_photo(conn, photo_id)
+
+
 def delete_photo(conn: sqlite3.Connection, config: Config, photo_id: int) -> bool:
     photo = get_photo(conn, photo_id)
     if photo is None:
@@ -158,11 +181,16 @@ def delete_photo(conn: sqlite3.Connection, config: Config, photo_id: int) -> boo
             (config.photo_dir / name).unlink(missing_ok=True)
 
     conn.execute("DELETE FROM photos WHERE id = ?", (photo_id,))
-    # Promote another photo so a box does not lose its cover image silently.
-    remaining = conn.execute(
-        "SELECT id FROM photos WHERE box_id = ? ORDER BY id LIMIT 1", (photo["box_id"],)
-    ).fetchone()
-    if remaining is not None:
-        conn.execute("UPDATE photos SET is_primary = 1 WHERE id = ?", (remaining["id"],))
+    # Promote another photo so a box that still has photos does not lose its
+    # cover. Only when the *cover* went: promoting unconditionally used to be
+    # harmless when the cover was always the oldest photo, but once it is
+    # somebody's choice it silently changes the picture on the box -- and
+    # leaves two flagged photos, which the schema now refuses outright.
+    if photo["is_primary"]:
+        remaining = conn.execute(
+            "SELECT id FROM photos WHERE box_id = ? ORDER BY id LIMIT 1", (photo["box_id"],)
+        ).fetchone()
+        if remaining is not None:
+            conn.execute("UPDATE photos SET is_primary = 1 WHERE id = ?", (remaining["id"],))
     search.reindex_box(conn, photo["box_id"])
     return True

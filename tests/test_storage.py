@@ -1,6 +1,7 @@
 """Photo storage: writing, thumbnailing, and not storing the same shot twice."""
 
 import io
+import sqlite3
 
 import pytest
 from PIL import Image
@@ -154,3 +155,111 @@ def test_nothing_is_written_to_disk_when_the_upload_is_rejected(config, conn_wit
         storage.save_photo(conn, config, code, b"nope", filename="a.jpg")
 
     assert list(config.photo_dir.glob("*")) == [] if config.photo_dir.exists() else True
+
+
+class TestCover:
+    """Exactly one photo per box is its cover, and it survives a deletion.
+
+    The list and the search results render a box by its cover, so "no cover"
+    and "two covers" are both wrong in ways a person notices: a row that shows
+    nothing, or a row whose picture changes depending on which query ran.
+    """
+
+    def three(self, config, conn, code):
+        return [
+            storage.save_photo(conn, config, code, a_jpeg(colour=shade), filename=f"{n}.jpg")
+            for n, shade in enumerate([(1, 2, 3), (9, 9, 9), (200, 30, 30)])
+        ]
+
+    def covers(self, conn):
+        rows = conn.execute("SELECT id FROM photos WHERE is_primary = 1 ORDER BY id")
+        return [r["id"] for r in rows]
+
+    def test_any_photo_can_be_made_the_cover(self, config, conn_with_box):
+        conn, code = conn_with_box
+        first, second, _ = self.three(config, conn, code)
+
+        storage.set_cover(conn, second["id"])
+
+        assert self.covers(conn) == [second["id"]]
+        assert storage.get_photo(conn, first["id"])["is_primary"] == 0
+
+    def test_the_chosen_cover_is_returned(self, config, conn_with_box):
+        conn, code = conn_with_box
+        _, second, _ = self.three(config, conn, code)
+
+        assert storage.set_cover(conn, second["id"])["is_primary"] == 1
+
+    def test_choosing_the_cover_twice_is_harmless(self, config, conn_with_box):
+        conn, code = conn_with_box
+        _, second, _ = self.three(config, conn, code)
+
+        storage.set_cover(conn, second["id"])
+        storage.set_cover(conn, second["id"])
+
+        assert self.covers(conn) == [second["id"]]
+
+    def test_an_unknown_photo_cannot_be_made_the_cover(self, config, conn_with_box):
+        conn, _ = conn_with_box
+
+        with pytest.raises(LookupError):
+            storage.set_cover(conn, 9999)
+
+    def test_the_cover_of_one_box_does_not_disturb_another(self, config, conn_with_box):
+        conn, code = conn_with_box
+        other = store.create_box(conn, content_summary="garage")["code"]
+        mine = storage.save_photo(conn, config, code, a_jpeg(colour=(4, 4, 4)), filename="a.jpg")
+        theirs = storage.save_photo(conn, config, other, a_jpeg(colour=(4, 4, 4)), filename="b.jpg")
+
+        storage.set_cover(conn, mine["id"])
+
+        assert sorted(self.covers(conn)) == sorted([mine["id"], theirs["id"]])
+
+    def test_deleting_the_cover_promotes_another_photo(self, config, conn_with_box):
+        # A box that has photos must never be left without one to show.
+        conn, code = conn_with_box
+        first, second, _ = self.three(config, conn, code)
+
+        storage.delete_photo(conn, config, first["id"])
+
+        assert self.covers(conn) == [second["id"]]
+
+    def test_deleting_a_photo_that_is_not_the_cover_leaves_the_cover_alone(
+        self, config, conn_with_box
+    ):
+        # The promote-on-delete rule predates being able to choose a cover, so
+        # it promoted the lowest-numbered survivor unconditionally. Once the
+        # cover is somebody's choice that is both a silent change of picture
+        # and a second cover on the same box.
+        conn, code = conn_with_box
+        first, second, third = self.three(config, conn, code)
+        storage.set_cover(conn, second["id"])
+
+        storage.delete_photo(conn, config, third["id"])
+
+        assert self.covers(conn) == [second["id"]]
+
+    def test_deleting_the_last_photo_leaves_no_cover(self, config, conn_with_box):
+        conn, code = conn_with_box
+        only = storage.save_photo(conn, config, code, a_jpeg(), filename="a.jpg")
+
+        storage.delete_photo(conn, config, only["id"])
+
+        assert self.covers(conn) == []
+
+    def test_the_database_refuses_a_second_cover_on_one_box(self, config, conn_with_box):
+        # The invariant is the schema's, not just the code path's: anything
+        # that writes is_primary directly is caught rather than trusted.
+        conn, code = conn_with_box
+        _, second, _ = self.three(config, conn, code)
+
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute("UPDATE photos SET is_primary = 1 WHERE id = ?", (second["id"],))
+
+    def test_the_cover_is_listed_first(self, config, conn_with_box):
+        conn, code = conn_with_box
+        _, second, _ = self.three(config, conn, code)
+
+        storage.set_cover(conn, second["id"])
+
+        assert storage.list_photos(conn, code)[0]["id"] == second["id"]
