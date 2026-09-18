@@ -63,7 +63,9 @@ class ItemCreate(Strict):
 
 class PrintRequest(Strict):
     codes: list[str] = Field(min_length=1)
-    copies: int = Field(default=1, ge=1, le=10)
+    #: Omitted, a full label prints the stored default (two, unless changed
+    #: in settings) and a stub prints one.
+    copies: int | None = Field(default=None, ge=1, le=10)
     height: int | None = None  # exact cut height; omit to fit content
     orientation: Literal["landscape", "portrait"] | None = None
     #: Print a box whose contents are not recorded. Off by default: a label
@@ -80,6 +82,10 @@ class CodeFormat(Strict):
     prefix: str
     separator: str = "-"
     digits: int = Field(default=4, ge=1, le=12)
+
+
+class Printing(Strict):
+    label_copies: int = Field(ge=1, le=10)
 
 
 class NextNumber(Strict):

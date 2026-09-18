@@ -288,6 +288,25 @@ function confirmed({ title, message, action }) {
   });
 }
 
+// --- printing a label that will not say much ---------------------------------
+//
+// A label with no contents, or no destination room, is tape spent on something
+// that cannot be sorted by sight. Not forbidden -- sometimes that is the label
+// you want -- but it asks first. Returns whether to go ahead.
+async function confirmThinLabel(what, { contents, room }) {
+  const missing = [];
+  if (!contents) missing.push("nothing is written down for it");
+  if (!room) missing.push("it has no destination room");
+  if (!missing.length) return true;
+  const reasons = missing.join(", and ");
+  return confirmed({
+    title: `Print ${what} anyway?`,
+    message: `${reasons[0].toUpperCase()}${reasons.slice(1)}. `
+      + "The label will have a number and a QR code, and little else to sort it by.",
+    action: "Print anyway",
+  });
+}
+
 // --- a barcode reader ---------------------------------------------------------
 //
 // A keyboard-wedge reader types what it scans and presses Return: the label's
@@ -635,12 +654,11 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
       ${printerLine(press)}
       <div class="row">
         <button class="btn quiet" id="print">Print label</button>
+        <input id="copies" type="number" min="1" max="10" inputmode="numeric"
+               value="${escape(press?.label_copies ?? 2)}" aria-label="Copies"
+               style="flex:0 0 4.5rem;text-align:center">
       </div>
-      ${hasContents(box, items) ? "" : `
-        <label class="anyway">
-          <input type="checkbox" id="print-anyway">
-          Print anyway - nothing is recorded in this box yet
-        </label>`}
+      <p class="meta">Copies. The usual number is set in Settings.</p>
     </div>
 
     ${box.deleted_at ? "" : `
@@ -808,14 +826,25 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
   });
 
   const printButton = document.getElementById("print");
+  // The number of copies is a choice for this print, not part of the record:
+  // nothing saves it, so it must never make the page look half-edited (which
+  // would hold back live updates for good). Its baseline follows its value.
+  const copiesField = document.getElementById("copies");
+  copiesField.addEventListener("input", () => { copiesField.dataset.initial = copiesField.value; });
+
   printButton.addEventListener("click", async () => {
-    const anyway = document.getElementById("print-anyway");
+    const contents = hasContents(box, items);
+    const sure = await confirmThinLabel(code, { contents, room: Boolean(box.destination_room_id) });
+    if (!sure) return;
+
+    const copies = Math.min(10, Math.max(1, Number(copiesField.value) || 1));
     let result;
     try {
       result = await busy(printButton, "Printing…", () =>
         api("/labels/print", {
           method: "POST",
-          body: JSON.stringify({ codes: [code], allow_empty: Boolean(anyway?.checked) }),
+          // allow_empty only ever follows a yes to the question above.
+          body: JSON.stringify({ codes: [code], copies, allow_empty: !contents }),
         }));
     } catch (error) {
       failed(error.message, "Label not printed");
@@ -831,7 +860,8 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
           { warn: true },
         );
       } else {
-        announce(`Printed ${code}.`);
+        const made = result.printed?.[0]?.copies ?? copies;
+        announce(`Printed ${made} ${made === 1 ? "copy" : "copies"} of ${code}.`);
       }
       await viewBox(code, { keepBanner: true });
     } catch (error) { failed(error.message); }
@@ -1029,6 +1059,17 @@ async function viewNew() {
     const printing = pressed.dataset.print || null;
     const wantsLabel = printing !== null;
 
+    // Asked *before* creating: saying no should leave you on the form with
+    // nothing made, not on a new record you did not mean to make yet. The
+    // stub is exempt -- an empty box is what it is for.
+    if (printing === "label") {
+      const sure = await confirmThinLabel("its label", {
+        contents: Boolean(payload.content_summary),
+        room: Boolean(payload.destination_room_id),
+      });
+      if (!sure) return;
+    }
+
     try {
       let unprinted = null;
       const box = await busy(pressed, wantsLabel ? "Creating and printing…" : "Creating…", async () => {
@@ -1037,7 +1078,10 @@ async function viewNew() {
           try {
             await api("/labels/print", {
               method: "POST",
-              body: JSON.stringify({ codes: [made.code], stub: printing === "stub" }),
+              // Anything thin about a full label was agreed to above.
+              body: JSON.stringify({
+                codes: [made.code], stub: printing === "stub", allow_empty: true,
+              }),
             });
           } catch (error) { unprinted = error.message; }
         }
@@ -1233,9 +1277,18 @@ async function viewSettings() {
     <div class="section">
       <h2>Printer</h2>
       ${printerLine(press)}
-      <p class="meta">If the printer powers itself off, turn that off once in
-         Brother's Printer Setting Tool: Device Settings &gt; Basic &gt;
-         Auto Power Off &gt; None. It cannot be set over USB.</p>
+      <p class="meta">The printer is told not to power itself off each time
+         this server starts, so it should stay awake on its own.</p>
+      <form id="printing" class="row" style="margin-top:0.75rem">
+        <label class="dlabel" for="label-copies" style="flex:1;align-self:center;margin:0">
+          Copies of each label</label>
+        <input id="label-copies" name="label_copies" type="number" min="1" max="10"
+               inputmode="numeric" value="${escape(press?.label_copies ?? 2)}"
+               style="flex:0 0 4.5rem;text-align:center">
+        <button class="btn quiet" type="submit">Save</button>
+      </form>
+      <p class="meta">A box usually wants a label on more than one face. You can
+         still change the number for a single print. A stub always prints one.</p>
     </div>
 
     <div class="section">
@@ -1298,6 +1351,21 @@ async function viewSettings() {
           }),
         }));
       announce(`Codes will now look like ${saved.example}.`);
+    } catch (error) { announce(error.message, { warn: true }); }
+  });
+
+  document.getElementById("printing").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const labelCopies = Number(new FormData(event.target).get("label_copies"));
+    const button = event.target.querySelector("button");
+    try {
+      const saved = await busy(button, "Saving…", () =>
+        api("/settings/printing", {
+          method: "PUT", body: JSON.stringify({ label_copies: labelCopies }) }));
+      const field = event.target.querySelector("[name=label_copies]");
+      field.value = saved.label_copies;
+      field.dataset.initial = String(saved.label_copies);
+      announce(`Labels will print ${saved.label_copies} at a time.`);
     } catch (error) { announce(error.message, { warn: true }); }
   });
 

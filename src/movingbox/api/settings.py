@@ -11,9 +11,9 @@ import sqlite3
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from .. import codes, kinds
+from .. import codes, kinds, prefs
 from .app import get_conn
-from .schemas import CodeFormat, KindPrefix, NextNumber
+from .schemas import CodeFormat, KindPrefix, NextNumber, Printing
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -45,6 +45,16 @@ def set_kind_prefix(body: KindPrefix, conn: sqlite3.Connection = Depends(get_con
     except ValueError as bad:
         raise HTTPException(status_code=422, detail=str(bad)) from bad
     return {"kind": body.kind, "prefix": codes.kind_prefix(conn, body.kind)}
+
+
+@router.get("/printing")
+def get_printing(conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    return {"label_copies": prefs.label_copies(conn)}
+
+
+@router.put("/printing")
+def set_printing(body: Printing, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    return {"label_copies": prefs.set_label_copies(conn, body.label_copies)}
 
 
 @router.get("/code-format")

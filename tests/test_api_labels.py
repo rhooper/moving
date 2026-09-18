@@ -73,7 +73,9 @@ def test_printing_writes_through_the_fake_backend(client, config):
 def test_printing_is_recorded_on_the_box(client):
     code = client.post("/api/boxes", json={"content_summary": "pots and pans"}).json()["code"]
 
-    client.post("/api/labels/print", json={"codes": [code]})
+    # One copy, said out loud: the default is two (test_label_copies.py), and
+    # this test is about the record, not the default.
+    client.post("/api/labels/print", json={"codes": [code], "copies": 1})
 
     box = client.get(f"/api/boxes/{code}").json()
     assert box["label_print_count"] == 1
@@ -87,8 +89,8 @@ def test_reprinting_increments_rather_than_resets(client):
     # explains why two labels with the same code exist.
     code = client.post("/api/boxes", json={"content_summary": "pots and pans"}).json()["code"]
 
-    client.post("/api/labels/print", json={"codes": [code]})
-    client.post("/api/labels/print", json={"codes": [code]})
+    client.post("/api/labels/print", json={"codes": [code], "copies": 1})
+    client.post("/api/labels/print", json={"codes": [code], "copies": 1})
 
     assert client.get(f"/api/boxes/{code}").json()["label_print_count"] == 2
 
