@@ -367,6 +367,24 @@ word from the generated comment; they are escaped now.
   -- a programmatic `.value =` fires no input event, so Cancel would stay
   hidden with something to cancel. "From contents" has no Undo of its own on
   purpose: one way to back out, in one vocabulary.
+- **`node --check web/app.js` proves nothing.** On a `.js` file containing
+  `import`, Node 23.3 exits 0 without parsing it as a module, so a missing brace
+  passes. It was the syntax guard for a day of patches before a subagent
+  noticed. The working form is `node --input-type=module --check < file`, and
+  `tests/test_web_syntax.py` runs it for every module in the deploy gate -- with
+  a test that the check *can* fail, which is the property the old one lacked.
+- **A full label prints `label_copies` copies** (`prefs.py`, default 2, set in
+  Settings; a box wants a label on more than one face). A print request may
+  say otherwise; a stub prints one. `label_print_count` counts *labels*, not
+  button presses. `/api/printer` carries the number so the record page learns
+  it without a sixth request. The copies field on the record page is a choice
+  for one print, not part of the record: its `dataset.initial` follows its
+  value so it never makes the page look half-edited and hold back live updates.
+- **Printing a thin label asks first** (`confirmThinLabel`): no contents, or no
+  destination room. It replaced the "print anyway" tick box. The server still
+  refuses an empty box without `allow_empty`, and the UI only ever sends that
+  after a yes. The new-record form asks *before* creating, so "no" leaves you
+  on the form with nothing made. The stub is exempt by design.
 - **A barcode reader is a keyboard** (`web/wedge.js`, `openEntered` in
   `app.js`). It types what it scans and presses Return: the label's Code 128
   is the box number, its QR is the box URL. A box URL can only have come from
