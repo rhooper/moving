@@ -177,7 +177,9 @@ def _heavy_icon(size: int) -> Image.Image:
 ICONS = {"FRAGILE": _fragile_icon, "HEAVY": _heavy_icon}
 
 
-def _chips(draw, x: int, y: int, max_width: int, flags: tuple[str, ...]) -> int:
+def _chips(
+    draw, x: int, y: int, max_width: int, flags: tuple[str, ...], scale: float = 1.0
+) -> int:
     """Draw flags as inverted chips, wrapping within ``max_width``.
 
     Knocked-out white on black rather than a bullet and plain text: FRAGILE is
@@ -186,8 +188,8 @@ def _chips(draw, x: int, y: int, max_width: int, flags: tuple[str, ...]) -> int:
     """
     # 60% larger than it was: FRAGILE is the most urgent thing on the label and
     # was losing to the box number.
-    font = _font(48, weight=800)
-    pad_x, chip_h, gap = 18, 68, 10
+    font = _font(round(48 * scale), weight=800)
+    pad_x, chip_h, gap = round(18 * scale), round(68 * scale), round(10 * scale)
     icon_size = int(chip_h * 0.72)
     left, top = x, y
 
@@ -358,13 +360,50 @@ def from_box(
     )
 
 
+#: Type scales tried for a landscape label, largest first. 1.5 is the asked-for
+#: size; 1.0 is the size everything was proven to fit at, so it always ends.
+LANDSCAPE_SCALES = (1.5, 1.4, 1.3, 1.2, 1.1, 1.0)
+
+#: Summary lines a label must have room for before a scale counts as fitting
+#: (or fewer, if the whole summary is shorter than that).
+_SUMMARY_LINES = 2
+
+
+def landscape_scale(data: LabelData) -> float:
+    """The type scale this label prints at: the largest one it fits at."""
+    return _fit_landscape(data)[0]
+
+
 def _render_landscape(data: LabelData) -> Image.Image:
     """A 3-inch label, laid out along the tape: all identity, no inventory.
 
     Fixed length rather than cut-to-content. A row of boxes with labels of
     matching size is far easier to read along a shelf. The itemised contents
     are deliberately not printed -- they are one scan away in the app.
+
+    Type is set half as big again as the layout it grew from, where the label
+    can afford it. It cannot always: handling chips cannot share a row beside
+    the QR, so two flags at 1.5x squeeze the summary out and three push the
+    room band off the tape. The scale steps down a notch at a time until the
+    label fits, and only that far.
     """
+    return _fit_landscape(data)[1]
+
+
+def _fit_landscape(data: LabelData) -> tuple[float, Image.Image]:
+    for scale in LANDSCAPE_SCALES:
+        canvas, fits = _draw_landscape(data, scale)
+        if fits:
+            break
+    return scale, canvas.point(lambda p: 255 if p > 128 else 0).convert("1")
+
+
+def _draw_landscape(data: LabelData, scale: float) -> tuple[Image.Image, bool]:
+    """One attempt at `scale`. Returns the canvas and whether everything fit."""
+
+    def s(size: float) -> int:
+        return round(size * scale)
+
     width, height = LANDSCAPE_LENGTH, PRINTABLE_WIDTH
     canvas = Image.new("L", (width, height), 255)
     draw = ImageDraw.Draw(canvas)
@@ -382,19 +421,19 @@ def _render_landscape(data: LabelData) -> Image.Image:
     canvas.paste(qr, (qr_x, MARGIN))
 
     # 20% bigger: the number is how you find the box on a shelf.
-    code_font = _fit(draw, data.code, qr_x - MARGIN - 16, start=115, weight=800)
+    code_font = _fit(draw, data.code, qr_x - MARGIN - 16, start=s(115), weight=800)
     draw.text((MARGIN, MARGIN), data.code, font=code_font, fill=0, anchor="lt")
 
     y = MARGIN + code_font.size + 12
     if data.flags:
-        y = _chips(draw, MARGIN, y, qr_x - MARGIN - 16, data.flags)
+        y = _chips(draw, MARGIN, y, qr_x - MARGIN - 16, data.flags, scale)
     y = max(y, MARGIN + qr.height) + 14
 
     if data.room:
         # 25% larger type, and a third of its height in padding above and
         # below: the room is what you read from across a room of boxes.
         room_font = _fit(
-            draw, data.room.upper(), left_width - 2 * BAND_PADDING, start=72, weight=800
+            draw, data.room.upper(), left_width - 2 * BAND_PADDING, start=s(72), weight=800
         )
         band_height = int(room_font.size * 1.66)
         band_right = width
@@ -414,17 +453,29 @@ def _render_landscape(data: LabelData) -> Image.Image:
     if data.title:
         # The name of a loose thing is the point of its label -- as big as it
         # can be and still fit, where a box would be listing its contents.
-        title_font = _fit(draw, data.title, left_width, start=86, weight=800)
+        title_font = _fit(draw, data.title, left_width, start=s(86), weight=800)
         for line in _wrap(draw, data.title, title_font, left_width)[:2]:
             draw.text((MARGIN, y), line, font=title_font, fill=0, anchor="lt")
             y += title_font.size + 6
         y += 8
 
+    # Everything above is furniture that must be on the label whole.
+    fits = y <= height - MARGIN
+
     if data.summary:
-        summary_font = _font(34, weight=400)
-        line_height = summary_font.size + 6
-        room_for = max(0, (height - MARGIN - y) // line_height)
-        lines = _wrap(draw, data.summary, summary_font, left_width)
+        # As big as the scale allows, shrinking toward its original size before
+        # a single word is cut: smaller words beat missing ones.
+        floor = 34
+        for size in range(s(34), floor - 1, -2):
+            summary_font = _font(size, weight=400)
+            line_height = summary_font.size + 6
+            room_for = max(0, (height - MARGIN - y) // line_height)
+            lines = _wrap(draw, data.summary, summary_font, left_width)
+            if len(lines) <= room_for:
+                break
+        # A scale only counts as fitting if the summary keeps a useful amount
+        # of room; otherwise the next notch down gets a turn.
+        fits = fits and room_for >= min(_SUMMARY_LINES, len(lines))
         if len(lines) > room_for:
             lines = lines[:room_for]
             if lines:
@@ -433,4 +484,4 @@ def _render_landscape(data: LabelData) -> Image.Image:
             draw.text((MARGIN, y), line, font=summary_font, fill=0, anchor="lt")
             y += line_height
 
-    return canvas.point(lambda p: 255 if p > 128 else 0).convert("1")
+    return canvas, fits

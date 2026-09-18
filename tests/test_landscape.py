@@ -102,3 +102,49 @@ def test_build_instructions_accepts_a_landscape_design(conn):
     data = printer.build_instructions(design, model="QL-800", label="62")
 
     assert data[:3] == b"\x1b\x69\x61"
+
+
+# --- type 50% larger, where the label can afford it --------------------------
+#
+# Asked for: every font on the label half as big again. A flat 1.5x does not
+# survive handling flags -- the chips cannot share a row beside the QR, so two
+# flags squeeze the summary out and three push the room band off the tape. So
+# the scale steps down in notches, and only as far as it must.
+
+
+def test_an_ordinary_label_gets_the_full_fifty_percent(conn):
+    assert layout.landscape_scale(a_label()) == 1.5
+    assert layout.landscape_scale(a_label(flags=())) == 1.5
+
+
+def test_a_crowded_label_steps_down_rather_than_overflowing(conn):
+    crowded = a_label(flags=("FRAGILE", "OPEN FIRST", "HEAVY"))
+
+    assert 1.0 <= layout.landscape_scale(crowded) < 1.5
+
+
+def test_nothing_runs_off_the_bottom_of_the_tape(conn):
+    # The room band is full-width black: if it overflowed, the clipped canvas
+    # would carry ink right to the bottom edge.
+    crowded = a_label(flags=("FRAGILE", "OPEN FIRST", "HEAVY"), room="Upstairs Back Bedroom")
+    image = layout.render(crowded, orientation="landscape").convert("L")
+
+    bottom = image.crop((0, image.height - 8, image.width, image.height))
+    assert bottom.getextrema() == (255, 255), "ink in the bottom margin: something overflowed"
+
+
+@pytest.mark.parametrize("flags", [(), ("FRAGILE",), ("FRAGILE", "HEAVY"),
+                                   ("FRAGILE", "OPEN FIRST", "HEAVY")])
+def test_the_summary_is_never_squeezed_out(conn, flags):
+    with_summary = layout.render(a_label(flags=flags), orientation="landscape")
+    without = layout.render(a_label(flags=flags, summary=None), orientation="landscape")
+
+    assert with_summary.tobytes() != without.tobytes()
+
+
+def test_the_qr_is_not_scaled(conn):
+    # "Font size" is type. The QR was sized on tape for scanning distance and
+    # a bigger one would take the width the larger box number needs.
+    big = layout.render(a_label(), orientation="landscape")
+
+    assert decode(big) == a_label().url
