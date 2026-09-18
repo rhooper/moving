@@ -172,8 +172,21 @@ ul.items button { width: auto; min-height: 2rem; padding: 0.2rem 0.5rem; border:
   background: var(--sunk);
   border: 1px solid var(--line);
   overflow: hidden;
+  position: relative;
 }
-.boxlist .t img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* No cover yet: an empty open box, quietly, in the gap the photo would fill.
+   Drawn as a mask so its colour comes from the palette and follows dark mode;
+   a photo simply paints over it, so there is no JS deciding when it shows. */
+.boxlist .t::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-color: var(--muted);
+  opacity: 0.45;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linejoin='round' stroke-linecap='round'%3E%3Cpath d='M5 11h14v8H5z'/%3E%3Cpath d='M5 11 2.2 6.8'/%3E%3Cpath d='M19 11 21.8 6.8'/%3E%3Cpath d='M5 11 7.6 7.2'/%3E%3Cpath d='M19 11 16.4 7.2'/%3E%3C/svg%3E") center / 26px 26px no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linejoin='round' stroke-linecap='round'%3E%3Cpath d='M5 11h14v8H5z'/%3E%3Cpath d='M5 11 2.2 6.8'/%3E%3Cpath d='M19 11 21.8 6.8'/%3E%3Cpath d='M5 11 7.6 7.2'/%3E%3Cpath d='M19 11 16.4 7.2'/%3E%3C/svg%3E") center / 26px 26px no-repeat;
+}
+.boxlist .t img { width: 100%; height: 100%; object-fit: cover; display: block; position: relative; }
 
 .boxlist .c { font-weight: 800; letter-spacing: -0.02em; }
 .boxlist .s { flex: 1; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
