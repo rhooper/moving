@@ -109,11 +109,13 @@ def test_listing_boxes_filters_by_status(client):
     assert [b["code"] for b in found] == [packed]
 
 
-def test_deleting_a_box_removes_it(client):
+def test_deleting_a_box_takes_it_out_of_the_list(client):
+    # Reversible: the record stays reachable by its code so it can be
+    # restored. See test_soft_delete.py.
     code = client.post("/api/boxes", json={}).json()["code"]
 
     assert client.delete(f"/api/boxes/{code}").status_code == 204
-    assert client.get(f"/api/boxes/{code}").status_code == 404
+    assert client.get("/api/boxes").json() == []
 
 
 def test_rooms_can_be_created_and_listed(client):

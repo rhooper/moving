@@ -43,6 +43,10 @@ class InvalidStatus(ValueError):
     """Not one of STATUSES."""
 
 
+class NotDeleted(ValueError):
+    """Purging applies only to something already in the bin."""
+
+
 def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return dict(row) if row is not None else None
 
@@ -105,8 +109,18 @@ def create_box(conn: sqlite3.Connection, *, actor: str | None = None, **fields) 
     return get_box(conn, code)
 
 
-def get_box(conn: sqlite3.Connection, code: str) -> dict[str, Any] | None:
-    return _row(conn.execute("SELECT * FROM boxes WHERE code = ?", (code,)).fetchone())
+def get_box(
+    conn: sqlite3.Connection, code: str, *, include_deleted: bool = False
+) -> dict[str, Any] | None:
+    """The record, or None.
+
+    Deleted records are hidden by default so that every ordinary caller --
+    every endpoint, the label renderer, the print gate -- treats them as gone
+    without each having to remember. The places that genuinely want them (the
+    bin, restore, purge, and a scanned label) ask for them explicitly.
+    """
+    clause = "" if include_deleted else " AND deleted_at IS NULL"
+    return _row(conn.execute(f"SELECT * FROM boxes WHERE code = ?{clause}", (code,)).fetchone())
 
 
 def update_box(conn: sqlite3.Connection, code: str, **fields) -> dict[str, Any]:
@@ -126,18 +140,72 @@ def update_box(conn: sqlite3.Connection, code: str, **fields) -> dict[str, Any]:
     return get_box(conn, code)
 
 
-def delete_box(conn: sqlite3.Connection, config: Config, code: str) -> bool:
-    """Delete a record, its contents, its events and its photo files.
+def delete_box(
+    conn: sqlite3.Connection, config: Config, code: str, *, actor: str | None = None
+) -> bool:
+    """Put a record in the bin. Reversible; destroys nothing.
 
-    `config` is required rather than optional on purpose. The photo rows
-    cascade, but the JPEGs live on disk, and once the rows are gone nothing
-    points at the files -- they cannot be found again or cleaned up. Making the
-    caller supply the photo directory means the cleanup cannot be forgotten,
-    which is exactly how it was forgotten before.
+    `config` is unused here and kept deliberately: purging needs it, and a
+    delete that silently means two different things depending on which
+    function you reached for is worse than one redundant argument.
     """
     box = get_box(conn, code)
     if box is None:
         return False
+
+    conn.execute(
+        "UPDATE boxes SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
+        (box["id"],),
+    )
+    # Out of the index, so a deleted box stops turning up in a search for what
+    # is no longer in it. reindex_box re-reads the row, which now looks deleted.
+    search.reindex_box(conn, box["id"])
+    _record(conn, box["id"], "delete", to_value=code, actor=actor)
+    return True
+
+
+def restore_box(
+    conn: sqlite3.Connection, code: str, *, actor: str | None = None
+) -> dict[str, Any] | None:
+    """Take a record back out of the bin."""
+    box = get_box(conn, code, include_deleted=True)
+    if box is None:
+        return None
+    if box["deleted_at"] is not None:
+        conn.execute(
+            "UPDATE boxes SET deleted_at = NULL, updated_at = datetime('now') WHERE id = ?",
+            (box["id"],),
+        )
+        search.reindex_box(conn, box["id"])
+        _record(conn, box["id"], "restore", to_value=code, actor=actor)
+    return get_box(conn, code)
+
+
+def deleted_boxes(conn: sqlite3.Connection, limit: int = 200) -> list[dict[str, Any]]:
+    """What is in the bin, most recently deleted first."""
+    rows = conn.execute(
+        "SELECT * FROM boxes WHERE deleted_at IS NOT NULL "
+        "ORDER BY deleted_at DESC, id DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def purge_box(conn: sqlite3.Connection, config: Config, code: str) -> bool:
+    """Destroy a record for good, with its contents, events and photo files.
+
+    Only applies to something already deleted: the reversible step is what
+    everything else calls, and this one cannot be reached by accident.
+
+    The photo rows cascade, but the JPEGs live on disk -- once the rows are
+    gone nothing points at the files and they can never be found again, let
+    alone cleaned up. That is why config is required.
+    """
+    box = get_box(conn, code, include_deleted=True)
+    if box is None:
+        return False
+    if box["deleted_at"] is None:
+        raise NotDeleted(f"{code} has not been deleted; delete it before purging")
 
     # Collect the filenames first: after the delete the rows are gone.
     doomed = conn.execute(
@@ -230,7 +298,7 @@ def list_boxes(
     When ``q`` is given the results keep search's relevance order; otherwise
     they are newest first.
     """
-    where, params = [], []
+    where, params = ["deleted_at IS NULL"], []
 
     if q is not None:
         matched = search.search(conn, q, limit=1000)
@@ -251,7 +319,7 @@ def list_boxes(
         where.append("fragile = ?")
         params.append(1 if fragile else 0)
 
-    clause = f"WHERE {' AND '.join(where)}" if where else ""
+    clause = f"WHERE {' AND '.join(where)}"
     rows = conn.execute(
         f"SELECT *, {_COVER} FROM boxes {clause} ORDER BY id DESC LIMIT ? OFFSET ?",
         (*params, limit, offset),
@@ -333,7 +401,11 @@ def add_item(conn: sqlite3.Connection, code: str, *, name: str, **fields) -> dic
 
 
 def list_items(conn: sqlite3.Connection, code: str) -> list[dict[str, Any]]:
-    box = _require(conn, code)
+    # include_deleted: the contents are what you look at to decide whether to
+    # restore something.
+    box = get_box(conn, code, include_deleted=True)
+    if box is None:
+        raise UnknownBox(code)
     rows = conn.execute("SELECT * FROM items WHERE box_id = ? ORDER BY id", (box["id"],))
     return [dict(r) for r in rows]
 
@@ -360,7 +432,11 @@ def delete_item(conn: sqlite3.Connection, item_id: int) -> bool:
 
 
 def events_for(conn: sqlite3.Connection, code: str) -> list[dict[str, Any]]:
-    box = _require(conn, code)
+    # include_deleted: the timeline is where the deletion itself is recorded,
+    # so it has to remain readable afterwards.
+    box = get_box(conn, code, include_deleted=True)
+    if box is None:
+        raise UnknownBox(code)
     rows = conn.execute(
         "SELECT * FROM events WHERE box_id = ? ORDER BY id", (box["id"],)
     ).fetchall()

@@ -48,6 +48,7 @@ def _boxes(conn: sqlite3.Connection) -> list[dict[str, Any]]:
           FROM boxes b
           LEFT JOIN rooms dest ON dest.id = b.destination_room_id
           LEFT JOIN rooms src  ON src.id  = b.source_room_id
+         WHERE b.deleted_at IS NULL
          ORDER BY b.id
         """
     ).fetchall()

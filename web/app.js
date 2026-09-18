@@ -339,6 +339,15 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
 
   show(`
     ${held || '<div id="say" class="say" hidden></div>'}
+    ${box.deleted_at ? `
+      <div class="say warn">
+        <strong>Deleted.</strong> It is out of the list and out of search, and
+        nothing has been destroyed.
+        <div class="row" style="margin-top:0.5rem">
+          <button class="btn" id="restore">Restore</button>
+          <button class="btn quiet" id="purge">Delete permanently</button>
+        </div>
+      </div>` : ""}
     <h1 class="code">${escape(box.code)}</h1>
     ${flags.length ? `<div class="flags">${flags.map((f) => `<span class="flag">${escape(f)}</span>`).join("")}</div>` : ""}
     ${room ? `<div class="band">${escape(room.name)}</div>` : ""}
@@ -462,13 +471,14 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
         </label>`}
     </div>
 
+    ${box.deleted_at ? "" : `
     <div class="section danger">
       <h2>Delete</h2>
       <p class="meta" id="delete-note"></p>
       <div class="row">
         <button class="btn quiet" id="delete">Delete this ${escape(shape.label.toLowerCase())}</button>
       </div>
-    </div>`);
+    </div>`}`);
 
   for (const button of app.querySelectorAll("[data-status]")) {
     button.addEventListener("click", () => act(() =>
@@ -527,19 +537,45 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
     photos.length && `${photos.length} photo${photos.length === 1 ? "" : "s"}`,
   ].filter(Boolean);
   const printed = box.label_print_count || 0;
-  document.getElementById("delete-note").textContent = [
-    losing.length ? `Also deletes ${losing.join(" and ")}.` : "Nothing else is attached.",
-    printed ? `A label has been printed ${printed} time${printed === 1 ? "" : "s"} - if one is on something, it will scan to nothing.` : "",
-    // textContent, not markup: escaping here would show literal entities.
-    `${code} will not be reused.`,
-  ].filter(Boolean).join(" ");
+
+  const note = document.getElementById("delete-note");
+  if (note) {
+    // Reversible, so the note describes what goes out of view rather than
+    // warning about loss. Nothing here is destroyed.
+    note.textContent = [
+      "Takes it out of the list and out of search. Nothing is destroyed, and you can restore it.",
+      losing.length ? `Its ${losing.join(" and ")} go with it.` : "",
+    ].filter(Boolean).join(" ");
+  }
 
   const deleteButton = document.getElementById("delete");
-  deleteButton.addEventListener("click", async () => {
-    const detail = document.getElementById("delete-note").textContent;
-    if (!confirm(`Delete ${code}?\n\n${detail}\n\nThis cannot be undone.`)) return;
+  deleteButton?.addEventListener("click", async () => {
     try {
       await busy(deleteButton, "Deleting…", () => api(path, { method: "DELETE" }));
+      location.hash = "#/";
+    } catch (error) { showError(error.message); }
+  });
+
+  document.getElementById("restore")?.addEventListener("click", async (event) => {
+    try {
+      await busy(event.target, "Restoring…", () =>
+        api(`${path}/restore`, { method: "POST" }));
+      await viewBox(code);
+    } catch (error) { showError(error.message); }
+  });
+
+  document.getElementById("purge")?.addEventListener("click", async (event) => {
+    // The only irreversible action in the app, so this one does ask, and
+    // spells out what a printed label will do afterwards.
+    const detail = [
+      losing.length ? `Destroys its ${losing.join(" and ")}, including the photo files.` : "",
+      printed ? `A label has been printed ${printed} time${printed === 1 ? "" : "s"} - if one is on something it will scan to nothing.` : "",
+      `${code} will not be reused.`,
+    ].filter(Boolean).join(" ");
+    if (!confirm(`Permanently delete ${code}?\n\n${detail}\n\nThis cannot be undone.`)) return;
+    try {
+      await busy(event.target, "Deleting…", () =>
+        api(`${path}/purge`, { method: "DELETE" }));
       location.hash = "#/";
     } catch (error) { showError(error.message); }
   });
@@ -937,6 +973,12 @@ async function viewSettings() {
     </div>
 
     <div class="section">
+      <h2>Deleted</h2>
+      <p class="meta"><a href="#/deleted">Everything you have deleted</a> —
+         restorable, and not destroyed until you say so.</p>
+    </div>
+
+    <div class="section">
       <h2>Your data</h2>
       <div class="row">
         <button class="btn quiet" id="do-backup">Back up now</button>
@@ -1013,6 +1055,22 @@ async function viewSettings() {
   });
 }
 
+async function viewDeleted() {
+  const gone = await api("/boxes/deleted");
+
+  show(`
+    <h1 class="code">Deleted</h1>
+    <p class="meta">Out of the list and out of search. Nothing here has been
+       destroyed — open one to restore it.</p>
+    ${gone.length ? `<ul class="boxlist">${gone.map((b) => `
+      <li><a href="#/b/${escape(b.code)}">
+        <span class="c">${escape(b.code)}</span>
+        <span class="s">${escape(b.content_summary || "Nothing written down")}</span>
+        <span class="w">${escape((b.deleted_at || "").slice(0, 10))}</span>
+      </a></li>`).join("")}</ul>`
+      : '<div class="empty"><p>Nothing deleted.</p></div>'}`);
+}
+
 // --- routing --------------------------------------------------------------
 
 const routes = [
@@ -1021,6 +1079,7 @@ const routes = [
   [/^#\/b\/([^/]+)$/, viewBox],
   [/^#\/new$/, viewNew],
   [/^#\/settings$/, viewSettings],
+  [/^#\/deleted$/, viewDeleted],
   [/^#\/scan$/, () => import("/scan.js").then((m) => m.viewScan(show, showError))],
 ];
 

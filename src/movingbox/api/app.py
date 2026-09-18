@@ -188,7 +188,9 @@ def create_app(config: Config | None = None) -> FastAPI:
         request would say `http://` and drop the phone out of HTTPS — which
         breaks the camera, since getUserMedia needs a secure context.
         """
-        if store.get_box(conn, code) is None:
+        # include_deleted: scanning a box you deleted by mistake should take
+        # you to it, where it can be restored, not to "no such box".
+        if store.get_box(conn, code, include_deleted=True) is None:
             raise HTTPException(status_code=404, detail=f"No box {code}")
         return RedirectResponse(url=f"/#/b/{quote(code)}", status_code=307)
 

@@ -8,15 +8,15 @@ from contextlib import closing
 
 from movingbox import db, store
 
+from .schema_history import roll_back_to
+
 
 def a_v2_database(path):
     """A database as it looked before 0003: no `kind` column."""
     conn = db.connect(path)
     for _ in range(3):
         store.create_box(conn, content_summary="pots")
-    conn.execute("DROP INDEX IF EXISTS idx_boxes_kind")
-    conn.execute("ALTER TABLE boxes DROP COLUMN kind")
-    conn.execute("PRAGMA user_version = 2")
+    roll_back_to(conn, 2)
     conn.close()
 
 

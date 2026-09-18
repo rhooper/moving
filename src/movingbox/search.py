@@ -24,7 +24,7 @@ SELECT
               WHERE r.id IN (b.destination_room_id, b.source_room_id)), ''),
     coalesce(b.current_location, '') || ' ' || coalesce(b.source_location, '')
 FROM boxes b
-WHERE b.id = ?
+WHERE b.id = ? AND b.deleted_at IS NULL
 """
 
 _COLUMNS = "code, summary, notes, items, photo_captions, rooms, location"
@@ -55,7 +55,9 @@ def reindex_box(conn: sqlite3.Connection, box_id: int) -> None:
     conn.execute("DELETE FROM box_fts WHERE rowid = ?", (box_id,))
     row = conn.execute(_GATHER, (box_id,)).fetchone()
     if row is None:
-        return  # deleted; removing the stale row above is the whole job
+        # Gone, or in the bin: either way removing the stale index row above
+        # is the whole job, and a restore reindexes it back.
+        return
     placeholders = ", ".join("?" * (len(_COLUMNS.split(", ")) + 1))
     conn.execute(
         f"INSERT INTO box_fts (rowid, {_COLUMNS}) VALUES ({placeholders})",

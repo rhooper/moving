@@ -125,7 +125,9 @@ def save_photo(
 
 
 def list_photos(conn: sqlite3.Connection, code: str) -> list[dict[str, Any]]:
-    box = store.get_box(conn, code)
+    # include_deleted: a deleted record keeps its photos, and they are part of
+    # deciding whether to restore it.
+    box = store.get_box(conn, code, include_deleted=True)
     if box is None:
         raise store.UnknownBox(code)
     rows = conn.execute(

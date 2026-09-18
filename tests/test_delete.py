@@ -1,4 +1,9 @@
-"""Deleting a record, and taking its photos with it."""
+"""Destroying a record for good, and taking its photo files with it.
+
+Deleting is reversible and keeps everything (test_soft_delete.py); *purging* is
+the step that actually removes rows and unlinks files. These cover the
+destructive half.
+"""
 
 import io
 
@@ -23,15 +28,21 @@ def conn(config):
     c.close()
 
 
+def purged(conn, config, code):
+    """Delete then purge, which is the only route to destruction."""
+    store.delete_box(conn, config, code)
+    return store.purge_box(conn, config, code)
+
+
 def test_the_record_goes(config, conn):
     box = store.create_box(conn, content_summary="pots")
 
-    assert store.delete_box(conn, config, box["code"]) is True
-    assert store.get_box(conn, box["code"]) is None
+    assert purged(conn, config, box["code"]) is True
+    assert store.get_box(conn, box["code"], include_deleted=True) is None
 
 
-def test_deleting_something_that_is_not_there_says_so(config, conn):
-    assert store.delete_box(conn, config, "B-9999") is False
+def test_purging_something_that_is_not_there_says_so(config, conn):
+    assert store.purge_box(conn, config, "B-9999") is False
 
 
 def test_the_photo_files_go_with_it(config, conn):
@@ -43,7 +54,7 @@ def test_the_photo_files_go_with_it(config, conn):
     thumb = config.photo_dir / photo["thumb_filename"]
     assert full.is_file() and thumb.is_file()
 
-    store.delete_box(conn, config, box["code"])
+    purged(conn, config, box["code"])
 
     assert not full.exists()
     assert not thumb.exists()
@@ -59,7 +70,7 @@ def test_every_photo_goes_not_only_the_cover(config, conn):
         for n, shade in enumerate([(1, 1, 1), (9, 9, 9), (200, 30, 30)])
     ]
 
-    store.delete_box(conn, config, box["code"])
+    purged(conn, config, box["code"])
 
     assert [f for f in files if f.exists()] == []
 
@@ -75,7 +86,7 @@ def test_another_records_photos_are_left_alone(config, conn):
     doomed = store.create_box(conn, content_summary="go")
     storage.save_photo(conn, config, doomed["code"], a_jpeg((250, 250, 250)), filename="d.jpg")
 
-    store.delete_box(conn, config, doomed["code"])
+    purged(conn, config, doomed["code"])
 
     assert kept.is_file()
 
@@ -87,14 +98,14 @@ def test_a_missing_file_does_not_stop_the_delete(config, conn):
     photo = storage.save_photo(conn, config, box["code"], a_jpeg(), filename="a.jpg")
     (config.photo_dir / photo["filename"]).unlink()
 
-    assert store.delete_box(conn, config, box["code"]) is True
-    assert store.get_box(conn, box["code"]) is None
+    assert purged(conn, config, box["code"]) is True
+    assert store.get_box(conn, box["code"], include_deleted=True) is None
 
 
 def test_the_code_is_not_handed_out_again(config, conn):
     # A printed label for the deleted box may still be on something.
     first = store.create_box(conn)
-    store.delete_box(conn, config, first["code"])
+    purged(conn, config, first["code"])
 
     assert store.create_box(conn)["code"] != first["code"]
 
@@ -105,14 +116,16 @@ class TestOverHttp:
         with TestClient(create_app(config)) as c:
             yield c
 
-    def test_a_box_can_be_deleted(self, client):
+    def test_a_box_can_be_purged(self, client):
         code = client.post("/api/boxes", json={"content_summary": "pots"}).json()["code"]
 
-        assert client.delete(f"/api/boxes/{code}").status_code == 204
+        client.delete(f"/api/boxes/{code}")
+
+        assert client.delete(f"/api/boxes/{code}/purge").status_code == 204
         assert client.get(f"/api/boxes/{code}").status_code == 404
 
-    def test_deleting_an_unknown_box_is_404(self, client):
-        assert client.delete("/api/boxes/B-9999").status_code == 404
+    def test_purging_an_unknown_box_is_404(self, client):
+        assert client.delete("/api/boxes/B-9999/purge").status_code == 404
 
     def test_the_photos_are_cleaned_up_over_http_too(self, client, config):
         code = client.post("/api/boxes", json={"content_summary": "pots"}).json()["code"]
@@ -120,8 +133,10 @@ class TestOverHttp:
             f"/api/boxes/{code}/photos", files={"file": ("a.jpg", a_jpeg(), "image/jpeg")}
         ).json()
         full = config.photo_dir / photo["filename"]
-
         client.delete(f"/api/boxes/{code}")
+        assert full.is_file(), "a reversible delete must not destroy anything"
+
+        client.delete(f"/api/boxes/{code}/purge")
 
         assert not full.exists()
 

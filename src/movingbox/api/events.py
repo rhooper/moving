@@ -34,6 +34,7 @@ from typing import Any
 BOX_CREATED = "box.created"
 BOX_UPDATED = "box.updated"
 BOX_DELETED = "box.deleted"
+BOX_RESTORED = "box.restored"
 BOX_STATUS = "box.status"
 BOX_LOCATION = "box.location"
 ITEMS_CHANGED = "items.changed"

@@ -13,6 +13,8 @@ import pytest
 
 from movingbox import db, store
 
+from .schema_history import roll_back_to
+
 
 def a_v1_database(path):
     """A database as it looked before 0002: one global counter, no `kind`.
@@ -25,14 +27,7 @@ def a_v1_database(path):
     conn = db.connect(path)
     for _ in range(3):
         store.create_box(conn)
-
-    # 0003
-    conn.execute("DROP INDEX IF EXISTS idx_boxes_kind")
-    conn.execute("ALTER TABLE boxes DROP COLUMN kind")
-    # 0002
-    conn.execute("UPDATE counters SET name = 'box_code' WHERE name = 'box_code:B'")
-
-    conn.execute("PRAGMA user_version = 1")
+    roll_back_to(conn, 1)
     conn.close()
 
 

@@ -17,6 +17,8 @@ from PIL import Image
 
 from movingbox import db, storage, store
 
+from .schema_history import roll_back_to
+
 
 def a_jpeg(colour) -> bytes:
     buffer = io.BytesIO()
@@ -40,10 +42,9 @@ def messy(config, tmp_path):
             for n, shade in enumerate([(30, 60, 90), (90, 60, 30)])
         ],
     }
-    # Step back to the pre-0004 shape: no index, and flags set the old way.
-    # Only this migration is undone: replaying 0004 would try to add the
-    # `kind` column a second time and fail.
-    conn.execute("DROP INDEX IF EXISTS idx_photos_one_cover")
+    # Undo this migration first: recreating the broken state below means
+    # putting two covers on one box, which the index it adds forbids.
+    roll_back_to(conn, 3)
     conn.execute(
         "UPDATE photos SET is_primary = 1 WHERE box_id IN (SELECT id FROM boxes WHERE code = ?)",
         (two,),
@@ -52,7 +53,6 @@ def messy(config, tmp_path):
         "UPDATE photos SET is_primary = 0 WHERE box_id IN (SELECT id FROM boxes WHERE code = ?)",
         (none,),
     )
-    conn.execute("PRAGMA user_version = 3")
     conn.close()
     return photos
 

@@ -53,6 +53,8 @@ def upload(
 
 @router.get("/api/boxes/{code}/photos")
 def list_for_box(code: str, conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
+    # Not gated on deletion: a deleted record keeps its photos, and the page
+    # that offers to restore it shows them.
     try:
         return storage.list_photos(conn, code)
     except store.UnknownBox as missing:

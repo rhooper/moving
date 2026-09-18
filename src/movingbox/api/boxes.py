@@ -16,7 +16,24 @@ router = APIRouter(prefix="/api", tags=["boxes"])
 
 
 def _require(conn: sqlite3.Connection, code: str) -> dict:
-    box = store.get_box(conn, code)
+    """The record, for something that is about to change it.
+
+    A deleted record is reported as deleted rather than missing: 404 would say
+    it never existed, when the answer is "restore it first".
+    """
+    box = store.get_box(conn, code, include_deleted=True)
+    if box is None:
+        raise HTTPException(status_code=404, detail=f"No box {code}")
+    if box["deleted_at"] is not None:
+        raise HTTPException(
+            status_code=409, detail=f"{code} is deleted; restore it before changing it"
+        )
+    return box
+
+
+def _require_readable(conn: sqlite3.Connection, code: str) -> dict:
+    """The record, for something that is only going to read it."""
+    box = store.get_box(conn, code, include_deleted=True)
     if box is None:
         raise HTTPException(status_code=404, detail=f"No box {code}")
     return box
@@ -45,6 +62,12 @@ def list_boxes(
     )
 
 
+@router.get("/boxes/deleted")
+def list_deleted(conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
+    """What is in the bin. Declared above /boxes/{code} so it is not read as one."""
+    return store.deleted_boxes(conn)
+
+
 @router.post("/boxes", status_code=201)
 def create_box(
     body: BoxWrite,
@@ -60,7 +83,16 @@ def create_box(
 
 @router.get("/boxes/{code}")
 def get_box(code: str, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
-    return _require(conn, code)
+    """The record, including one in the bin.
+
+    It is already out of the list and out of search, so getting here means you
+    know the code -- you scanned it, or came from the bin. Answering 404 would
+    tell someone who had just deleted a box by mistake that it never existed.
+    """
+    box = store.get_box(conn, code, include_deleted=True)
+    if box is None:
+        raise HTTPException(status_code=404, detail=f"No box {code}")
+    return box
 
 
 @router.patch("/boxes/{code}")
@@ -84,6 +116,38 @@ def delete_box(
     changes: events.Publisher = Depends(get_events),
 ) -> Response:
     if not store.delete_box(conn, config, code):
+        raise HTTPException(status_code=404, detail=f"No box {code}")
+    changes.publish(events.BOX_DELETED, code)
+    return Response(status_code=204)
+
+
+@router.post("/boxes/{code}/restore")
+def restore_box(
+    code: str,
+    conn: sqlite3.Connection = Depends(get_conn),
+    changes: events.Publisher = Depends(get_events),
+) -> dict:
+    box = store.restore_box(conn, code)
+    if box is None:
+        raise HTTPException(status_code=404, detail=f"No box {code}")
+    changes.publish(events.BOX_RESTORED, code)
+    return box
+
+
+@router.delete("/boxes/{code}/purge", status_code=204)
+def purge_box(
+    code: str,
+    conn: sqlite3.Connection = Depends(get_conn),
+    config: Config = Depends(get_config),
+    changes: events.Publisher = Depends(get_events),
+) -> Response:
+    """Destroy a record for good. Only reachable once it is already deleted."""
+    try:
+        gone = store.purge_box(conn, config, code)
+    except store.NotDeleted as live:
+        # 409: the request is fine, the record's state is not.
+        raise HTTPException(status_code=409, detail=str(live)) from live
+    if not gone:
         raise HTTPException(status_code=404, detail=f"No box {code}")
     changes.publish(events.BOX_DELETED, code)
     return Response(status_code=204)
@@ -117,7 +181,7 @@ def set_location(
 
 @router.get("/boxes/{code}/items")
 def list_items(code: str, conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
-    _require(conn, code)
+    _require_readable(conn, code)
     return store.list_items(conn, code)
 
 
@@ -157,13 +221,13 @@ def suggest_summary(code: str, conn: sqlite3.Connection = Depends(get_conn)) -> 
     Proposed, never applied -- the same rule as a photo draft. The caller puts
     it in the field and decides whether to keep it.
     """
-    _require(conn, code)
+    _require_readable(conn, code)
     return {"summary": summarise.from_items(store.list_items(conn, code))}
 
 
 @router.get("/boxes/{code}/events")
 def list_events(code: str, conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
-    _require(conn, code)
+    _require_readable(conn, code)
     return store.events_for(conn, code)
 
 
