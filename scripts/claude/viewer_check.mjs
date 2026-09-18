@@ -100,6 +100,35 @@ try {
   check("nothing sticks out sideways at phone width",
         await evaluate(`document.querySelector("dialog.viewer").scrollWidth <= document.querySelector("dialog.viewer").clientWidth + 1`));
 
+  // --- a closer look, on request ---
+  check("a quick read offers a closer look",
+        await evaluate(`!document.querySelector("dialog.viewer .closer").hidden`));
+  await evaluate(`document.querySelector("dialog.viewer [data-closer]").click()`);
+  await waitFor(`document.querySelector("dialog.viewer")?.dataset.state === "busy"`, "the closer look to start");
+  check("asking says a closer look is under way, in the viewer",
+        /closer look/.test(await evaluate(`document.querySelector("dialog.viewer .note").textContent`)),
+        await evaluate(`document.querySelector("dialog.viewer .note").textContent`));
+  check("the offer goes away while it runs", await evaluate(`document.querySelector("dialog.viewer .closer").hidden`));
+  await waitFor(`/Looking closer|Queued/.test(document.querySelector(".shots figure .analysis .state")?.textContent || "")`,
+                "the strip to say it is looking closer");
+  check("and under the photo in the strip", true);
+  await shot("viewer-closer-busy.png");
+
+  await waitFor(`document.querySelector("dialog.viewer")?.dataset.state === "done"`, "the closer look to finish", 250);
+  const closerNames = await evaluate(`[...document.querySelectorAll("dialog.viewer ul.items li")].map((li) => li.innerText.replace(/\\s+/g, " ").trim())`);
+  check("the viewer fills in with what the closer look saw",
+        JSON.stringify(closerNames) === JSON.stringify(["kettle", "mug ×4", "toaster", "Dualit toaster manual"]),
+        JSON.stringify(closerNames));
+  check("and says that is what this was",
+        (await evaluate(`document.querySelector("dialog.viewer h2").textContent`)) === "Seen on a closer look");
+  check("a closer look is not offered twice", await evaluate(`document.querySelector("dialog.viewer .closer").hidden`));
+  const merged = await (await fetch(`${base}/api/boxes/${code}/items`)).json();
+  check("the record gained what was new, and the better count, with no duplicates",
+        JSON.stringify(merged.map((i) => [i.name, i.qty]).sort()) ===
+          JSON.stringify([["Dualit toaster manual", 1], ["kettle", 1], ["mug", 4], ["toaster", 1]]),
+        JSON.stringify(merged.map((i) => [i.name, i.qty])));
+  await shot("viewer-closer-done.png");
+
   // --- closing ---
   await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
   await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
@@ -109,7 +138,7 @@ try {
   await evaluate(`document.querySelector(".shots figure .pic a").click()`);
   await waitFor(`Boolean(document.querySelector("dialog.viewer")?.open)`, "the viewer again");
   check("reopened, it shows the findings straight away",
-        (await evaluate(`document.querySelectorAll("dialog.viewer ul.items li").length`)) === 3);
+        (await evaluate(`document.querySelectorAll("dialog.viewer ul.items li").length`)) === 4);
   // A click on the backdrop lands on the dialog element itself.
   await evaluate(`document.querySelector("dialog.viewer").dispatchEvent(new MouseEvent("click", { bubbles: true }))`);
   await waitFor(`!document.querySelector("dialog.viewer")`, "the backdrop to close it");

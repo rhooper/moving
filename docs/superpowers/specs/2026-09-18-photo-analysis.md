@@ -56,11 +56,14 @@ GET /api/boxes/{code}/photos
       "items_found":  int | null, # done: how many items the model saw in this photo
       "items":        [{"name": str, "qty": int}] | null,  # done: what it saw, in THIS photo
       "summary":      str | null, # done: the model's own sentence about this photo
+      "detail":       bool,       # this job was the closer look, not the quick read
       "error":        str | null
   }
 
-POST /photos/{photo_id}/analyse           -> 202, the photo (with "analysis")
+POST /photos/{photo_id}/analyse[?detail=true]   -> 202, the photo (with "analysis")
   Queue (or re-queue) analysis of one photo. Retry after an error, or re-run.
+  `detail=true` is the closer look: the slower, more careful model
+  (`MOVING_VISION_DETAIL_MODEL`). What it finds is merged in, not swapped in.
 
 PATCH /api/items/{item_id}  {"name"?: str, "qty"?: int}   -> 200, the item
   Renaming an item whose source is "ai" sets its source to "manual".

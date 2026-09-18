@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from fastapi.responses import FileResponse
 
 from .. import ai, analysis, storage, store
@@ -152,6 +152,7 @@ def delete(
 @router.post("/photos/{photo_id}/analyse", status_code=202)
 def analyse(
     photo_id: int,
+    detail: bool = Query(default=False, description="A closer look: the slower, careful model"),
     conn: sqlite3.Connection = Depends(get_conn),
     config: Config = Depends(get_config),
     changes: events.Publisher = Depends(get_events),
@@ -164,7 +165,7 @@ def analyse(
     photo = storage.get_photo(conn, photo_id)
     if photo is None:
         raise HTTPException(status_code=404, detail=f"No photo {photo_id}")
-    if analysis.enqueue(conn, config, photo_id, again=True) is None:
+    if analysis.enqueue(conn, config, photo_id, again=True, detail=detail) is None:
         # 409: the request is fine; this record is a thing, not a container.
         raise HTTPException(
             status_code=409,

@@ -410,6 +410,10 @@ function viewPhoto(photo) {
       <p class="meta summary" hidden></p>
       <ul class="items"></ul>
       <p class="meta note" hidden></p>
+      <p class="closer" hidden>
+        <button type="button" class="btn quiet" data-closer>Look closer</button>
+        <span class="meta">A slower, more careful read. It adds to what is listed here.</span>
+      </p>
       <p class="meta"><a href="${escape(full)}" target="_blank" rel="noreferrer">Open the picture on its own</a></p>
       <form method="dialog"><button class="btn" autofocus>Close</button></form>
     </div>`;
@@ -440,8 +444,21 @@ function viewPhoto(photo) {
       return row;
     }));
     list.hidden = !seen.items.length;
+    dialog.querySelector(".closer").hidden = seen.closer !== "offer";
   };
   render(photo);
+
+  // The quick model reads every photo; this asks the careful one. Nothing to
+  // redraw here: the queued job comes back as photos.changed, the strip
+  // repaints, and it repaints this viewer with it (see `showing`).
+  const closer = dialog.querySelector("[data-closer]");
+  closer.addEventListener("click", async () => {
+    try {
+      const queued = await busy(closer, "Asking…", () =>
+        request(`/photos/${encodeURIComponent(photo.id)}/analyse?detail=true`, { method: "POST" }));
+      render(queued);
+    } catch (error) { failed(error.message, "Could not look closer"); }
+  });
 
   showing.id = photo.id;
   showing.render = render;

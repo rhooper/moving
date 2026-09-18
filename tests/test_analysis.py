@@ -328,6 +328,37 @@ class TestTheSummary:
 
         assert self.summary(conn, box["code"]) == ("kettle", "auto")
 
+    def test_a_photo_described_but_not_itemised_still_gives_the_record_a_summary(
+        self, conn, config, box
+    ):
+        # Seen for real: a cabinet of labelled drawers came back as one good
+        # sentence and no items, and the record was left saying nothing at all.
+        photographed(conn, config, box["code"])
+
+        described = saw(summary="A plastic organiser with many labelled drawers")
+        worker(config, Seen(described)).run_once()
+
+        assert self.summary(conn, box["code"]) == (
+            "A plastic organiser with many labelled drawers", "auto")
+
+    def test_once_there_are_items_the_summary_is_made_from_them(self, conn, config, box):
+        photographed(conn, config, box["code"], (1, 1, 1))
+        photographed(conn, config, box["code"], (2, 2, 2))
+        both = worker(config, Seen(saw(summary="A shelf of kitchen things"), saw(("kettle", 1))))
+
+        both.run_once()
+        both.run_once()
+
+        assert self.summary(conn, box["code"]) == ("kettle", "auto")
+
+    def test_the_models_sentence_never_replaces_a_persons(self, conn, config):
+        mine = store.create_box(conn, content_summary="Grandma's tea set")
+        photographed(conn, config, mine["code"])
+
+        worker(config, Seen(saw(summary="Assorted crockery"))).run_once()
+
+        assert self.summary(conn, mine["code"]) == ("Grandma's tea set", "manual")
+
     def test_the_new_summary_is_searchable(self, conn, config, box):
         from movingbox import search
 

@@ -33,7 +33,16 @@ class Config:
     #: itemised contents; "portrait" is the older cut-to-content form.
     label_orientation: str = "landscape"
     ollama_url: str = "http://localhost:11434"
-    vision_model: str = "qwen3-vl:30b"
+    #: Reads every uploaded photo. Measured on this machine on real photos
+    #: (2026-09-18): 7.4 s median, no parse failures in 73 runs, and the most
+    #: specific names of any model tried. The previous default, qwen3-vl:30b,
+    #: is the *thinking* checkpoint: ~37 s a photo, ~30 s of it reasoning that
+    #: did not make it more accurate. The "-instruct" matters -- the bare tags
+    #: (qwen3-vl:4b, :8b, :30b) are all thinking checkpoints.
+    vision_model: str = "qwen3-vl:4b-instruct"
+    #: The closer look, run only when asked for: ~10 s, and the best of those
+    #: tried at handwriting and brand names.
+    vision_detail_model: str = "qwen3-vl:8b-instruct"
     #: "ollama", or "stub": a canned provider that sleeps and returns a fixed
     #: draft, for building and checking the UI without a model.
     vision_provider: str = "ollama"
@@ -64,7 +73,8 @@ def from_env(env: dict[str, str] | None = None) -> Config:
         label_id=e.get("MOVING_LABEL_ID", "62"),
         label_orientation=e.get("MOVING_LABEL_ORIENTATION", "landscape"),
         ollama_url=e.get("MOVING_OLLAMA_URL", "http://localhost:11434").rstrip("/"),
-        vision_model=e.get("MOVING_VISION_MODEL", "qwen3-vl:30b"),
+        vision_model=e.get("MOVING_VISION_MODEL", "qwen3-vl:4b-instruct"),
+        vision_detail_model=e.get("MOVING_VISION_DETAIL_MODEL", "qwen3-vl:8b-instruct"),
         vision_provider=e.get("MOVING_VISION_PROVIDER", "ollama"),
         vision_stub_seconds=float(e.get("MOVING_VISION_STUB_SECONDS", "3")),
         auto_analyse=e.get("MOVING_AUTO_ANALYSE", "1") not in ("0", "false", "no", "off"),

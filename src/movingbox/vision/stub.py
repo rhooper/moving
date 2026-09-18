@@ -19,16 +19,20 @@ from . import base
 class StubProvider:
     name = "stub"
 
-    def __init__(self, seconds: float = 3.0):
+    def __init__(self, seconds: float = 3.0, detail_model: str | None = None):
         self.seconds = seconds
+        self.detail_model = detail_model
 
     def draft(self, images: list[bytes], *, model: str) -> base.BoxDraft:
         time.sleep(self.seconds)
-        return base.BoxDraft(
-            summary="kettle, mugs and a toaster",
-            items=[
-                base.DraftItem(name="kettle", qty=1),
-                base.DraftItem(name="mug", qty=3),
-                base.DraftItem(name="toaster", qty=1),
-            ],
-        )
+        items = [
+            base.DraftItem(name="kettle", qty=1),
+            base.DraftItem(name="mug", qty=3),
+            base.DraftItem(name="toaster", qty=1),
+        ]
+        if model == self.detail_model:
+            # A closer look finds more, and counts better.
+            items[1] = base.DraftItem(name="mug", qty=4)
+            items.append(base.DraftItem(name="Dualit toaster manual", qty=1))
+            return base.BoxDraft(summary="kettle, four mugs, a toaster and its manual", items=items)
+        return base.BoxDraft(summary="kettle, mugs and a toaster", items=items)

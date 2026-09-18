@@ -417,6 +417,9 @@ dialog.viewer ul.items { margin-bottom: 0.75rem; }
 /* No Remove button here to hold the count at the edge, as the main list has. */
 dialog.viewer ul.items .qty { flex: 0 0 auto; }
 dialog.viewer[data-state="error"] .note { color: var(--signal); }
+dialog.viewer .closer { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; }
+dialog.viewer .closer .btn { width: auto; padding-inline: 1rem; }
+dialog.viewer .closer .meta { flex: 1 1 12rem; margin: 0; }
 @media (min-width: 52rem) {
   dialog.viewer[open] { display: grid; grid-template-columns: minmax(0, 3fr) minmax(16rem, 2fr); gap: 1rem; }
   dialog.viewer img { max-height: calc(100dvh - 3rem); }

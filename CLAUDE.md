@@ -195,12 +195,53 @@ ctypes reads it at call time whereas dyld caches its own at exec.
 **Fonts are bundled** (`labels/fonts/Inter.ttf`, OFL). Golden-image tests
 compare rendered bytes, so a system font update would break them spuriously.
 
-**Vision is local-only by deliberate choice.** `qwen3-vl:30b` through Ollama.
-A cloud provider would slot in behind `vision.base.VisionProvider`; none is
-built, because local was the choice. Timings vary more than first measured:
-~6 s warm at best, but **29 s warm and 87 s cold** were both seen on 2026-09-18
-(Ollama unloads an idle model after five minutes, so the first photo of any
-packing session is a cold start).
+**Vision is local-only by deliberate choice**, through Ollama. A cloud provider
+would slot in behind `vision.base.VisionProvider`; none is built, because local
+was the choice.
+
+**A quick model reads every photo; a careful one looks closer when asked.**
+`qwen3-vl:4b-instruct` by default (`MOVING_VISION_MODEL`), `qwen3-vl:8b-instruct`
+for the closer look (`MOVING_VISION_DETAIL_MODEL`, the **Look closer** button in
+the photo viewer, `POST /photos/{id}/analyse?detail=true`). Measured on this
+machine on the owner's own photos, through the app's own request and parser
+(2026-09-18; raw data was in a scratch dir, the numbers that matter are here):
+
+| model | per photo | notes |
+|---|---|---|
+| `qwen3-vl:30b` (the old default) | 37.5 s median, up to 127 s; 87 s cold | vague names, garbles handwriting |
+| `qwen3-vl:4b-instruct` | **7.4 s** median (n=69); ~9 s through the app | 0/73 parse failures; the most specific names |
+| `qwen3-vl:8b-instruct` | 10 s; ~15 s through the app | best at handwriting and brand spelling |
+| `qwen3-vl:2b`, `gemma3:4b` | fast | not usable: runaway generation; invented items |
+
+- **The 30b was slow because it *thinks*, not because it is large.** Every bare
+  qwen3-vl tag (`:2b`, `:4b`, `:8b`, `:30b`) is the *thinking* checkpoint; it
+  wrote a median 1,800 tokens of reasoning (~30 s) before each answer, 27,000
+  characters about a photo of two closed boxes -- and was not more accurate for
+  it. **The `-instruct` in the tag is what matters.** `/no_think` in the prompt
+  does nothing. `"think": false` works but, with `format` set, Ollama 0.34 puts
+  the JSON in `message.thinking` and leaves `content` empty, so `read_response`
+  falls back to `thinking` (42 of 42 replies were being lost that way).
+  `qwen3-vl:30b-a3b-instruct` (20 GB) is the obvious untested candidate for an
+  even better closer look.
+- **`keep_alive: "30m"` and `num_ctx: 8192` go on every request.** Ollama
+  unloads after five idle minutes and boxes are often further apart than that;
+  and left alone it sizes the context at 262k, so a 4b model takes 25 GB (under
+  4 GB at 8192, exactly as fast). Both models fit in memory together.
+- **Photos stay at 2048 px.** At 1024 the 4b is 3x faster and stops reading
+  small text (zero items on a cabinet of labelled drawers) and the models start
+  inventing things. It is the only big speed lever left, and a bad trade.
+- **A closer look adds; it never removes.** It is merged like any other read, so
+  a quick read's misreading ("Tiny Relays") stays beside the closer look's
+  correction ("Tiny Bulbs") until someone deletes it. Items carry no link to
+  the photo or job they came from; that link is what replacing would need.
+- `ai_jobs.detail` records which kind a job was (migration 0007): it cannot be
+  inferred from the model name, which is configuration. Each model is timed
+  against its own history, so a slow closer look never lengthens the quick
+  read's countdown.
+- **A photo described but not itemised still gives the record a summary.** A
+  cabinet of labelled drawers came back as one good sentence and no items, and
+  the record was left blank; the model's sentence is now the fallback when
+  there are no items to build a summary from. Items win as soon as there are any.
 
 **Every uploaded photo is analysed in the background, and what is found is
 applied** (`analysis.py`; spec in `docs/superpowers/specs/2026-09-18-photo-analysis.md`).

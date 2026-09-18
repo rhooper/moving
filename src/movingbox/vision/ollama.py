@@ -12,12 +12,23 @@ import httpx
 
 from . import base
 
-#: 20 minutes. A warm 30B MoE on an M2 Ultra answers in about six seconds, but
-#: a cold model has to load ~20 GB from disk, and a larger model pulled in
-#: later could take far longer still. The cost of a generous timeout is a
-#: request that hangs; the cost of a tight one is losing a draft that would
-#: have succeeded.
+#: 20 minutes. The models in use answer in ten seconds or so, but a *thinking*
+#: checkpoint (any bare qwen3-vl tag) has been seen to reason for over two
+#: minutes about a photo of two closed boxes, and a cold model has to load
+#: first. The cost of a generous timeout is a request that hangs; the cost of
+#: a tight one is losing a draft that would have succeeded.
 TIMEOUT = 1200.0
+
+#: How long Ollama keeps the model in memory after a request. Its default is
+#: five minutes, and boxes in a packing session are often further apart than
+#: that -- so without this, most photos pay for a model load. Sent with the
+#: request so nobody has to edit a Homebrew plist.
+KEEP_ALIVE = "30m"
+
+#: Left alone, Ollama sizes the context at 262,144 tokens and a 4b model takes
+#: 25 GB of memory. One photo and a short prompt need a fraction of that; at
+#: 8192 the same model takes under 4 GB and is exactly as fast.
+CONTEXT = 8192
 
 
 def build_request(model: str, images: list[bytes]) -> dict:
@@ -31,7 +42,8 @@ def build_request(model: str, images: list[bytes]) -> dict:
         "model": model,
         "stream": False,
         "format": base.SCHEMA,
-        "options": {"temperature": 0.2},
+        "keep_alive": KEEP_ALIVE,
+        "options": {"temperature": 0.2, "num_ctx": CONTEXT},
         "messages": [
             {
                 "role": "system",
@@ -47,10 +59,20 @@ def build_request(model: str, images: list[bytes]) -> dict:
 
 
 def read_response(payload: dict) -> base.BoxDraft:
-    content = (payload or {}).get("message", {}).get("content")
-    if not isinstance(content, str) or not content.strip():
-        raise base.DraftUnreadable(f"unexpected reply from ollama: {str(payload)[:200]}")
-    return base.parse(content)
+    message = (payload or {}).get("message", {})
+    content = message.get("content")
+    if isinstance(content, str) and content.strip():
+        return base.parse(content)
+
+    # Ollama 0.34, with `format` set and thinking switched off on a thinking
+    # checkpoint, puts the JSON in `thinking` and leaves `content` empty. Every
+    # one of 42 such replies in the benchmark had a usable draft in it. If it
+    # is *only* thinking, base.parse finds no JSON and raises, as it should.
+    thinking = message.get("thinking")
+    if isinstance(thinking, str) and thinking.strip():
+        return base.parse(thinking)
+
+    raise base.DraftUnreadable(f"unexpected reply from ollama: {str(payload)[:200]}")
 
 
 class OllamaProvider:

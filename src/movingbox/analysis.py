@@ -54,12 +54,21 @@ BOX_UPDATED = "box.updated"
 
 
 def enqueue(
-    conn: sqlite3.Connection, config: Config, photo_id: int, *, again: bool = False
+    conn: sqlite3.Connection,
+    config: Config,
+    photo_id: int,
+    *,
+    again: bool = False,
+    detail: bool = False,
 ) -> int | None:
     """Queue one photo for analysis. Returns the job id, or None if not queued.
 
     Idempotent: a phone retrying an upload dedupes to the same photo, and that
     photo must not be analysed twice. `again=True` is the explicit re-run.
+
+    `detail=True` is the closer look: the slower, more careful model, run only
+    when somebody asks. What it finds is merged like anything else, so it adds
+    to the quick read rather than replacing it.
     """
     photo = conn.execute(
         """
@@ -87,11 +96,17 @@ def enqueue(
 
     cursor = conn.execute(
         """
-        INSERT INTO ai_jobs (box_id, photo_id, provider, model, prompt_version, status)
-        VALUES (?, ?, ?, ?, ?, 'pending')
+        INSERT INTO ai_jobs (box_id, photo_id, provider, model, prompt_version, status, detail)
+        VALUES (?, ?, ?, ?, ?, 'pending', ?)
         """,
-        (photo["box_id"], photo_id, config.vision_provider, config.vision_model,
-         base.PROMPT_VERSION),
+        (
+            photo["box_id"],
+            photo_id,
+            config.vision_provider,
+            config.vision_detail_model if detail else config.vision_model,
+            base.PROMPT_VERSION,
+            int(detail),
+        ),
     )
     return cursor.lastrowid
 
@@ -158,6 +173,8 @@ def state_of(conn: sqlite3.Connection, photo_id: int) -> dict[str, Any] | None:
         "remaining_ms": 0,
         "total_ms": 0,
         "items_found": None,
+        # Whether this was the closer look rather than the quick read.
+        "detail": bool(job["detail"]),
         # What was seen in *this* photo -- not the record's merged list, which
         # may hold more (other photos, things typed) or less (items since
         # renamed or removed). The photo viewer shows these beside the picture.
@@ -253,8 +270,15 @@ def merge_items(conn: sqlite3.Connection, code: str, found: list[base.DraftItem]
     return changed
 
 
-def refresh_summary(conn: sqlite3.Connection, code: str) -> bool:
-    """Rebuild the summary from the items -- if it is the model's to rebuild."""
+def refresh_summary(conn: sqlite3.Connection, code: str, *, described: str | None = None) -> bool:
+    """Rebuild the summary from the items -- if it is the model's to rebuild.
+
+    `described` is the model's own sentence about the photo, used only when the
+    record has no items to build from: a cabinet of labelled drawers once came
+    back as one good sentence and no items, and the record said nothing at all.
+    Items win as soon as there are any -- they are what search and the contents
+    list are made of, and a summary that disagrees with them reads as a bug.
+    """
     box = store.get_box(conn, code)
     if box is None:
         return False
@@ -262,7 +286,8 @@ def refresh_summary(conn: sqlite3.Connection, code: str) -> bool:
     if not mine:
         return False
 
-    summary = summarise.from_items(store.list_items(conn, code)) or None
+    fallback = " ".join((described or "").split())[: base.SUMMARY_MAX].strip()
+    summary = summarise.from_items(store.list_items(conn, code)) or fallback or None
     if summary == box["content_summary"] and box["summary_source"] == "auto":
         return False
     conn.execute(
@@ -402,7 +427,7 @@ class Analyst(threading.Thread):
         # The record may have been deleted while the model was thinking.
         if store.get_box(conn, code) is not None:
             items_changed = merge_items(conn, code, draft.items)
-            summary_changed = refresh_summary(conn, code)
+            summary_changed = refresh_summary(conn, code, described=draft.summary)
             if items_changed:
                 self._publish(ITEMS_CHANGED, code)
             if summary_changed or items_changed:
