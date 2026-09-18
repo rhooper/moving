@@ -42,6 +42,13 @@
 
 * { box-sizing: border-box; }
 
+/* The JS toggles visibility with el.hidden, and the browser's own
+   `[hidden] { display: none }` loses to any author display rule -- which is
+   how the printer badge (display: flex) showed "Printer offline" forever
+   while the printer sat there online. Author-level and !important so no
+   display rule can re-defeat it. */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   background: var(--paper);

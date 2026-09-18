@@ -152,8 +152,10 @@ async function refreshPrinterBadge() {
     const press = await api("/printer");
     const wrong = !press.ready || !press.prints;
     badge.hidden = !wrong;
-    badge.textContent = press.prints ? "Printer offline" : "Preview only";
-    badge.title = press.detail;
+    if (wrong) {
+      badge.textContent = press.prints ? "Printer offline" : "Preview only";
+      badge.title = press.detail;
+    }
   } catch {
     badge.hidden = true;  // the server is unreachable; that is its own problem
   }
