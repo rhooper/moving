@@ -214,3 +214,114 @@ class TestDraft:
         conn.close()
         assert row["status"] == "error"
         assert "model not found" in row["error"]
+
+
+class TestCover:
+    """Choosing which photo represents a box, and carrying it on list rows.
+
+    The whole point is recognising a box by sight, which means the thumbnail
+    has to arrive with the list. A cover id per row keeps a hundred-box list at
+    one request instead of a hundred and one.
+    """
+
+    def upload(self, client, code, colour):
+        return client.post(
+            f"/api/boxes/{code}/photos", files={"file": ("a.jpg", a_jpeg(colour), "image/jpeg")}
+        ).json()
+
+    def row(self, client, code):
+        return next(b for b in client.get("/api/boxes").json() if b["code"] == code)
+
+    def test_a_photo_can_be_made_the_cover(self, client, code):
+        self.upload(client, code, (1, 1, 1))
+        second = self.upload(client, code, (2, 2, 2))
+
+        response = client.post(f"/photos/{second['id']}/cover")
+
+        assert response.status_code == 200
+        assert response.json()["is_primary"] == 1
+
+    def test_choosing_a_cover_demotes_the_previous_one(self, client, code):
+        first = self.upload(client, code, (1, 1, 1))
+        second = self.upload(client, code, (2, 2, 2))
+
+        client.post(f"/photos/{second['id']}/cover")
+
+        photos = client.get(f"/api/boxes/{code}/photos").json()
+        assert [p["id"] for p in photos if p["is_primary"]] == [second["id"]]
+        assert next(p for p in photos if p["id"] == first["id"])["is_primary"] == 0
+
+    def test_the_cover_leads_the_photo_list(self, client, code):
+        self.upload(client, code, (1, 1, 1))
+        second = self.upload(client, code, (2, 2, 2))
+
+        client.post(f"/photos/{second['id']}/cover")
+
+        assert client.get(f"/api/boxes/{code}/photos").json()[0]["id"] == second["id"]
+
+    def test_covering_an_unknown_photo_is_404(self, client):
+        assert client.post("/photos/9999/cover").status_code == 404
+
+    def test_the_box_list_carries_the_cover_so_a_row_needs_no_extra_request(self, client, code):
+        photo = self.upload(client, code, (1, 1, 1))
+
+        assert self.row(client, code)["cover_photo_id"] == photo["id"]
+
+    def test_a_box_with_no_photo_says_so_rather_than_leaving_the_field_out(self, client, code):
+        # The row still reserves the space for a thumbnail, so the client has
+        # to be told "no cover" rather than left to guess from a missing key.
+        row = self.row(client, code)
+
+        assert "cover_photo_id" in row
+        assert row["cover_photo_id"] is None
+
+    def test_the_list_cover_follows_the_choice(self, client, code):
+        self.upload(client, code, (1, 1, 1))
+        second = self.upload(client, code, (2, 2, 2))
+
+        client.post(f"/photos/{second['id']}/cover")
+
+        assert self.row(client, code)["cover_photo_id"] == second["id"]
+
+    def test_search_results_carry_the_cover_too(self, client, code):
+        photo = self.upload(client, code, (1, 1, 1))
+        client.patch(f"/api/boxes/{code}", json={"content_summary": "camping stove"})
+
+        found = client.get("/api/search", params={"q": "camping stove"}).json()
+
+        assert [b["cover_photo_id"] for b in found] == [photo["id"]]
+
+    def test_the_cover_a_row_points_at_is_the_small_image(self, client, code):
+        # 400 px, not the 2048 px original: a list of 200 boxes must not pull
+        # 200 full-size photographs.
+        photo = self.upload(client, code, (1, 1, 1))
+        cover = self.row(client, code)["cover_photo_id"]
+
+        thumb = client.get(f"/photos/{cover}/thumb")
+
+        assert len(thumb.content) < len(client.get(f"/photos/{photo['id']}/full").content)
+
+    def test_deleting_the_cover_promotes_another_rather_than_leaving_none(self, client, code):
+        first = self.upload(client, code, (1, 1, 1))
+        second = self.upload(client, code, (2, 2, 2))
+
+        client.delete(f"/photos/{first['id']}")
+
+        assert self.row(client, code)["cover_photo_id"] == second["id"]
+
+    def test_deleting_a_spare_photo_does_not_change_the_cover(self, client, code):
+        self.upload(client, code, (1, 1, 1))
+        second = self.upload(client, code, (2, 2, 2))
+        third = self.upload(client, code, (3, 3, 3))
+        client.post(f"/photos/{second['id']}/cover")
+
+        client.delete(f"/photos/{third['id']}")
+
+        assert self.row(client, code)["cover_photo_id"] == second["id"]
+
+    def test_deleting_the_last_photo_leaves_the_row_coverless(self, client, code):
+        only = self.upload(client, code, (1, 1, 1))
+
+        client.delete(f"/photos/{only['id']}")
+
+        assert self.row(client, code)["cover_photo_id"] is None

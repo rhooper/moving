@@ -63,7 +63,15 @@ test("the list cares about items too, because search matches on them", () => {
 
 test("the list ignores what only a box page shows", () => {
   assert.equal(affects({ kind: "label.printed", code: "B-0001" }, list), false);
-  assert.equal(affects({ kind: "photos.changed", code: "B-0001" }, list), false);
+});
+
+test("the list cares about photos, because a row shows one", () => {
+  // It did not before: a photo changed nothing a list row drew. Now the cover
+  // thumbnail *is* part of the row, so a picture arriving, being deleted, or
+  // being swapped for another one changes what the list shows -- and a phone
+  // still looking at the list would otherwise keep drawing the old picture,
+  // or a blank square, until something else happened to that box.
+  assert.equal(affects({ kind: "photos.changed", code: "B-0001" }, list), true);
 });
 
 test("a box page only cares about its own box", () => {

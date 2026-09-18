@@ -1,6 +1,7 @@
 // Moving boxes -- phone-first PWA. Hash routing so a scanned label can land on
 // /#/b/CODE without needing server-side routes for every view.
 
+import { coverUrl, stripFor } from "/covers.js";
 import {
   LiveChannel,
   SETTLE_MS,
@@ -200,11 +201,24 @@ const listHeading = (boxes, query) =>
 //
 // These rows are built with DOM calls and textContent, so no value is ever
 // interpolated into markup and escape() has nothing to do here.
+//
+// The thumbnail frame is drawn for every row, photo or not. It holds its size
+// from the stylesheet rather than from the image, so a box with no picture
+// leaves a gap the same shape as its neighbours' -- and a box that gains one
+// later fills that gap instead of shoving every row below it down the screen.
 function rowFor(box) {
   const row = document.createElement("li");
   row.dataset.key = box.code;
   const link = document.createElement("a");
   link.setAttribute("href", `#/b/${encodeURIComponent(box.code)}`);
+  const frame = document.createElement("span");
+  frame.className = "t";
+  const thumb = document.createElement("img");
+  thumb.alt = "";  // decorative: the code beside it already names the box
+  thumb.loading = "lazy";
+  thumb.hidden = true;
+  frame.append(thumb);
+  link.append(frame);
   for (const cls of ["c", "s", "w"]) {
     const span = document.createElement("span");
     span.className = cls;
@@ -215,10 +229,24 @@ function rowFor(box) {
 }
 
 function fillRow(row, box) {
-  const [code, summary, where] = row.querySelectorAll("span");
+  const [code, summary, where] = row.querySelectorAll("span.c, span.s, span.w");
   setText(code, box.code);
   setText(summary, box.content_summary || "Nothing written down yet");
   setText(where, box.current_location || box.status);
+  setThumb(row.querySelector("span.t img"), coverUrl(box));
+}
+
+// Removing the attribute rather than setting src="" -- an empty src makes the
+// browser re-request the page itself.
+function setThumb(image, url) {
+  if (!image) return;
+  if (!url) {
+    if (image.hasAttribute("src")) image.removeAttribute("src");
+    image.hidden = true;
+    return;
+  }
+  if (image.getAttribute("src") !== url) image.setAttribute("src", url);
+  image.hidden = false;
 }
 
 function setText(node, value) {
@@ -251,9 +279,14 @@ async function refreshBoxes(query, at) {
 async function viewBoxes(query) {
   const boxes = await api(boxesPath(query));
 
+  // Must match rowFor/fillRow above element for element: a live refresh
+  // patches these same rows in place rather than rebuilding them.
   const list = boxes.length
     ? `<ul class="boxlist" id="boxlist">${boxes.map((b) => `
         <li data-key="${escape(b.code)}"><a href="#/b/${escape(b.code)}">
+          <span class="t">${coverUrl(b)
+            ? `<img src="${escape(coverUrl(b))}" alt="" loading="lazy">`
+            : '<img alt="" loading="lazy" hidden>'}</span>
           <span class="c">${escape(b.code)}</span>
           <span class="s">${escape(b.content_summary || "Nothing written down yet")}</span>
           <span class="w">${escape(b.kind && b.kind !== "box" ? b.kind : (b.current_location || b.status))}</span>
@@ -390,13 +423,21 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
       <h2>Photos</h2>
       <p class="meta">A photo of the open box before you tape it is the fastest
          record of what went in.</p>
-      <div class="shots">${photos.map((p) => `
-        <figure>
+      ${photos.length ? `<p class="meta">The cover is the picture this box is
+         shown by in the list.</p>` : ""}
+      <div class="shots">${stripFor(photos).map((p) => `
+        <figure${p.cover ? ' class="is-cover"' : ""}>
           <a href="/photos/${escape(p.id)}/full" target="_blank" rel="noreferrer">
-            <img src="/photos/${escape(p.id)}/thumb" alt="${escape(p.caption || "Box contents")}"
+            <img src="${escape(p.thumb)}" alt="${escape(p.caption || "Box contents")}"
                  width="${escape(p.width)}" height="${escape(p.height)}" loading="lazy">
           </a>
-          <button data-drop-photo="${escape(p.id)}" aria-label="Delete this photo">Delete</button>
+          <div class="acts">
+            ${p.cover
+              ? '<span class="mark">Cover</span>'
+              : `<button data-cover="${escape(p.id)}"
+                    aria-label="Use this photo as the cover">Make cover</button>`}
+            <button data-drop-photo="${escape(p.id)}" aria-label="Delete this photo">Delete</button>
+          </div>
         </figure>`).join("")}</div>
       <div class="row" style="margin-top:0.75rem">
         <label class="btn" for="shot">Take a photo
@@ -513,6 +554,13 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
   for (const button of app.querySelectorAll("[data-drop-photo]")) {
     button.addEventListener("click", () => act(() =>
       request(`/photos/${encodeURIComponent(button.dataset.dropPhoto)}`, { method: "DELETE" })));
+  }
+
+  // Not under /api: photo files and their controls sit at the root, so this
+  // goes through request() rather than api().
+  for (const button of app.querySelectorAll("[data-cover]")) {
+    button.addEventListener("click", () => act(() =>
+      request(`/photos/${encodeURIComponent(button.dataset.cover)}/cover`, { method: "POST" })));
   }
 
   const draftButton = document.getElementById("draft-btn");
