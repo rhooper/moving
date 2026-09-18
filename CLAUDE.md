@@ -311,6 +311,12 @@ word from the generated comment; they are escaped now.
   is no JS linter on this machine, so `node --check` plus these static guards
   are all that stands between a patch script and production. `no-undef` would
   have caught two of the three -- `brew install oxlint` is the cheap fix.
+- **Anything that hides or destroys asks first, through `confirmed()`** (a native
+  `<dialog>`, never `confirm()`): box delete, permanent delete, photo delete.
+  Cancel holds the focus so a stray Enter or double tap lands on the safe
+  answer; Escape and the backdrop are "no". Removing a single item from a
+  box's list deliberately does **not** ask -- it is one tap to re-add, and a
+  modal per row would make tidying an AI draft miserable.
 - **Forms that edit an existing record get a Cancel** (`wireCancel` in
   `app.js`, rule in `live.js` `isDirty`). Hidden until a field differs from
   what `markPristine` recorded, and it restores from that same record. Any
