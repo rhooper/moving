@@ -58,7 +58,28 @@ body {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
-main { max-width: 34rem; margin: 0 auto; padding: 1rem 1rem 6rem; }
+main { max-width: 34rem; margin: 0 auto; padding: 0.25rem 1rem 6rem; }
+
+/* --- the way home: top left, on every page --- */
+.home {
+  /* A 48 px target around a 32 px mark, pulled left so the *mark* -- not its
+     padding -- lines up with the text below it. 32 because the mark is drawn
+     on a 16-unit grid: multiples of 8 land every edge on a whole pixel. */
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: max-content;
+  min-height: var(--tap);
+  /* <main> is a centred 34rem column with 1rem of padding; this follows its
+     left edge, less the link's own 0.5rem, and never leaves the screen. */
+  margin: 0.25rem 0 0 max(0.5rem, calc((100vw - 34rem) / 2 + 0.5rem));
+  padding: 0 0.5rem;
+  color: var(--ink);
+  text-decoration: none;
+}
+.home svg { width: 32px; height: 32px; flex: none; }
+.home span { display: none; font-weight: 800; letter-spacing: -0.02em; text-transform: uppercase; }
+.home:focus-visible { outline: 3px solid var(--signal); outline-offset: -3px; }
 
 a { color: inherit; }
 
@@ -262,6 +283,18 @@ ul.items li.renaming .ai { display: none; }
    width. */
 @media (min-width: 46rem) {
   main { padding-top: 4.5rem; padding-bottom: 3rem; }
+
+  /* On a desktop the top-left corner is the corner of the bar. */
+  .home {
+    position: fixed;
+    top: 0;
+    left: 0.5rem;
+    z-index: 2;
+    margin: 0;
+    padding-inline: 0.5rem;
+  }
+  .home svg { width: 24px; height: 24px; }
+  .home span { display: inline; }
 
   /* The room band runs edge to edge on a phone, mirroring the printed label.
      On desktop the column *is* the page, so it aligns to the column instead
@@ -502,6 +535,11 @@ label.btn { display: inline-flex; align-items: center; justify-content: center; 
 </style>
 </head>
 <body>
+<!-- The home mark: the label's QR finder pattern -- the square a scanner uses
+     to find a code's corner and know which way is up -- with its core cut as a
+     house. It sits in the app's own top-left corner, as the origin. Inline so
+     currentColor follows the theme; 160 bytes is not worth a request. -->
+<a href="#/" class="home" aria-label="Home"><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false"><path fill-rule="evenodd" d="M0 0h16v16H0zM2 2v12h12V2zM8 4l4 4v4H4V8z"/></svg><span>Moving</span></a>
 <main id="app">Loading…</main>
 <button type="button" id="live" hidden>Changed on another device — tap to refresh</button>
 <nav class="bar">
