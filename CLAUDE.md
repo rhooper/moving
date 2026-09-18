@@ -367,6 +367,20 @@ word from the generated comment; they are escaped now.
   -- a programmatic `.value =` fires no input event, so Cancel would stay
   hidden with something to cancel. "From contents" has no Undo of its own on
   purpose: one way to back out, in one vocabulary.
+- **A barcode reader is a keyboard** (`web/wedge.js`, `openEntered` in
+  `app.js`). It types what it scans and presses Return: the label's Code 128
+  is the box number, its QR is the box URL. A box URL can only have come from
+  a label, so it opens without asking; a bare number is only *shaped* like a
+  code -- so is "kettle" -- so it is looked up first and falls back to a
+  search. It works in the search box, and at the page with nothing focused
+  (`KeyBuffer` collects the keys, since the reader has no idea where the
+  cursor is). Two traps it handles, both pinned by `wedge_check.mjs` with real
+  key events: **a focused button** -- whichever was tapped last -- would be
+  pressed by the reader's Return, so after "Print label" a scan would spend
+  tape; the Return is swallowed when it completes a scan. And **Firefox opens
+  quick find on "/"** when nothing is focused, which would eat a scanned URL;
+  "/" is suppressed only while a scan is under way. Scanning a binned record
+  opens it, where Restore is offered -- same as the `/b/` redirect.
 - **Run `scripts/claude/ui_check.mjs` after touching `web/app.js`.** It drives
   headless Chrome over CDP with Node's built-in WebSocket (no npm), clicks
   the box page's forms for real, and saves nothing. `node --check` and the
