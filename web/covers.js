@@ -145,3 +145,29 @@ function countdown(status, remainingMs) {
 export function rowStatus(box) {
   return { kind: box.kind || "box", status: box.status || "open" };
 }
+
+// What the photo viewer says beside a picture: what the model saw in *this*
+// photo. Not the record's contents list, which is merged from every photo and
+// from whatever people typed -- this is the evidence for one picture, so a
+// wrong item can be traced to the photo it came from.
+export function seenIn(analysis) {
+  const base = { state: "none", heading: "Seen in this photo", summary: "", items: [], note: "" };
+  if (!analysis) {
+    return { ...base, note: "This photo has not been read." };
+  }
+  if (analysis.status === "pending" || analysis.status === "running") {
+    return { ...base, state: "busy", note: "This photo is still being read." };
+  }
+  if (analysis.status === "error") {
+    return { ...base, state: "error", note: `It could not be read: ${analysis.error || "no reason given"}` };
+  }
+  // An older server sends a count and no list; show nothing rather than break.
+  const items = Array.isArray(analysis.items) ? analysis.items : [];
+  return {
+    ...base,
+    state: "done",
+    summary: analysis.summary || "",
+    items,
+    note: items.length ? "" : "Nothing was recognised in this photo.",
+  };
+}

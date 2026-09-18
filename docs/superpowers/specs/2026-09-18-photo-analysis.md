@@ -54,6 +54,8 @@ GET /api/boxes/{code}/photos
       "total_ms":     int,        # whole expected span of the job, so the ring's
                                   #   fraction complete = 1 - remaining_ms / total_ms
       "items_found":  int | null, # done: how many items the model saw in this photo
+      "items":        [{"name": str, "qty": int}] | null,  # done: what it saw, in THIS photo
+      "summary":      str | null, # done: the model's own sentence about this photo
       "error":        str | null
   }
 

@@ -1,7 +1,7 @@
 // Moving boxes -- phone-first PWA. Hash routing so a scanned label can land on
 // /#/b/CODE without needing server-side routes for every view.
 
-import { analysisView, coverUrl, rowStatus, stripFor } from "/covers.js";
+import { analysisView, coverUrl, rowStatus, seenIn, stripFor } from "/covers.js";
 import {
   LiveChannel,
   SETTLE_MS,
@@ -294,6 +294,70 @@ function confirmed({ title, message, action }) {
   });
 }
 
+// --- looking at one photo ------------------------------------------------------
+//
+// Tapping a photo opens it large, with what the model saw *in that photo*
+// beside it: the evidence for one picture, so a wrong item on the contents
+// list can be traced to where it came from. One viewer at a time; `showing`
+// lets the photo strip repaint it if the model finishes while it is open.
+const showing = { id: null, render: null };
+
+function viewPhoto(photo) {
+  const dialog = document.createElement("dialog");
+  dialog.className = "viewer";
+  const full = `/photos/${encodeURIComponent(photo.id)}/full`;
+  dialog.innerHTML = `
+    <img src="${escape(full)}" alt="${escape(photo.caption || "Box contents")}">
+    <div class="seen">
+      <h2></h2>
+      <p class="meta summary" hidden></p>
+      <ul class="items"></ul>
+      <p class="meta note" hidden></p>
+      <p class="meta"><a href="${escape(full)}" target="_blank" rel="noreferrer">Open the picture on its own</a></p>
+      <form method="dialog"><button class="btn" autofocus>Close</button></form>
+    </div>`;
+
+  const render = (latest) => {
+    const seen = seenIn(latest.analysis);
+    dialog.dataset.state = seen.state;
+    setText(dialog.querySelector("h2"), seen.heading);
+    const summary = dialog.querySelector(".summary");
+    setText(summary, seen.summary);
+    summary.hidden = !seen.summary;
+    const note = dialog.querySelector(".note");
+    setText(note, seen.note);
+    note.hidden = !seen.note;
+    // Built with DOM calls and textContent: the names are the model's words.
+    const list = dialog.querySelector(".items");
+    list.replaceChildren(...seen.items.map((item) => {
+      const row = document.createElement("li");
+      const name = document.createElement("span");
+      name.textContent = item.name;
+      row.append(name);
+      if (item.qty > 1) {
+        const qty = document.createElement("span");
+        qty.className = "qty";
+        qty.textContent = `×${item.qty}`;
+        row.append(qty);
+      }
+      return row;
+    }));
+    list.hidden = !seen.items.length;
+  };
+  render(photo);
+
+  showing.id = photo.id;
+  showing.render = render;
+  // The backdrop is the dialog element itself; anything inside it is not.
+  dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
+  dialog.addEventListener("close", () => {
+    if (showing.render === render) { showing.id = null; showing.render = null; }
+    dialog.remove();
+  });
+  document.body.append(dialog);
+  dialog.showModal();
+}
+
 // --- parts of a box page that update on their own -------------------------
 //
 // The contents list and the photo strip change while the page is open, and
@@ -489,6 +553,9 @@ const OVERDUE_ASK_MS = 5000;
  * running on the last draw is done on this one.
  */
 function photosPart(strip, { path, contents, changed, stale, ask, finished }) {
+  // Each figure's photo as last heard from the server: a figure is built once
+  // and updated in place, so the viewer must not show what it was born with.
+  const lastHeard = new WeakMap();
   let latest = 0;
   let asked = 0;
   // figure -> the snapshot it is counting down from, and when that arrived.
@@ -505,6 +572,8 @@ function photosPart(strip, { path, contents, changed, stale, ask, finished }) {
       key: (photo) => photo.id,
       create: figureFor,
       update(figure, photo) {
+        lastHeard.set(figure, photo);
+        if (showing.id === photo.id) showing.render(photo);
         figure.classList.toggle("is-cover", photo.cover);
         figure.querySelector(".mark").hidden = !photo.cover;
         figure.querySelector("[data-cover]").hidden = photo.cover;
@@ -585,6 +654,7 @@ function photosPart(strip, { path, contents, changed, stale, ask, finished }) {
   function figureFor(photo) {
     const figure = document.createElement("figure");
     figure.dataset.key = photo.id;  // what reconcile finds it by next time
+    lastHeard.set(figure, photo);
     const id = encodeURIComponent(photo.id);
     // Everything that can change later is in here from the start and toggled
     // with `hidden`, so an update never has to create a control -- or remember
@@ -612,6 +682,14 @@ function photosPart(strip, { path, contents, changed, stale, ask, finished }) {
         <span class="state"></span>
         <button type="button" data-analyse hidden>Retry</button>
       </div>`;
+
+    // Still a real link, so a long press or a middle click opens the file as
+    // before; a plain tap opens the viewer, with what was seen in the photo.
+    figure.querySelector(".pic a").addEventListener("click", (event) => {
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
+      event.preventDefault();
+      viewPhoto(lastHeard.get(figure) || photo);
+    });
 
     // Not under /api: photo files and their controls sit at the root, so
     // these go through request() rather than api().

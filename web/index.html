@@ -324,6 +324,34 @@ dialog::backdrop { background: rgb(0 0 0 / 0.55); }
 dialog h2 { margin: 0 0 0.5rem; font-size: 1.125rem; font-weight: 800; letter-spacing: -0.02em; }
 dialog p { margin: 0 0 1rem; overflow-wrap: anywhere; }
 dialog form { margin: 0; }
+/* One photo, large, with what the model saw in it. Wider than the question
+   dialogs, and it scrolls as a whole on a phone rather than clipping the list. */
+dialog.viewer {
+  width: min(64rem, calc(100vw - 1rem));
+  max-height: calc(100dvh - 1rem);
+  padding: 0.75rem;
+  overflow: auto;
+}
+dialog.viewer img {
+  display: block;
+  width: 100%;
+  max-height: 60dvh;
+  object-fit: contain;
+  background: var(--sunk);
+}
+dialog.viewer .seen { padding: 0.75rem 0.25rem 0.25rem; }
+dialog.viewer .seen h2 { margin-bottom: 0.35rem; }
+dialog.viewer .seen p { margin: 0 0 0.6rem; }
+dialog.viewer ul.items { margin-bottom: 0.75rem; }
+/* No Remove button here to hold the count at the edge, as the main list has. */
+dialog.viewer ul.items .qty { flex: 0 0 auto; }
+dialog.viewer[data-state="error"] .note { color: var(--signal); }
+@media (min-width: 52rem) {
+  dialog.viewer[open] { display: grid; grid-template-columns: minmax(0, 3fr) minmax(16rem, 2fr); gap: 1rem; }
+  dialog.viewer img { max-height: calc(100dvh - 3rem); }
+  dialog.viewer .seen { padding-top: 0; overflow: auto; }
+}
+
 dialog p { white-space: pre-line; }  /* a confirmation may run to two paragraphs */
 dialog .row > * { flex: 1; }
 .btn.danger { background: var(--signal); border-color: var(--signal); color: #fff; }

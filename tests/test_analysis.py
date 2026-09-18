@@ -140,8 +140,35 @@ class TestWhatIsFoundIsKeptWithThePhoto:
 
         state = analysis.state_of(conn, photo["id"])
 
-        assert state == {"status": "done", "remaining_ms": 0, "total_ms": state["total_ms"],
-                         "items_found": 2, "error": None}
+        assert (state["status"], state["remaining_ms"], state["items_found"], state["error"]) == (
+            "done", 0, 2, None)
+
+    def test_the_photo_can_say_what_was_seen_in_it(self, conn, config, box):
+        # For the viewer: this photo's own findings, not the box's merged list.
+        photo = photographed(conn, config, box["code"])
+        worker(config, Seen(saw(("kettle", 1), ("mug", 3), summary="tea things"))).run_once()
+
+        state = analysis.state_of(conn, photo["id"])
+
+        assert state["summary"] == "tea things"
+        assert state["items"] == [{"name": "kettle", "qty": 1}, {"name": "mug", "qty": 3}]
+
+    def test_what_was_seen_is_per_photo_not_per_box(self, conn, config, box):
+        first = photographed(conn, config, box["code"], (1, 1, 1))
+        second = photographed(conn, config, box["code"], (2, 2, 2))
+        both = worker(config, Seen(saw(("kettle", 1)), saw(("toaster", 1))))
+        both.run_once()
+        both.run_once()
+
+        assert [i["name"] for i in analysis.state_of(conn, first["id"])["items"]] == ["kettle"]
+        assert [i["name"] for i in analysis.state_of(conn, second["id"])["items"]] == ["toaster"]
+
+    def test_a_photo_still_being_read_has_seen_nothing_yet(self, conn, config, box):
+        photo = photographed(conn, config, box["code"])
+
+        state = analysis.state_of(conn, photo["id"])
+
+        assert (state["items"], state["summary"]) == (None, None)
 
     def test_a_failure_is_kept_too_and_says_why(self, conn, config, box):
         photo = photographed(conn, config, box["code"])
