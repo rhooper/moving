@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import sqlite3
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
 from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnect
 
@@ -221,6 +222,34 @@ def create_app(config: Config | None = None) -> FastAPI:
     # Mounted last: every route above wins, so /api and /b are not shadowed.
     # html=True serves index.html at / so the hash router can take over.
     if WEB_ROOT.is_dir():
+
+        @app.get("/sw.js", include_in_schema=False)
+        def service_worker() -> Response:
+            """sw.js with its shell-cache version pinned to the revision.
+
+            The version was a hand-bumped literal, and nobody bumped it -- so
+            deployed phones kept a stale app.js against a newer API until
+            buttons errored. Substituting the deployed revision rolls the
+            cache on every deploy: the browser re-checks sw.js, sees new
+            bytes, and reinstalls the shell. Left alone in dev (revision
+            "unknown"), where pinning every client to one name would recreate
+            exactly the staleness this exists to end.
+            """
+            body = (WEB_ROOT / "sw.js").read_text()
+            if app.state.revision != "unknown":
+                body = re.sub(
+                    r'const VERSION = "[^"]*"',
+                    f'const VERSION = "{app.state.revision}"',
+                    body,
+                    count=1,
+                )
+            return Response(
+                body,
+                media_type="application/javascript",
+                # An HTTP-cached sw.js would defeat the whole point.
+                headers={"Cache-Control": "no-cache"},
+            )
+
         app.mount("/", StaticFiles(directory=WEB_ROOT, html=True), name="web")
 
     return app

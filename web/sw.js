@@ -3,7 +3,10 @@
 // box" is worse than an honest failure, and write queueing is deliberately out
 // of scope for now (see README, "Not built").
 
-const VERSION = "v3";
+// Substituted with the deployed revision when served (see app.py's /sw.js
+// route), so the shell cache rolls on every deploy without anyone remembering
+// to bump it. The literal below is only what dev checkouts see.
+const VERSION = "dev";
 const SHELL = [
   "/",
   "/app.js",
