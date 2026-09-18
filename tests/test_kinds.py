@@ -126,9 +126,8 @@ class TestLabel:
             "content_summary": "pots and pans",
         }
 
-        data = layout.from_box(box, base_url="https://x.test", items=[{"name": "kettle"}])
+        data = layout.from_box(box, base_url="https://x.test")
 
-        assert data.items == ["kettle"]
         assert data.title is None
         assert data.summary == "pots and pans"
 
@@ -146,27 +145,9 @@ class TestLabel:
 
         data = layout.from_box(item, base_url="https://x.test")
 
-        # The name is the headline, not a line of small print, and there is no
-        # contents column to print.
+        # The name is the headline, not a line of small print.
         assert data.title == "Bicycle"
         assert data.summary is None
-        assert data.items == []
-
-    def test_a_loose_item_never_prints_a_contents_column(self, conn):
-        from movingbox.labels import layout
-
-        item = {
-            "code": "I-1",
-            "kind": "item",
-            "fragile": 0,
-            "open_first": 0,
-            "heavy": 0,
-            "content_summary": "Bicycle",
-        }
-
-        data = layout.from_box(item, base_url="https://x.test", items=[{"name": "pedal"}])
-
-        assert data.items == []
 
     def test_an_item_label_renders(self, conn):
         from movingbox.labels import layout

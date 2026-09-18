@@ -22,7 +22,7 @@ from pathlib import Path
 import segno
 from PIL import Image, ImageDraw, ImageFont
 
-from .. import kinds, summarise
+from .. import kinds
 
 #: Printable dots across 62 mm tape at 300 dpi, per brother_ql.labels.
 PRINTABLE_WIDTH = 696
@@ -41,12 +41,10 @@ BAND_PADDING = 20
 _WORK_HEIGHT = 4000
 
 #: 3 inches at 300 dpi. A landscape label is laid out along the tape rather
-#: than across it, giving room for the itemised contents beside the identity.
+#: than across it, so the code, QR and room band get the long dimension.
 #: The printer still lays 696 dots across the tape, so the design is rotated at
 #: raster time -- see printer.to_raster.
 LANDSCAPE_LENGTH = 900
-#: Fraction of the length given to the identity block; the rest lists contents.
-IDENTITY_SHARE = 0.55
 
 FONT_PATH = Path(__file__).resolve().parent / "fonts" / "Inter.ttf"
 
@@ -61,7 +59,6 @@ class LabelData:
     flags: tuple[str, ...] = field(default_factory=tuple)
     footer: str | None = None
     #: Itemised contents, already rendered as display strings ("3 baking pans").
-    items: list[str] = field(default_factory=list)
     #: What a loose thing *is* ("Bicycle"). Set instead of a contents list, and
     #: printed as the headline rather than as a line of small print.
     title: str | None = None
@@ -316,27 +313,12 @@ def _render_portrait(
     return canvas.point(lambda p: 255 if p > 128 else 0).convert("1")
 
 
-def display_items(items: list[dict]) -> list[str]:
-    """Item rows as the short strings that go on the label."""
-    lines = []
-    for item in items or []:
-        name = str(item.get("name") or "").strip()
-        if not name:
-            continue
-        qty = item.get("qty") or 1
-        # Same pluralisation as the summary, so the contents column does
-        # not read "3 baking pan" beside a summary saying "3 baking pans".
-        lines.append(f"{qty} {summarise.plural(name, qty)}" if qty and qty > 1 else name)
-    return lines
-
-
 def from_box(
     box: dict,
     *,
     base_url: str,
     room_name: str | None = None,
     source_name: str | None = None,
-    items: list[dict] | None = None,
 ) -> LabelData:
     """Build label content from a box row.
 
@@ -360,8 +342,7 @@ def from_box(
     source = " ".join(part for part in (source_name, box.get("source_location")) if part) or None
 
     # A loose thing is named, not inventoried: its description becomes the
-    # headline and no contents column is printed, however many item rows have
-    # been attached to it.
+    # headline rather than a summary line.
     container = kinds.holds_contents(box.get("kind") or kinds.DEFAULT)
     summary = box.get("content_summary")
 
@@ -374,26 +355,24 @@ def from_box(
         title=None if container else summary,
         flags=tuple(flags),
         footer=" - ".join(footer_parts) or None,
-        items=display_items(items or []) if container else [],
     )
 
 
 def _render_landscape(data: LabelData) -> Image.Image:
-    """A 4-inch label: identity on the left, itemised contents on the right.
+    """A 3-inch label, laid out along the tape: all identity, no inventory.
 
     Fixed length rather than cut-to-content. A row of boxes with labels of
-    matching size is far easier to read along a shelf, and at this size there
-    is room for the contents list that makes opening the right box possible.
+    matching size is far easier to read along a shelf. The itemised contents
+    are deliberately not printed -- they are one scan away in the app.
     """
     width, height = LANDSCAPE_LENGTH, PRINTABLE_WIDTH
     canvas = Image.new("L", (width, height), 255)
     draw = ImageDraw.Draw(canvas)
 
-    # With nothing to list, the contents column would be an empty heading over
-    # dead space, so the identity takes the whole label instead -- which also
-    # gives the room band the full four inches to be read across.
-    has_items = bool(data.items)
-    split = int(width * IDENTITY_SHARE) if has_items else width
+    # The identity has the whole label. The itemised contents used to take
+    # the right-hand 45%; they are one scan away in the app, and the tape is
+    # for finding the box from across a room.
+    split = width
     left_width = split - 2 * MARGIN
 
     # --- identity column ---
@@ -418,7 +397,7 @@ def _render_landscape(data: LabelData) -> Image.Image:
             draw, data.room.upper(), left_width - 2 * BAND_PADDING, start=72, weight=800
         )
         band_height = int(room_font.size * 1.66)
-        band_right = (split - MARGIN // 2) if has_items else width
+        band_right = width
         draw.rectangle([0, y, band_right, y + band_height], fill=0)
         draw.text(
             (MARGIN + (left_width - 2 * BAND_PADDING) // 2 + BAND_PADDING, y + band_height // 2),
@@ -453,47 +432,5 @@ def _render_landscape(data: LabelData) -> Image.Image:
         for line in lines:
             draw.text((MARGIN, y), line, font=summary_font, fill=0, anchor="lt")
             y += line_height
-
-    if not has_items:
-        return canvas.point(lambda p: 255 if p > 128 else 0).convert("1")
-
-    # --- contents column ---
-    draw.line([(split, MARGIN), (split, height - MARGIN)], fill=0, width=2)
-
-    item_x = split + MARGIN
-    item_width = width - item_x - MARGIN
-    heading = _font(24, weight=700)
-    draw.text((item_x, MARGIN), "CONTENTS", font=heading, fill=0, anchor="lt")
-    item_y = MARGIN + heading.size + 8
-
-    item_font = _font(32, weight=400)
-    line_height = item_font.size + 7
-    room_for = max(0, (height - MARGIN - item_y) // line_height)
-
-    shown = data.items[:room_for]
-    hidden = len(data.items) - len(shown)
-    if hidden > 0 and shown:
-        # Spend the last line saying how much is not listed, rather than
-        # stopping mid-list and implying the box holds only what is printed.
-        shown = shown[:-1]
-        hidden = len(data.items) - len(shown)
-
-    for item in shown:
-        text = item
-        while draw.textlength(text, font=item_font) > item_width and len(text) > 4:
-            text = text[:-2]
-        if text != item:
-            text = text.rstrip(" ,") + "..."
-        draw.text((item_x, item_y), text, font=item_font, fill=0, anchor="lt")
-        item_y += line_height
-
-    if hidden > 0:
-        draw.text(
-            (item_x, item_y),
-            f"+ {hidden} more",
-            font=_font(28, weight=600),
-            fill=0,
-            anchor="lt",
-        )
 
     return canvas.point(lambda p: 255 if p > 128 else 0).convert("1")

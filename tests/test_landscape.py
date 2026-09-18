@@ -1,4 +1,4 @@
-"""Landscape labels: ~4 inches along the tape, contents beside the identity."""
+"""Landscape labels: 3 inches along the tape, all identity."""
 
 import pytest
 
@@ -14,7 +14,6 @@ def a_label(**overrides):
         "room": "Kitchen",
         "source": "Basement shelf 3",
         "summary": "pots, pans, kettle",
-        "items": ["stock pot", "3 baking pans", "kettle", "2 cutting boards"],
         "flags": ("FRAGILE",),
         "footer": "box 3 of 5 - 12.4 kg",
     }
@@ -71,25 +70,14 @@ def test_the_qr_survives_rotation(conn):
     assert decode(raster) == data.url
 
 
-def test_the_contents_list_is_rendered(conn):
-    # Hard to assert text in a raster, so compare against the same label with
-    # no items: the contents column must put ink on the page.
-    with_items = layout.render(a_label(), orientation="landscape")
-    without = layout.render(a_label(items=[]), orientation="landscape")
-
-    assert with_items.tobytes() != without.tobytes()
+def test_the_label_has_no_field_for_itemised_contents(conn):
+    # Removed on purpose: the list is one scan away in the app, and the tape is
+    # for finding the box. If someone adds the field back, this says why not.
+    assert "items" not in layout.LabelData.__dataclass_fields__
 
 
-def test_a_long_contents_list_is_truncated_not_overflowed(conn):
-    data = a_label(items=[f"item number {n}" for n in range(200)])
-
-    image = layout.render(data, orientation="landscape")
-
-    assert (image.width, image.height) == (layout.LANDSCAPE_LENGTH, layout.PRINTABLE_WIDTH)
-
-
-def test_a_box_with_no_items_still_renders(conn):
-    image = layout.render(a_label(items=[], summary=None), orientation="landscape")
+def test_a_label_with_no_summary_still_renders(conn):
+    image = layout.render(a_label(summary=None), orientation="landscape")
 
     assert decode(image) == a_label().url
 

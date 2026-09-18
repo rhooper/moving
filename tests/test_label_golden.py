@@ -48,7 +48,6 @@ CASES = {
         summary="pots, 3 baking pans, kettle, 2 cutting boards",
         flags=("FRAGILE",),
         footer="box 3 of 5 - 12.4 kg",
-        items=["stock pot", "3 baking pans", "kettle", "2 cutting boards", "colander"],
     ),
     "landscape_full": layout.LabelData(
         code="B-0123",
@@ -58,7 +57,6 @@ CASES = {
         summary="paperbacks A-M, photo albums, box files, atlas, framed prints",
         flags=("FRAGILE", "OPEN FIRST", "HEAVY"),
         footer="box 11 of 14 - 18.2 kg",
-        items=[f"item number {n}" for n in range(24)],
     ),
 }
 

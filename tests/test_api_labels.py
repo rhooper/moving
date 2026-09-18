@@ -110,3 +110,17 @@ def test_printing_an_unknown_box_is_404_and_prints_nothing(client, config):
     # The whole request is rejected: printing half a batch wastes tape and
     # leaves you unsure which labels came out.
     assert not (config.label_preview_dir / f"{good}.png").exists()
+
+
+def test_the_itemised_contents_never_reach_the_tape(client):
+    # The list lives in the app, one scan away; the tape is for finding the
+    # box from across a room. So itemising a box must not change its label:
+    # same box, before and after items are added, byte-identical preview.
+    code = client.post("/api/boxes", json={"content_summary": "pots and pans"}).json()["code"]
+    before = client.get(f"/api/labels/preview/{code}.png").content
+
+    for name in ("stock pot", "baking pan", "kettle"):
+        assert client.post(f"/api/boxes/{code}/items", json={"name": name}).status_code == 201
+
+    after = client.get(f"/api/labels/preview/{code}.png").content
+    assert after == before

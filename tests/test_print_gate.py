@@ -96,16 +96,3 @@ class TestSuggestedSummary:
 
     def test_an_unknown_box_is_404(self, client):
         assert client.get("/api/boxes/B-9999/summary-suggestion").status_code == 404
-
-
-class TestItemsOnLabel:
-    def test_the_label_lists_the_items(self, client, empty, config):
-        client.post(f"/api/boxes/{empty}/items", json={"name": "kettle"})
-        client.post(f"/api/boxes/{empty}/items", json={"name": "baking pan", "qty": 3})
-
-        bare = client.get(f"/api/labels/preview/{empty}.png").content
-        # A label rendered without its items must differ from one with them.
-        client.delete(f"/api/items/{client.get(f'/api/boxes/{empty}/items').json()[0]['id']}")
-        fewer = client.get(f"/api/labels/preview/{empty}.png").content
-
-        assert bare != fewer

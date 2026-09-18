@@ -71,7 +71,6 @@ def cmd_preview(args) -> int:
             base_url=config.base_url,
             room_name=store.room_name(conn, box["destination_room_id"]),
             source_name=store.room_name(conn, box["source_room_id"]),
-            items=store.list_items(conn, args.code),
         )
     finally:
         conn.close()
@@ -109,7 +108,6 @@ def cmd_print(args) -> int:
                         base_url=config.base_url,
                         room_name=store.room_name(conn, box["destination_room_id"]),
                         source_name=store.room_name(conn, box["source_room_id"]),
-                        items=store.list_items(conn, code),
                     ),
                 )
             )

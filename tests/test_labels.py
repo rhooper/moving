@@ -188,16 +188,3 @@ class TestSourceOnLabel:
         box = {"code": "B-1", "fragile": 0, "open_first": 0, "heavy": 0}
 
         assert layout.from_box(box, base_url="https://x.test").source is None
-
-
-class TestContentsColumnText:
-    def test_a_quantity_pluralises_like_the_summary_does(self, conn):
-        # "3 baking pan" in the contents column beside "3 baking pans" in the
-        # summary reads as a bug, because it is one.
-        assert layout.display_items([{"name": "baking pan", "qty": 3}]) == ["3 baking pans"]
-
-    def test_a_single_thing_is_not_counted(self, conn):
-        assert layout.display_items([{"name": "kettle", "qty": 1}]) == ["kettle"]
-
-    def test_an_already_plural_word_is_left_alone(self, conn):
-        assert layout.display_items([{"name": "scissors", "qty": 2}]) == ["2 scissors"]
