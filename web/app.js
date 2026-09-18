@@ -8,6 +8,7 @@ import {
   affects,
   hasUnsavedEdits,
   holdRefresh,
+  isDirty,
   reconcile,
 } from "/live.js";
 import { splitItems } from "/text.js";
@@ -110,6 +111,39 @@ function fieldValue(field) {
   return field.type === "checkbox" ? String(field.checked) : field.value;
 }
 
+// Cancel for a form on a record that already exists. Hidden until something
+// in the form differs from what was drawn, so an untouched page is not
+// littered with buttons; pressing it puts every field back to what
+// markPristine recorded. Nothing reaches the server either way -- these forms
+// only save when you press their save button.
+//
+// Anything that sets a field's value from code (a suggestion, dictation) must
+// dispatch an "input" event, or Cancel will not know there is something to
+// cancel.
+function wireCancel(form) {
+  const cancel = form?.querySelector("[data-cancel]");
+  if (!cancel) return;
+  const fields = () => Array.from(form.querySelectorAll("input, textarea, select"));
+  const sync = () => {
+    cancel.hidden = !isDirty(
+      fields().map((f) => ({ value: fieldValue(f), initial: f.dataset.initial })));
+  };
+  form.addEventListener("input", sync);
+  form.addEventListener("change", sync);
+  cancel.addEventListener("click", () => {
+    for (const field of fields()) {
+      const initial = field.dataset.initial ?? "";
+      if (field.type === "checkbox") field.checked = initial === "true";
+      else field.value = initial;
+    }
+    sync();
+    announce("Changes cancelled. Nothing was saved.");
+  });
+  sync();
+}
+
+const edited = (field) => field.dispatchEvent(new Event("input", { bubbles: true }));
+
 // Any button that reaches the server goes through this. Without it a slow
 // action looks identical to a dead button, which is exactly how a print job
 // ends up submitted five times.
@@ -181,6 +215,7 @@ function wireDictation(scope) {
       recogniser.onresult = (event) => {
         const said = Array.from(event.results).map((r) => r[0].transcript).join(" ");
         field.value = field.value ? `${field.value.trim()}, ${said}` : said;
+        edited(field);
       };
       recogniser.onerror = () => announce("Could not hear anything.", { warn: true });
       recogniser.onend = () => {
@@ -396,6 +431,7 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
         >${escape(box.content_summary || "")}</textarea>
       <div class="row" style="margin-top:0.5rem">
         <button class="btn quiet" type="submit">Save ${shape.contents ? "summary" : "name"}</button>
+        <button class="btn quiet" type="button" data-cancel hidden>Cancel</button>
         ${shape.contents ? '<button class="btn quiet" type="button" id="suggest">From contents</button>' : ""}
         <button class="btn quiet dictate" type="button" data-target="content_summary" hidden>Dictate</button>
       </div>
@@ -424,6 +460,7 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
                value="${escape(box.source_location || "")}">
         <div class="row" style="margin-top:0.75rem">
           <button class="btn quiet" type="submit">Save</button>
+          <button class="btn quiet" type="button" data-cancel hidden>Cancel</button>
         </div>
       </form>
     </div>
@@ -453,6 +490,7 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
         <input name="current_location" placeholder="Truck, garage stack 3, storage…"
                value="${escape(box.current_location || "")}" aria-label="Current location">
         <button class="btn" type="submit">Move</button>
+        <button class="btn quiet" type="button" data-cancel hidden>Cancel</button>
       </form>
     </div>
 
@@ -547,6 +585,9 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
   // What it is / what is in it. Saved explicitly: the field is also where a
   // suggestion or a draft lands, and those are offered, never applied.
   const summaryForm = document.getElementById("summary-form");
+  for (const id of ["summary-form", "destination", "location"]) {
+    wireCancel(document.getElementById(id));
+  }
   summaryForm.addEventListener("submit", (event) => {
     event.preventDefault();
     const value = new FormData(summaryForm).get("content_summary").trim();
@@ -606,10 +647,12 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
         announce("Nothing to summarise yet - add some items first.", { warn: true });
         return;
       }
-      // Offered, not applied: it lands in the field and you press Save.
+      // Offered, not applied: it lands in the field and you press Save -- or
+      // Cancel, which appears because the field now differs from what was drawn.
       field.value = summary;
+      edited(field);
       field.focus();
-      announce("Summary suggested from the contents. Save it if you like it.");
+      announce("Summary suggested from the contents. Save it, or Cancel to put the old one back.");
     } catch (error) { failed(error.message); }
   });
 

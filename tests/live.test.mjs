@@ -5,7 +5,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { affects, backoffDelay, hasUnsavedEdits, holdRefresh, reconcile } from "../web/live.js";
+import {
+  affects,
+  backoffDelay,
+  hasUnsavedEdits,
+  holdRefresh,
+  isDirty,
+  reconcile,
+} from "../web/live.js";
 
 // --- reconnect backoff ------------------------------------------------------
 
@@ -293,4 +300,37 @@ test("emptying the list removes every row", () => {
   patch(parent, []);
 
   assert.deepEqual(parent.keys(), []);
+});
+
+// --- cancelling an edit -------------------------------------------------------
+//
+// Cancel appears only once there is something to cancel, so its rule is
+// stricter than hasUnsavedEdits: focus alone is not a change.
+
+test("a form as it was drawn has nothing to cancel", () => {
+  assert.equal(isDirty([]), false);
+  assert.equal(isDirty([{ value: "kettle", initial: "kettle" }]), false);
+});
+
+test("tapping into a field is not an edit", () => {
+  assert.equal(isDirty([{ value: "kettle", initial: "kettle", focused: true }]), false);
+});
+
+test("any one changed field makes the form cancellable", () => {
+  assert.equal(
+    isDirty([
+      { value: "box", initial: "box" },
+      { value: "3", initial: "" },
+    ]),
+    true,
+  );
+});
+
+test("typing a change and typing it back leaves nothing to cancel", () => {
+  assert.equal(isDirty([{ value: "kettle", initial: "kettle" }]), false);
+});
+
+test("a field that was drawn empty and is still empty is clean", () => {
+  // dataset.initial is absent for a field drawn with no value.
+  assert.equal(isDirty([{ value: "", initial: undefined }]), false);
 });

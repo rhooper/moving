@@ -92,9 +92,19 @@ export function affects(event, view) {
  * mid-word.
  */
 export function hasUnsavedEdits(fields) {
+  return (fields || []).some((field) => field.focused === true) || isDirty(fields);
+}
+
+/**
+ * Whether any field differs from what it held when the page was drawn.
+ *
+ * Stricter than hasUnsavedEdits on purpose: that one protects a focused field
+ * from a redraw, this one decides whether Cancel has anything to cancel --
+ * and tapping into a field is not an edit.
+ */
+export function isDirty(fields) {
   return (fields || []).some(
-    (field) =>
-      field.focused === true || String(field.value ?? "") !== String(field.initial ?? "")
+    (field) => String(field.value ?? "") !== String(field.initial ?? "")
   );
 }
 
