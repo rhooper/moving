@@ -50,3 +50,87 @@ export function stripFor(photos) {
     cover: cover !== null && photo.id === cover.id,
   }));
 }
+
+// --- a photo's analysis ---------------------------------------------------
+//
+// After an upload the server reads the photo with the vision model in the
+// background. Each photo carries a snapshot of that job; this turns a snapshot
+// plus the time since it arrived into what the strip should draw. Pure, so
+// the awkward moments -- the estimate running out before the job does, an
+// estimate that makes no sense -- are pinned down by tests rather than by
+// staring at a spinner.
+
+const WORDS = { pending: "Queued", running: "Reading" };
+const STILL = { pending: "Still queued…", running: "Still reading…" };
+const ERROR_LENGTH = 60;
+
+const NO_ANALYSIS = Object.freeze({
+  state: "none", busy: false, indeterminate: false, fraction: null,
+  label: "", title: "", retry: false,
+});
+
+function shorten(text, length) {
+  return text.length <= length ? text : `${text.slice(0, length - 1).trimEnd()}…`;
+}
+
+/**
+ * What to draw for a photo's analysis, `elapsedMs` after `analysis` arrived.
+ *
+ * `analysis` is the object the API puts on each photo (or null). The result:
+ *
+ * - `state`: "none" | "pending" | "running" | "done" | "error"
+ * - `busy`: whether the ring shows at all
+ * - `fraction`: how much of the ring is filled, 0 up to but never reaching 1;
+ *   null whenever there is no honest number
+ * - `indeterminate`: the ring should spin instead of fill. True once the
+ *   estimate has run out and the job has not finished: a ring sitting full
+ *   says "done" when the truth is "no idea", so there is deliberately no
+ *   fraction to draw in that state.
+ * - `label`: the line of text under the photo; `title`: an error in full
+ * - `retry`: whether to offer another go
+ */
+export function analysisView(analysis, elapsedMs = 0) {
+  const status = analysis && analysis.status;
+
+  if (status === "done") {
+    const found = analysis.items_found;
+    const label =
+      typeof found !== "number" ? "Photo read"
+      : found === 0 ? "Nothing recognised"
+      : `${found} item${found === 1 ? "" : "s"} found`;
+    return { ...NO_ANALYSIS, state: "done", label };
+  }
+
+  if (status === "error") {
+    const said = String(analysis.error ?? "").trim() || "Could not read this photo";
+    return {
+      ...NO_ANALYSIS, state: "error", retry: true,
+      label: shorten(said, ERROR_LENGTH), title: said,
+    };
+  }
+
+  if (status !== "pending" && status !== "running") return NO_ANALYSIS;
+
+  const elapsed = Math.max(0, Number(elapsedMs) || 0);
+  const remaining = (Number(analysis.remaining_ms) || 0) - elapsed;
+  const total = Number(analysis.total_ms) || 0;
+  if (remaining <= 0 || total <= 0) {
+    return {
+      ...NO_ANALYSIS, state: status, busy: true, indeterminate: true,
+      // With time still on the clock but no span to measure it against, the
+      // seconds are still worth showing; past zero there is nothing to count.
+      label: remaining > 0 ? countdown(status, remaining) : STILL[status],
+    };
+  }
+  return {
+    ...NO_ANALYSIS, state: status, busy: true,
+    fraction: Math.min(Math.max(1 - remaining / total, 0), 0.999),
+    label: countdown(status, remaining),
+  };
+}
+
+// Rounded up, so the last second reads "~1 s" rather than "~0 s" while the
+// ring is visibly still moving.
+function countdown(status, remainingMs) {
+  return `${WORDS[status]}… ~${Math.ceil(remainingMs / 1000)} s`;
+}
