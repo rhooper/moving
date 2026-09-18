@@ -7,8 +7,13 @@
 // Usage:   node scripts/claude/ui_check.mjs [base-url] [box-code]
 //          defaults: http://127.0.0.1:8788  B-0004   (i.e. `make run`)
 //
-// Saves nothing: it only edits fields and cancels. Needs Node 22+ (global
+// Saves nothing: it only edits fields and cancels, and it counts the writes
+// the page makes while it does so to prove that. Needs Node 22+ (global
 // WebSocket) and Google Chrome. No npm packages.
+//
+// The write paths (a rename that saves, a photo being read) are deliberately
+// not here: they need a throwaway server, and this must stay safe to point at
+// real data.
 
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -105,6 +110,114 @@ const IN_PAGE = async () => {
   whereCancel.click();
   check("Cancel restores the location", where.value === whereBefore, where.value);
 
+  // Photos are read automatically now; the manual draft button and its review
+  // panel must be gone, not merely unreachable.
+  check("the Draft contents button is gone", !$("#draft-btn") && !$("#draft-panel"));
+
+  // Every write the page attempts from here on is counted. Renaming and then
+  // backing out must not reach the server at all.
+  const writes = [];
+  const realFetch = window.fetch;
+  window.fetch = (url, options = {}) => {
+    if ((options.method || "GET").toUpperCase() !== "GET") writes.push(`${options.method} ${url}`);
+    return realFetch(url, options);
+  };
+
+  // Item names: tap to rename. Needs a box with at least one item.
+  const names = Array.from(document.querySelectorAll("#items .name"));
+  if (names.length) {
+    const drawn = await fetch(`/api/boxes/${location.hash.split("/").pop()}/items`).then((r) => r.json());
+    check("the list draws every item the server has", names.length === drawn.length,
+          `${names.length} drawn, ${drawn.length} on the server`);
+    check("every item name is a focusable control",
+          names.every((n) => n.tagName === "BUTTON" && n.tabIndex >= 0));
+    check("every item name says what pressing it does",
+          names.every((n) => n.getAttribute("aria-label") === `Rename ${n.textContent}`),
+          names.map((n) => n.getAttribute("aria-label")).join(", "));
+
+    const name = names[0];
+    const text = name.textContent;
+    name.focus();
+    check("an item name takes the focus", document.activeElement === name);
+    name.click();
+    let field = $("#items input.rename");
+    check("pressing a name opens a field in its place", Boolean(field) && name.hidden);
+    check("the field holds the name, focused and selected",
+          field?.value === text && document.activeElement === field
+            && field.selectionStart === 0 && field.selectionEnd === text.length,
+          field?.value);
+    field.value = `${text} EDITED`;
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    check("Escape closes the field and puts the name back",
+          !$("#items input.rename") && !name.hidden && name.textContent === text, name.textContent);
+    check("Escape returns the focus to the name", document.activeElement === name);
+
+    // Unchanged, then Enter: a cancel by another name.
+    name.click();
+    field = $("#items input.rename");
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    check("Enter on an unchanged name closes the field", !$("#items input.rename") && !name.hidden);
+
+    // Emptied, then blur.
+    name.click();
+    field = $("#items input.rename");
+    field.value = "   ";
+    field.blur();
+    check("leaving an emptied field keeps the old name",
+          !$("#items input.rename") && name.textContent === text, name.textContent);
+
+    check("no field is left behind to look like an unsaved edit", !$("#items input"));
+    check("none of that wrote anything", writes.length === 0, writes.join("; "));
+  }
+
+  // Photos: each figure says what the vision model made of it.
+  const figures = Array.from(document.querySelectorAll("#shots figure"));
+  if (figures.length) {
+    const onServer = await fetch(`/api/boxes/${location.hash.split("/").pop()}/photos`).then((r) => r.json());
+    check("the strip draws every photo the server has, once each",
+          figures.length === onServer.length
+            && new Set(figures.map((f) => f.dataset.key)).size === figures.length
+            && onServer.every((p) => figures.some((f) => f.dataset.key === String(p.id))),
+          `${figures.length} drawn, ${onServer.length} on the server`);
+    const known = ["none", "pending", "running", "done", "error"];
+    check("every photo shows an analysis state",
+          figures.every((f) => known.includes(f.querySelector(".analysis")?.dataset.analysis)),
+          figures.map((f) => f.querySelector(".analysis")?.dataset.analysis).join(", "));
+    check("a ring shows on exactly the photos still being read",
+          figures.every((f) => {
+            const state = f.querySelector(".analysis").dataset.analysis;
+            return f.querySelector(".ring").hidden === !["pending", "running"].includes(state);
+          }));
+    check("a finished or failed photo says something",
+          figures.every((f) => {
+            const block = f.querySelector(".analysis");
+            return !["done", "error"].includes(block.dataset.analysis)
+              || block.querySelector(".state").textContent.trim() !== "";
+          }));
+    check("Retry is offered on exactly the photos that failed",
+          figures.every((f) => {
+            const block = f.querySelector(".analysis");
+            const button = block.querySelector("[data-analyse]");
+            return block.dataset.analysis !== "error"
+              || (!button.hidden && button.textContent === "Retry");
+          }));
+    check("exactly one photo is marked as the cover",
+          figures.filter((f) => !f.querySelector(".mark").hidden).length === 1);
+
+    // Delete asks first, and still does after the strip has been redrawn in
+    // place -- rebinding is the usual way these go dead. Cancel path only.
+    const drop = figures[0].querySelector("[data-drop-photo]");
+    drop.click();
+    await wait(() => $("dialog.ask")?.open, "the photo delete confirmation");
+    check("deleting a photo asks first", $("dialog.ask h2").textContent === "Delete this photo?");
+    $("dialog.ask [value=no]").click();
+    await wait(() => !$("dialog.ask"), "the confirmation to close");
+    check("cancelling deleted no photo",
+          document.querySelectorAll("#shots figure").length === figures.length && writes.length === 0,
+          writes.join("; "));
+  }
+  window.fetch = realFetch;
+
   // Delete asks first. Only the Cancel path runs here -- this may be real data.
   const del = $("#delete");
   if (del) {
@@ -178,6 +291,24 @@ try {
     ws.send(JSON.stringify({ id, method, params }));
   });
 
+  // An exception inside a click handler or a timer fails no check above on
+  // its own -- the page just quietly stops doing something. Collect them.
+  const thrown = [];
+  const listeners = { "Runtime.exceptionThrown": (p) =>
+    thrown.push(p.exceptionDetails.exception?.description || p.exceptionDetails.text) };
+  const routed = ws.onmessage;
+  ws.onmessage = (m) => {
+    const msg = JSON.parse(m.data);
+    if (msg.method && listeners[msg.method]) listeners[msg.method](msg.params);
+    routed(m);
+  };
+  await send("Runtime.enable");
+  // A headless page does not have the focus (document.hasFocus() is false),
+  // and an unfocused page moves activeElement about without firing a single
+  // focus or blur event. Blur is what saves a rename, so without this the
+  // check below fails against code that works in every real browser.
+  await send("Emulation.setFocusEmulationEnabled", { enabled: true });
+
   await send("Page.enable");
   await send("Page.navigate", { url: `${base}/#/b/${encodeURIComponent(code)}` });
   await sleep(500);
@@ -198,6 +329,8 @@ try {
     throw new Error(second.result.exceptionDetails.exception?.description || "new-form script failed");
   }
   results.push(...second.result.result.value);
+  results.push(["nothing threw in the page while all that happened",
+                thrown.length === 0, thrown.join(" | ")]);
   failures = 0;
   for (const [name, passed, detail] of results) {
     if (!passed) failures++;
