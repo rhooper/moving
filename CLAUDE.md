@@ -434,6 +434,15 @@ word from the generated comment; they are escaped now.
   -- a programmatic `.value =` fires no input event, so Cancel would stay
   hidden with something to cancel. "From contents" has no Undo of its own on
   purpose: one way to back out, in one vocabulary.
+- **Tapping a photo opens a viewer with what the model saw in *that* photo**
+  (`viewPhoto` in `app.js`, `seenIn` in `covers.js`; the photo's `analysis`
+  carries `items` and `summary` from its own job). Not the record's merged list:
+  this is the evidence for one picture, so a wrong item can be traced to the
+  photo it came from. A figure is built once and updated in place, so the strip
+  keeps each figure's latest photo in a WeakMap (`lastHeard`) and repaints an
+  open viewer -- open one while a photo is still being read and it fills in by
+  itself. The thumbnail is still a real link: a long press or middle click opens
+  the file as before.
 - **The app's word for a record is "item"** (nav: Items / Scan / New / Settings;
   "6 items"), since a record may be a box, a tub or a loose thing. "Box" survives
   where it means the *kind*. Beware the overlap: `kind = "item"` is one kind of
