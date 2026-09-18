@@ -219,7 +219,17 @@ ul.items li.renaming .ai { display: none; }
 
 .boxlist .c { font-weight: 800; letter-spacing: -0.02em; }
 .boxlist .s { flex: 1; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.boxlist .w { font-size: 0.8125rem; color: var(--muted); }
+.boxlist .w {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-size: 0.8125rem;
+  line-height: 1.25;
+  color: var(--muted);
+  white-space: nowrap;
+}
+/* What it is, over how far along it is. */
+.boxlist .w .k { color: var(--ink); font-weight: 650; }
 
 .empty { color: var(--muted); padding: 2rem 0; }
 .empty p { margin: 0 0 1rem; }
@@ -467,9 +477,9 @@ label.btn { display: inline-flex; align-items: center; justify-content: center; 
 <main id="app">Loading…</main>
 <button type="button" id="live" hidden>Changed on another device — tap to refresh</button>
 <nav class="bar">
-  <a href="#/" id="nav-boxes">Boxes</a>
+  <a href="#/" id="nav-boxes">Items</a>
   <a href="#/scan" id="nav-scan">Scan</a>
-  <a href="#/new" id="nav-new">New box</a>
+  <a href="#/new" id="nav-new">New</a>
   <a href="#/settings" id="nav-settings">Settings</a>
   <span id="printer-badge" class="badge" hidden></span>
 </nav>

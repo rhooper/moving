@@ -134,3 +134,14 @@ export function analysisView(analysis, elapsedMs = 0) {
 function countdown(status, remainingMs) {
   return `${WORDS[status]}… ~${Math.ceil(remainingMs / 1000)} s`;
 }
+
+// What a list row says about a record beside its summary: what it is, over
+// how far along it is. One function, because the first draw and the live
+// update once disagreed about this cell -- the draw showed the kind, the
+// update overwrote it with a location -- and nobody noticed until it was read.
+//
+// Deliberately not the current location, which this cell used to show when
+// there was one: it hid the status, and it has the whole record page.
+export function rowStatus(box) {
+  return { kind: box.kind || "box", status: box.status || "open" };
+}

@@ -221,3 +221,32 @@ test("a status this side has never heard of draws nothing rather than crashing",
   assert.equal(analysisView({ status: "paused" }).state, "none");
   assert.equal(analysisView({}).state, "none");
 });
+
+// --- what a list row says about a record, beside its summary ----------------------
+//
+// Two lines: what it is, and how far along it is. The first draw and the live
+// update used to disagree about this cell; one function means they cannot.
+
+test("a row says what the record is, over where it has got to", async () => {
+  const { rowStatus } = await import("../web/covers.js");
+
+  assert.deepEqual(rowStatus({ kind: "tub", status: "packed" }), { kind: "tub", status: "packed" });
+  assert.deepEqual(rowStatus({ kind: "item", status: "loaded" }), { kind: "item", status: "loaded" });
+});
+
+test("a record from before kinds existed is a box, and a new one is open", async () => {
+  const { rowStatus } = await import("../web/covers.js");
+
+  assert.deepEqual(rowStatus({}), { kind: "box", status: "open" });
+  assert.deepEqual(rowStatus({ kind: null, status: null }), { kind: "box", status: "open" });
+});
+
+test("where it is right now is not what this cell is for", async () => {
+  // The cell used to show the location when there was one, which hid the
+  // status. The location lives on the record page.
+  const { rowStatus } = await import("../web/covers.js");
+
+  const said = rowStatus({ kind: "box", status: "packed", current_location: "garage stack 3" });
+
+  assert.deepEqual(said, { kind: "box", status: "packed" });
+});

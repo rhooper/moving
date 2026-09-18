@@ -1,7 +1,7 @@
 // Moving boxes -- phone-first PWA. Hash routing so a scanned label can land on
 // /#/b/CODE without needing server-side routes for every view.
 
-import { analysisView, coverUrl, stripFor } from "/covers.js";
+import { analysisView, coverUrl, rowStatus, stripFor } from "/covers.js";
 import {
   LiveChannel,
   SETTLE_MS,
@@ -246,7 +246,7 @@ function announce(message, { warn = false } = {}) {
 // so the error *is* the page.
 function showError(message) {
   show(`<div class="err"><strong>${escape(message)}</strong></div>
-        <p><a href="#/">Back to boxes</a></p>`);
+        <p><a href="#/">Back to items</a></p>`);
 }
 
 // For an action that failed on a page that is still good. A dialog you can
@@ -725,7 +725,7 @@ const boxesPath = (query) =>
   query ? `/search?q=${encodeURIComponent(query)}` : "/boxes?limit=100";
 
 const listHeading = (boxes, query) =>
-  query ? `Matches for “${query}”` : `${boxes.length} box${boxes.length === 1 ? "" : "es"}`;
+  query ? `Matches for “${query}”` : `${boxes.length} item${boxes.length === 1 ? "" : "s"}`;
 
 // A live refresh updates the rows in place (see reconcile in live.js) rather
 // than rebuilding the list's markup, so a row stays the same element across a
@@ -756,6 +756,12 @@ function rowFor(box) {
     span.className = cls;
     link.append(span);
   }
+  // Two lines in the last cell: what it is, over how far along it is.
+  for (const cls of ["k", "st"]) {
+    const line = document.createElement("span");
+    line.className = cls;
+    link.lastElementChild.append(line);
+  }
   row.append(link);
   return row;
 }
@@ -764,7 +770,9 @@ function fillRow(row, box) {
   const [code, summary, where] = row.querySelectorAll("span.c, span.s, span.w");
   setText(code, box.code);
   setText(summary, box.content_summary || "Nothing written down yet");
-  setText(where, box.current_location || box.status);
+  const said = rowStatus(box);
+  setText(where.querySelector(".k"), said.kind);
+  setText(where.querySelector(".st"), said.status);
   setThumb(row.querySelector("span.t img"), coverUrl(box));
 }
 
@@ -821,19 +829,20 @@ async function viewBoxes(query) {
             : '<img alt="" loading="lazy" hidden>'}</span>
           <span class="c">${escape(b.code)}</span>
           <span class="s">${escape(b.content_summary || "Nothing written down yet")}</span>
-          <span class="w">${escape(b.kind && b.kind !== "box" ? b.kind : (b.current_location || b.status))}</span>
+          <span class="w"><span class="k">${escape(rowStatus(b).kind)}</span><span
+            class="st">${escape(rowStatus(b).status)}</span></span>
         </a></li>`).join("")}</ul>`
     : query
       ? `<div class="empty"><p>Nothing matches “${escape(query)}”.</p></div>`
       : `<div class="empty">
-           <p>No boxes yet.</p>
+           <p>Nothing here yet.</p>
            <p><a href="#/new">Make the first one.</a></p>
          </div>`;
 
   show(`
     <form id="search" class="row" role="search">
-      <input name="q" type="search" placeholder="Find a box or something in one"
-             value="${escape(query || "")}" aria-label="Search boxes">
+      <input name="q" type="search" placeholder="Find an item, or something inside one"
+             value="${escape(query || "")}" aria-label="Search items">
       <button class="btn" type="submit">Search</button>
     </form>
     <div class="section">
