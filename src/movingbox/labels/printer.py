@@ -13,7 +13,10 @@ opt-in, so no test and no accidental run burns tape.
 
 from __future__ import annotations
 
+import contextlib
+import logging
 import subprocess
+import threading
 import warnings
 from pathlib import Path
 from typing import Protocol
@@ -25,6 +28,118 @@ from .layout import PRINTABLE_WIDTH
 
 #: Brother's USB vendor id. The QL-800 is 0x04f9:0x209b.
 BROTHER_VENDOR = 0x04F9
+QL800_PRODUCT = 0x209B
+
+#: Null bytes the QL-800 expects before a command, to flush any partial one it
+#: may be mid-way through. 400 for the QL-800 and later; 200 for older models.
+QL800_INVALIDATE = 400
+
+log = logging.getLogger(__name__)
+
+#: Serialises every access to the USB printer. FastAPI runs sync endpoints in
+#: a threadpool, so two print requests arriving together would otherwise write
+#: to the same device at the same time and interleave their rasters.
+_ACCESS = threading.Lock()
+
+
+@contextlib.contextmanager
+def exclusive():
+    """Hold the printer for the duration of one job."""
+    with _ACCESS:
+        yield
+
+
+def auto_power_off_command(invalidate: int = QL800_INVALIDATE) -> bytes:
+    """Bytes that switch the printer's auto power-off off, permanently.
+
+    The framing comes from i3labelstation, which drives the same QL-800:
+
+        invalidate x 0x00     flush any half-sent command
+        1B 40                 ESC @      initialise
+        1B 69 55 41 00 00     ESC i U A  auto power-off, timeout 0 = never
+
+    Written to the printer's own memory, so it survives a power cycle and only
+    needs sending once -- the same setting Brother's Printer Setting Tool
+    writes through its GUI.
+    """
+    return bytes(invalidate) + b"\x1b\x40" + b"\x1b\x69\x55\x41\x00\x00"
+
+
+def _open_ql800():
+    """The printer as a writable USB endpoint, or None."""
+    import usb.core
+    import usb.util
+
+    device = usb.core.find(idVendor=BROTHER_VENDOR, idProduct=QL800_PRODUCT)
+    if device is None:
+        return None
+
+    with contextlib.suppress(NotImplementedError, Exception):
+        if device.is_kernel_driver_active(0):
+            device.detach_kernel_driver(0)
+
+    device.set_configuration()
+    interface = device.get_active_configuration()[(0, 0)]
+    return usb.util.find_descriptor(
+        interface,
+        custom_match=lambda e: usb.util.endpoint_direction(e.bEndpointAddress)
+        == usb.util.ENDPOINT_OUT,
+    )
+
+
+def disable_auto_power_off(config: Config, find_device=None) -> bool:
+    """Tell the printer never to switch itself off. True if it was sent.
+
+    Failure is reported, never raised: this runs in a background thread at
+    startup, and a printer being unplugged is the ordinary case, not an error.
+    """
+    opener = find_device or _open_ql800
+    try:
+        with exclusive():
+            endpoint = opener()
+            if endpoint is None:
+                return False
+            endpoint.write(auto_power_off_command())
+    except Exception as exc:  # noqa: BLE001 - reported to the caller
+        log.info("could not disable auto power-off: %s", exc)
+        return False
+    log.info("auto power-off disabled on the printer")
+    return True
+
+
+class AutoOffWatcher(threading.Thread):
+    """Waits for the printer to appear, disables auto power-off, then stops.
+
+    It stops rather than polling forever because the setting persists in the
+    printer: once it lands there is nothing left to do. Directing *all* printer
+    traffic through a single thread would be the alternative, but the only
+    thing that actually needs serialising is concurrent access, and
+    `exclusive()` does that with far less machinery.
+    """
+
+    def __init__(self, config: Config, *, send=None, interval: float = 30.0, attempts: int = 40):
+        super().__init__(name="printer-auto-off", daemon=True)
+        self.config = config
+        self._send = send or disable_auto_power_off
+        self.interval = interval
+        self.attempts = attempts
+        self._stop = threading.Event()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def run(self) -> None:
+        if self.config.printer_backend == "fake":
+            # Nothing to talk to: the fake backend writes preview images.
+            return
+        for _ in range(self.attempts):
+            if self._stop.is_set():
+                return
+            if self._send(self.config):
+                return
+            if self._stop.wait(self.interval):
+                return
+        log.info("gave up waiting for the printer to disable auto power-off")
 
 
 class PrintFailed(RuntimeError):
@@ -177,13 +292,16 @@ class BrotherQLPrinter:
         data = build_instructions(
             image, model=self.config.printer_model, label=self.config.label_id
         )
-        for _ in range(copies):
-            send(
-                instructions=data,
-                printer_identifier=self.config.printer_queue or "usb://0x04f9:0x209b",
-                backend_identifier="pyusb",
-                blocking=True,
-            )
+        # One device: two jobs arriving together would interleave their
+        # rasters and produce two ruined labels.
+        with exclusive():
+            for _ in range(copies):
+                send(
+                    instructions=data,
+                    printer_identifier=self.config.printer_queue or "usb://0x04f9:0x209b",
+                    backend_identifier="pyusb",
+                    blocking=True,
+                )
         return Path(f"usb:{code}")
 
 

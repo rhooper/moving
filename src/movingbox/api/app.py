@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 from collections.abc import Iterator
+from contextlib import asynccontextmanager
 from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket
@@ -14,6 +15,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from .. import db, store
 from ..config import ROOT, Config, from_env
+from ..labels import printer as printing
 from ..labels.layout import FONT_PATH
 from . import events
 
@@ -120,8 +122,24 @@ async def _until_the_client_goes(socket: WebSocket) -> None:
 
 
 def create_app(config: Config | None = None) -> FastAPI:
-    app = FastAPI(title="Moving Box Tracker", version="0.1.0")
-    app.state.config = config or from_env()
+    settings = config or from_env()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # The printer switches itself off after a while, and the only way to
+        # stop it is to tell it once -- the setting persists in the printer.
+        # So: wait for it to appear, say so, and stop. A daemon thread, and
+        # stopped on shutdown, so it never holds the service up.
+        watcher = printing.AutoOffWatcher(settings)
+        app.state.printer_watcher = watcher
+        watcher.start()
+        try:
+            yield
+        finally:
+            watcher.stop()
+
+    app = FastAPI(title="Moving Box Tracker", version="0.1.0", lifespan=lifespan)
+    app.state.config = settings
     app.state.revision = deployed_revision()
     app.state.events = events.Hub()
 
