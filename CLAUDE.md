@@ -24,6 +24,7 @@ scripts/claude/deploy.sh         # backup, test, restart, verify — normally au
 scripts/claude/install-hooks.sh  # wire up the post-merge hook (install-service.sh calls it)
 uv run ruff check src tests scripts
 scripts/claude/smoke.sh          # end-to-end against a running server
+make run & make ui-check         # real clicks on the box page in headless Chrome; saves nothing
 scripts/claude/render_samples.py # contact sheet of sample labels to eyeball
 tailscale serve --bg 8787        # HTTPS, required for camera access
 ```
@@ -305,6 +306,17 @@ word from the generated comment; they are escaped now.
   is no JS linter on this machine, so `node --check` plus these static guards
   are all that stands between a patch script and production. `no-undef` would
   have caught two of the three -- `brew install oxlint` is the cheap fix.
+- **Forms that edit an existing record get a Cancel** (`wireCancel` in
+  `app.js`, rule in `live.js` `isDirty`). Hidden until a field differs from
+  what `markPristine` recorded, and it restores from that same record. Any
+  code that sets a field's value (suggestion, dictation) must call `edited(field)`
+  -- a programmatic `.value =` fires no input event, so Cancel would stay
+  hidden with something to cancel. "From contents" has no Undo of its own on
+  purpose: one way to back out, in one vocabulary.
+- **Run `scripts/claude/ui_check.mjs` after touching `web/app.js`.** It drives
+  headless Chrome over CDP with Node's built-in WebSocket (no npm), clicks
+  the box page's forms for real, and saves nothing. `node --check` and the
+  static guards cannot see an undefined variable inside a click handler.
 - **`el.hidden` only works because of the `[hidden] { display: none !important }`
   rule** in `index.html`: the UA's own rule loses to any author `display`.
 - Scripts live in `scripts/claude/` with a purpose header.
