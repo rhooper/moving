@@ -22,6 +22,8 @@ from pathlib import Path
 import segno
 from PIL import Image, ImageDraw, ImageFont
 
+from .. import kinds, summarise
+
 #: Printable dots across 62 mm tape at 300 dpi, per brother_ql.labels.
 PRINTABLE_WIDTH = 696
 #: ~90 mm at 300 dpi. The tape is endless, so this is the *cap* on an
@@ -60,6 +62,9 @@ class LabelData:
     footer: str | None = None
     #: Itemised contents, already rendered as display strings ("3 baking pans").
     items: list[str] = field(default_factory=list)
+    #: What a loose thing *is* ("Bicycle"). Set instead of a contents list, and
+    #: printed as the headline rather than as a line of small print.
+    title: str | None = None
 
 
 @lru_cache(maxsize=64)
@@ -251,7 +256,9 @@ def display_items(items: list[dict]) -> list[str]:
         if not name:
             continue
         qty = item.get("qty") or 1
-        lines.append(f"{qty} {name}" if qty and qty > 1 else name)
+        # Same pluralisation as the summary, so the contents column does
+        # not read "3 baking pan" beside a summary saying "3 baking pans".
+        lines.append(f"{qty} {summarise.plural(name, qty)}" if qty and qty > 1 else name)
     return lines
 
 
@@ -284,15 +291,22 @@ def from_box(
 
     source = " ".join(part for part in (source_name, box.get("source_location")) if part) or None
 
+    # A loose thing is named, not inventoried: its description becomes the
+    # headline and no contents column is printed, however many item rows have
+    # been attached to it.
+    container = kinds.holds_contents(box.get("kind") or kinds.DEFAULT)
+    summary = box.get("content_summary")
+
     return LabelData(
         code=box["code"],
         url=f"{base_url.rstrip('/')}/b/{box['code']}",
         room=room_name,
         source=source,
-        summary=box.get("content_summary"),
+        summary=summary if container else None,
+        title=None if container else summary,
         flags=tuple(flags),
         footer=" - ".join(footer_parts) or None,
-        items=display_items(items or []),
+        items=display_items(items or []) if container else [],
     )
 
 
@@ -349,6 +363,15 @@ def _render_landscape(data: LabelData) -> Image.Image:
             draw.text((MARGIN, y), line, font=source_font, fill=0, anchor="lt")
             y += source_font.size + 4
         y += 6
+
+    if data.title:
+        # The name of a loose thing is the point of its label -- as big as it
+        # can be and still fit, where a box would be listing its contents.
+        title_font = _fit(draw, data.title, left_width, start=72, weight=800)
+        for line in _wrap(draw, data.title, title_font, left_width)[:2]:
+            draw.text((MARGIN, y), line, font=title_font, fill=0, anchor="lt")
+            y += title_font.size + 6
+        y += 8
 
     footer_font = _font(24, weight=500)
     footer_room = (footer_font.size + 10) if data.footer else 0

@@ -11,9 +11,9 @@ import sqlite3
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from .. import codes
+from .. import codes, kinds
 from .app import get_conn
-from .schemas import CodeFormat, NextNumber
+from .schemas import CodeFormat, KindPrefix, NextNumber
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -21,6 +21,30 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 def _described(conn: sqlite3.Connection) -> dict:
     shape = codes.get_format(conn)
     return {**shape, "example": codes.render(1, **shape)}
+
+
+@router.get("/kinds")
+def list_kinds(conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
+    """The kinds a record can be, with any prefix each has been given."""
+    overrides = codes.kind_prefixes(conn)
+    return [
+        {
+            "kind": key,
+            "label": kinds.label_for(key),
+            "contents": kinds.holds_contents(key),
+            "prefix": overrides.get(key),
+        }
+        for key in kinds.KINDS
+    ]
+
+
+@router.put("/kind-prefix")
+def set_kind_prefix(body: KindPrefix, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    try:
+        codes.set_kind_prefix(conn, body.kind, (body.prefix or "").strip() or None)
+    except ValueError as bad:
+        raise HTTPException(status_code=422, detail=str(bad)) from bad
+    return {"kind": body.kind, "prefix": codes.kind_prefix(conn, body.kind)}
 
 
 @router.get("/code-format")

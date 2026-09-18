@@ -11,9 +11,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..kinds import KINDS
 from ..store import STATUSES
 
 Status = Literal[STATUSES]  # type: ignore[valid-type]
+Kind = Literal[tuple(KINDS)]  # type: ignore[valid-type]
 
 
 class Strict(BaseModel):
@@ -21,6 +23,7 @@ class Strict(BaseModel):
 
 
 class BoxWrite(Strict):
+    kind: Kind | None = None
     destination_room_id: int | None = None
     source_room_id: int | None = None
     source_location: str | None = None
@@ -77,6 +80,12 @@ class CodeFormat(Strict):
 
 class NextNumber(Strict):
     number: int = Field(ge=1)
+
+
+class KindPrefix(Strict):
+    kind: Kind
+    #: None or "" returns the kind to the global prefix.
+    prefix: str | None = None
 
 
 class CaptionUpdate(Strict):

@@ -9,13 +9,14 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-from . import db, search
+from . import db, kinds, search
 
 STATUSES = ("open", "packed", "loaded", "delivered", "unpacked")
 
 # Columns a caller may set directly. Status and location are excluded: they go
 # through set_status/set_location so the transition is always recorded.
 EDITABLE = (
+    "kind",
     "destination_room_id",
     "source_room_id",
     "source_location",
@@ -87,7 +88,8 @@ def create_box(conn: sqlite3.Connection, *, actor: str | None = None, **fields) 
     if unknown:
         raise ValueError(f"Not settable at creation: {sorted(unknown)}")
 
-    code = db.next_box_code(conn)
+    kinds.check(fields.get("kind", kinds.DEFAULT))
+    code = db.next_box_code(conn, kind=fields.get("kind", kinds.DEFAULT))
     columns = ["code", *fields]
     placeholders = ", ".join("?" * len(columns))
     cursor = conn.execute(
@@ -109,6 +111,8 @@ def update_box(conn: sqlite3.Connection, code: str, **fields) -> dict[str, Any]:
     unknown = set(fields) - set(EDITABLE)
     if unknown:
         raise ValueError(f"Not editable: {sorted(unknown)} (status and location have own calls)")
+    if "kind" in fields:
+        kinds.check(fields["kind"])
     if fields:
         assignments = ", ".join(f"{name} = ?" for name in fields)
         conn.execute(
@@ -248,6 +252,22 @@ def code_of(conn: sqlite3.Connection, box_id: int) -> str | None:
     say *which box* changed, since a code is what a client re-fetches by."""
     row = conn.execute("SELECT code FROM boxes WHERE id = ?", (box_id,)).fetchone()
     return row["code"] if row else None
+
+
+def has_contents(conn: sqlite3.Connection, code: str) -> bool:
+    """Whether the record says enough about itself to be worth a label.
+
+    A container needs a summary or some items. A loose thing needs a name --
+    listing a bicycle's pedals describes nothing, so items on a non-container
+    are deliberately ignored here.
+    """
+    box = get_box(conn, code)
+    if box is None:
+        return False
+    named = bool((box.get("content_summary") or "").strip())
+    if not kinds.holds_contents(box.get("kind") or kinds.DEFAULT):
+        return named
+    return named or bool(list_items(conn, code))
 
 
 def room_name(conn: sqlite3.Connection, room_id: int | None) -> str | None:

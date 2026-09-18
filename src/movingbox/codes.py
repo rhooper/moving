@@ -74,6 +74,35 @@ def set_format(
     return get_format(conn)
 
 
+def kind_prefix(conn: sqlite3.Connection, kind: str) -> str:
+    """The prefix for a kind, falling back to the global one.
+
+    Optional on purpose: one sequence for everything is the simplest thing that
+    works, and 'I-0007' beside 'B-0042' is only worth it if you want to tell a
+    loose item from a box at a glance.
+    """
+    return _setting(conn, f"code_prefix:{kind}", "") or get_format(conn)["prefix"]
+
+
+def set_kind_prefix(conn: sqlite3.Connection, kind: str, prefix: str | None) -> None:
+    """Give one kind its own prefix, or pass None to return it to the global one."""
+    if prefix:
+        validate(prefix, get_format(conn)["separator"], get_format(conn)["digits"])
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (f"code_prefix:{kind}", prefix),
+        )
+    else:
+        conn.execute("DELETE FROM settings WHERE key = ?", (f"code_prefix:{kind}",))
+
+
+def kind_prefixes(conn: sqlite3.Connection) -> dict[str, str]:
+    """Only the kinds that have been given a prefix of their own."""
+    rows = conn.execute("SELECT key, value FROM settings WHERE key LIKE 'code_prefix:%'").fetchall()
+    return {row["key"].split(":", 1)[1]: row["value"] for row in rows}
+
+
 def counter_name(prefix: str) -> str:
     return f"box_code:{prefix}"
 

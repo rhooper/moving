@@ -73,7 +73,7 @@ def connect(path: str | Path) -> sqlite3.Connection:
     return conn
 
 
-def next_box_code(conn: sqlite3.Connection) -> str:
+def next_box_code(conn: sqlite3.Connection, kind: str = "box") -> str:
     """Allocate the next never-before-used box code, e.g. ``B-0042``.
 
     The shape comes from the configured format (see :mod:`movingbox.codes`).
@@ -84,7 +84,8 @@ def next_box_code(conn: sqlite3.Connection) -> str:
     """
     from . import codes
 
-    shape = codes.get_format(conn)
+    shape = dict(codes.get_format(conn))
+    shape["prefix"] = codes.kind_prefix(conn, kind)
     row = conn.execute(
         """
         INSERT INTO counters (name, value) VALUES (?, 1)

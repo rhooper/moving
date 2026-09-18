@@ -26,7 +26,7 @@ UNCOUNTED = {
 }
 
 
-def _plural(name: str, qty: int) -> str:
+def plural(name: str, qty: int) -> str:
     if qty <= 1:
         return name
     lowered = name.lower()
@@ -68,7 +68,7 @@ def from_items(contents: list[dict[str, Any]], max_length: int = MAX_LENGTH) -> 
     if not merged:
         return ""
 
-    parts = [f"{qty} {_plural(name, qty)}" if qty > 1 else name for name, qty in merged]
+    parts = [f"{qty} {plural(name, qty)}" if qty > 1 else name for name, qty in merged]
 
     summary = ", ".join(parts)
     if len(summary) <= max_length:

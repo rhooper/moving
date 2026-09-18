@@ -256,7 +256,7 @@ async function viewBoxes(query) {
         <li data-key="${escape(b.code)}"><a href="#/b/${escape(b.code)}">
           <span class="c">${escape(b.code)}</span>
           <span class="s">${escape(b.content_summary || "Nothing written down yet")}</span>
-          <span class="w">${escape(b.current_location || b.status)}</span>
+          <span class="w">${escape(b.kind && b.kind !== "box" ? b.kind : (b.current_location || b.status))}</span>
         </a></li>`).join("")}</ul>`
     : query
       ? `<div class="empty"><p>Nothing matches “${escape(query)}”.</p></div>`
@@ -288,13 +288,15 @@ async function viewBoxes(query) {
 async function viewBox(code, { keepBanner = false, at = null } = {}) {
   const held = keepBanner ? document.getElementById("say")?.outerHTML : null;
   const path = `/boxes/${encodeURIComponent(code)}`;
-  const [box, items, rooms, photos, press] = await Promise.all([
+  const [box, items, rooms, photos, press, allKinds] = await Promise.all([
     api(path),
     api(`${path}/items`),
     api("/rooms"),
     api(`${path}/photos`),
     api("/printer").catch(() => null),
+    api("/settings/kinds"),
   ]);
+  const shape = allKinds.find((k) => k.kind === box.kind) || allKinds[0];
   // Five requests take a moment, and a thumb can navigate away inside it. A
   // background refresh says which page it was drawing for and gives up if
   // that is no longer the page. Foreground calls pass nothing and always win.
@@ -308,11 +310,13 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
     ${flags.length ? `<div class="flags">${flags.map((f) => `<span class="flag">${escape(f)}</span>`).join("")}</div>` : ""}
     ${room ? `<div class="band">${escape(room.name)}</div>` : ""}
     <form id="summary-form">
-      <textarea name="content_summary" rows="2" aria-label="What is in this box"
-        placeholder="pots, baking pans, stand mixer">${escape(box.content_summary || "")}</textarea>
+      <label class="dlabel" for="what">${shape.contents ? "What is in it" : "What it is"}</label>
+      <textarea id="what" name="content_summary" rows="2"
+        placeholder="${shape.contents ? "pots, baking pans, stand mixer" : "Bicycle (Trek hybrid, blue)"}"
+        >${escape(box.content_summary || "")}</textarea>
       <div class="row" style="margin-top:0.5rem">
-        <button class="btn quiet" type="submit">Save summary</button>
-        <button class="btn quiet" type="button" id="suggest">From contents</button>
+        <button class="btn quiet" type="submit">Save ${shape.contents ? "summary" : "name"}</button>
+        ${shape.contents ? '<button class="btn quiet" type="button" id="suggest">From contents</button>' : ""}
         <button class="btn quiet dictate" type="button" data-target="content_summary" hidden>Dictate</button>
       </div>
     </form>
@@ -320,6 +324,11 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
     <div class="section">
       <h2>Where it is going</h2>
       <form id="destination">
+        <label class="dlabel" for="kind">This is a</label>
+        <select id="kind" name="kind">
+          ${allKinds.map((k) => `<option value="${escape(k.kind)}"
+            ${k.kind === box.kind ? "selected" : ""}>${escape(k.label)}</option>`).join("")}
+        </select>
         <label class="dlabel" for="dest-room">Destination room</label>
         <select id="dest-room" name="destination_room_id">
           <option value="">Not decided yet</option>
@@ -356,6 +365,7 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
       </form>
     </div>
 
+    ${!shape.contents ? "" : `
     <div class="section">
       <h2>What is in it</h2>
       <ul class="items">${items.map((i) => `
@@ -374,7 +384,7 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
           <button class="btn quiet dictate" type="button" data-target="name" hidden>Dictate</button>
         </div>
       </form>
-    </div>
+    </div>`}
 
     <div class="section">
       <h2>Photos</h2>
@@ -425,13 +435,26 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
     act(() => api(`/boxes/${encodeURIComponent(code)}/location`, {
       method: "POST", body: JSON.stringify({ current_location: value || null }) }));
   });
-  document.getElementById("add-item").addEventListener("submit", (event) => {
+  // Absent for a loose thing: a bicycle has no contents to add to.
+  const addForm = document.getElementById("add-item");
+  addForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const name = new FormData(event.target).get("name").trim();
-    if (name) act(() => api(`/boxes/${encodeURIComponent(code)}/items`, { method: "POST", body: JSON.stringify({ name }) }));
+    // Dictation arrives as one run-on phrase, so split it rather than storing
+    // "kettle, toaster and three mugs" as a single thing.
+    const names = splitItems(new FormData(event.target).get("name"));
+    if (!names.length) return;
+    const button = addForm.querySelector("button[type=submit]");
+    try {
+      await busy(button, `Adding ${names.length}…`, async () => {
+        for (const name of names) {
+          await api(`${path}/items`, { method: "POST", body: JSON.stringify({ name }) });
+        }
+      });
+      await viewBox(code);
+    } catch (error) { showError(error.message); }
   });
   const suggest = document.getElementById("suggest");
-  suggest.addEventListener("click", async () => {
+  suggest?.addEventListener("click", async () => {
     try {
       const { summary } = await busy(suggest, "Reading…", () =>
         api(`${path}/summary-suggestion`));
@@ -567,10 +590,16 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
 }
 
 async function viewNew() {
-  const rooms = await api("/rooms");
+  const [rooms, allKinds] = await Promise.all([api("/rooms"), api("/settings/kinds")]);
   show(`
-    <h1 class="code">New box</h1>
+    <h1 class="code">New</h1>
     <form id="new">
+      <div class="section">
+        <h2>What it is</h2>
+        <select name="kind" aria-label="Kind">
+          ${allKinds.map((k) => `<option value="${escape(k.kind)}">${escape(k.label)}</option>`).join("")}
+        </select>
+      </div>
       <div class="section">
         <h2>Where it is going</h2>
         <select name="destination_room_id" aria-label="Destination room">
@@ -579,8 +608,9 @@ async function viewNew() {
         </select>
       </div>
       <div class="section">
-        <h2>What is in it</h2>
-        <textarea name="content_summary" rows="3" placeholder="pots, baking pans, stand mixer"></textarea>
+        <h2>What is in it, or what it is</h2>
+        <textarea name="content_summary" rows="3"
+          placeholder="pots, baking pans, stand mixer &mdash; or Bicycle"></textarea>
         <select name="source_room_id" aria-label="Packed from" style="margin-top:0.5rem">
           <option value="">Packed from: not recorded</option>
           ${roomOptions(forSource(rooms))}
@@ -600,6 +630,7 @@ async function viewNew() {
     event.preventDefault();
     const form = new FormData(event.target);
     const payload = {
+      kind: form.get("kind"),
       content_summary: form.get("content_summary").trim() || null,
       source_location: form.get("source_location").trim() || null,
       fragile: form.get("fragile") === "on",

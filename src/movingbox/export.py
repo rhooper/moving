@@ -15,6 +15,7 @@ from typing import Any
 
 CSV_COLUMNS = [
     "code",
+    "kind",
     "destination_room",
     "status",
     "current_location",

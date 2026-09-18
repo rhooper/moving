@@ -15,12 +15,23 @@ from movingbox import db, store
 
 
 def a_v1_database(path):
-    """A database as it looked before 0002: one global counter."""
+    """A database as it looked before 0002: one global counter, no `kind`.
+
+    Every later migration has to be undone, not just 0002. Setting
+    user_version back to 1 makes the runner replay all of them, and a replayed
+    0003 fails with "duplicate column name: kind" if its column is still
+    there — which is a fault in this helper, not in the migration.
+    """
     conn = db.connect(path)
     for _ in range(3):
         store.create_box(conn)
-    # Undo 0002 to recreate the old shape, then step the version back.
+
+    # 0003
+    conn.execute("DROP INDEX IF EXISTS idx_boxes_kind")
+    conn.execute("ALTER TABLE boxes DROP COLUMN kind")
+    # 0002
     conn.execute("UPDATE counters SET name = 'box_code' WHERE name = 'box_code:B'")
+
     conn.execute("PRAGMA user_version = 1")
     conn.close()
 

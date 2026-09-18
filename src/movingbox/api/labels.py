@@ -31,16 +31,6 @@ def _label_for(conn: sqlite3.Connection, code: str, config: Config) -> layout.La
     )
 
 
-def has_contents(conn: sqlite3.Connection, code: str) -> bool:
-    """Whether anything is recorded about what is in the box."""
-    box = store.get_box(conn, code)
-    if box is None:
-        return False
-    if (box.get("content_summary") or "").strip():
-        return True
-    return bool(store.list_items(conn, code))
-
-
 @router.get("/preview/{code}.png")
 def preview(
     code: str,
@@ -71,7 +61,7 @@ def print_labels(
     labels = [(code, _label_for(conn, code, config)) for code in body.codes]
 
     if not body.allow_empty:
-        blank = [code for code in body.codes if not has_contents(conn, code)]
+        blank = [code for code in body.codes if not store.has_contents(conn, code)]
         if blank:
             # 409, not 400: the request is fine, the box's state is not.
             raise HTTPException(
