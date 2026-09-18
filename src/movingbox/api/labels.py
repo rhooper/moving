@@ -8,7 +8,7 @@ import sqlite3
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
-from .. import store
+from .. import prefs, store
 from ..config import Config
 from ..labels import layout, printer
 from . import events
@@ -76,6 +76,10 @@ def print_labels(
                 ),
             )
 
+    # Two by default for a full label -- a box wants one on more than one
+    # face -- and one for a stub, which goes on an empty box, once.
+    copies = body.copies or (1 if body.stub else prefs.label_copies(conn))
+
     backend = printer.get_backend(config)
     printed = []
     for code, data in labels:
@@ -89,7 +93,7 @@ def print_labels(
                     orientation=body.orientation or config.label_orientation,
                 )
             )
-            written = backend.print_label(image, code=code, copies=body.copies)
+            written = backend.print_label(image, code=code, copies=copies)
         except Exception as failure:  # noqa: BLE001 - every backend fails differently
             # 502: we are the gateway to the hardware, and the hardware failed.
             # record_print is deliberately not reached -- a print count that
@@ -98,10 +102,10 @@ def print_labels(
                 status_code=502,
                 detail=(f"Could not print {code}: {failure}. {printer.status(config)['detail']}"),
             ) from failure
-        store.record_print(conn, code)
+        store.record_print(conn, code, copies=copies)
         # Per label, not per batch: a long batch should light up each box page
         # as its tape comes out, not all at the end.
         changes.publish(events.LABEL_PRINTED, code)
-        printed.append({"code": code, "output": str(written)})
+        printed.append({"code": code, "output": str(written), "copies": copies})
 
     return {"printed": printed, **printer.status(config)}

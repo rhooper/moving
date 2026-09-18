@@ -8,7 +8,7 @@ import sqlite3
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse, Response
 
-from .. import backup, export
+from .. import backup, export, prefs
 from ..config import Config
 from ..labels import printer
 from .app import get_config, get_conn
@@ -26,9 +26,15 @@ def _download(content: str | bytes, *, filename: str, media_type: str) -> Respon
 
 
 @router.get("/printer")
-def printer_status(config: Config = Depends(get_config)) -> dict:
-    """Whether a label would actually come out if you pressed Print."""
-    return printer.status(config)
+def printer_status(
+    config: Config = Depends(get_config), conn: sqlite3.Connection = Depends(get_conn)
+) -> dict:
+    """Whether a label would actually come out if you pressed Print.
+
+    Carries the default number of copies too: the box page asks this on every
+    draw already, and one number is not worth a request of its own.
+    """
+    return {**printer.status(config), "label_copies": prefs.label_copies(conn)}
 
 
 @router.get("/export.json")

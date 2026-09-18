@@ -158,11 +158,24 @@ escape hatch. One empty box rejects the whole batch, as an unknown code does.
 updates rows *in place* keyed by box code (`reconcile` in `web/live.js`):
 rebuilding the markup would destroy every `<a>`, so a tap that began on one
 lands on whatever node replaced it and you open the wrong box. On top of that
-a refresh is held back entirely while a field is focused or dirty, while an
-unaccepted AI draft is on screen, while a pointer is down, and for 600 ms
-after — the click has not landed when the finger lifts. Held refreshes raise
-the `#live` banner instead, and the new-box form and scanner are never
-refreshed at all (`affects()` matches no view name for them).
+a refresh is held back entirely while a field is focused or dirty, while a
+pointer is down, and for 600 ms after — the click has not landed when the
+finger lifts. Held refreshes raise the `#live` banner instead, and the new-box
+form and scanner are never refreshed at all (`affects()` matches no view name
+for them).
+
+**Three parts of an open record update in place, even while a whole refresh is
+held**: the contents list (`items.changed`), the photo strip (`photos.changed`)
+and a *pristine, unfocused* summary (`box.updated`) -- `partOf()` in `live.js`
+maps the events, `itemsPart`/`photosPart` in `app.js` draw through `reconcile`
+so the first draw and every update share one path, and listeners are attached
+when a row is created so there is no rebind step to forget. This is what lets
+photo analysis add items while you are typing somewhere else. They still wait
+out a pointer-down and the settle; they never touch a focused or dirty field.
+`viewBox` counts whole-page draws in flight and re-requests a part that changed
+during one, so a stale draw cannot overwrite it. **Rows a part creates must
+carry `data-key`** -- `reconcile` sets it now, because photo figures once did
+not, and every update drew a second copy of the strip.
 
 **The websocket key travels in the query string** because a browser's
 `WebSocket` constructor takes a URL and nothing else — `X-API-Key` cannot be
@@ -209,8 +222,11 @@ How it runs, and why:
   calls at once only make each slower. `Analyst.run_once()` is the whole of the
   logic and is what tests drive, on their own thread -- the thread around it
   only decides when to call it.
-- **Jobs live in `ai_jobs`** (one row per photo, carrying `photo_id`), not in
-  memory, because every deploy restarts the service: `recover()` puts `running`
+- **Jobs live in `ai_jobs`** (rows carry `photo_id`; a photo's state is its
+  *latest* row, and a re-run adds a row rather than replacing one -- finished
+  rows are the history the estimate is made of, and deleting them on re-queue
+  once reset it to the default), not in memory, because every deploy restarts
+  the service: `recover()` puts `running`
   jobs back to `pending` on startup. `photo_id` has no foreign key on purpose --
   SQLite will not DROP a column that is part of one, and migration tests roll
   back by dropping -- so `storage.delete_photo` removes a photo's jobs itself.
@@ -418,6 +434,38 @@ word from the generated comment; they are escaped now.
   -- a programmatic `.value =` fires no input event, so Cancel would stay
   hidden with something to cancel. "From contents" has no Undo of its own on
   purpose: one way to back out, in one vocabulary.
+- **`node --check web/app.js` proves nothing.** On a `.js` file containing
+  `import`, Node 23.3 exits 0 without parsing it as a module, so a missing brace
+  passes. It was the syntax guard for a day of patches before a subagent
+  noticed. The working form is `node --input-type=module --check < file`, and
+  `tests/test_web_syntax.py` runs it for every module in the deploy gate -- with
+  a test that the check *can* fail, which is the property the old one lacked.
+- **A full label prints `label_copies` copies** (`prefs.py`, default 2, set in
+  Settings; a box wants a label on more than one face). A print request may
+  say otherwise; a stub prints one. `label_print_count` counts *labels*, not
+  button presses. `/api/printer` carries the number so the record page learns
+  it without a sixth request. The copies field on the record page is a choice
+  for one print, not part of the record: its `dataset.initial` follows its
+  value so it never makes the page look half-edited and hold back live updates.
+- **Printing a thin label asks first** (`confirmThinLabel`): no contents, or no
+  destination room. It replaced the "print anyway" tick box. The server still
+  refuses an empty box without `allow_empty`, and the UI only ever sends that
+  after a yes. The new-record form asks *before* creating, so "no" leaves you
+  on the form with nothing made. The stub is exempt by design.
+- **A barcode reader is a keyboard** (`web/wedge.js`, `openEntered` in
+  `app.js`). It types what it scans and presses Return: the label's Code 128
+  is the box number, its QR is the box URL. A box URL can only have come from
+  a label, so it opens without asking; a bare number is only *shaped* like a
+  code -- so is "kettle" -- so it is looked up first and falls back to a
+  search. It works in the search box, and at the page with nothing focused
+  (`KeyBuffer` collects the keys, since the reader has no idea where the
+  cursor is). Two traps it handles, both pinned by `wedge_check.mjs` with real
+  key events: **a focused button** -- whichever was tapped last -- would be
+  pressed by the reader's Return, so after "Print label" a scan would spend
+  tape; the Return is swallowed when it completes a scan. And **Firefox opens
+  quick find on "/"** when nothing is focused, which would eat a scanned URL;
+  "/" is suppressed only while a scan is under way. Scanning a binned record
+  opens it, where Restore is offered -- same as the `/b/` redirect.
 - **Run `scripts/claude/ui_check.mjs` after touching `web/app.js`.** It drives
   headless Chrome over CDP with Node's built-in WebSocket (no npm), clicks
   the box page's forms for real, and saves nothing. `node --check` and the

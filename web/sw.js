@@ -13,6 +13,8 @@ const SHELL = [
   "/live.js",
   "/scan.js",
   "/text.js",
+  "/covers.js",
+  "/wedge.js",
   "/jsQR.js",
   "/Inter.ttf",
   "/manifest.webmanifest",
