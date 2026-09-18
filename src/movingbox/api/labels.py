@@ -35,13 +35,17 @@ def preview(
     code: str,
     height: int | None = Query(default=None, description="Exact cut height; omit to fit content"),
     orientation: str | None = Query(default=None, description="landscape or portrait"),
+    stub: bool = Query(default=False, description="The one-inch stub: number and QR only"),
     conn: sqlite3.Connection = Depends(get_conn),
     config: Config = Depends(get_config),
 ) -> Response:
-    image = layout.render(
-        _label_for(conn, code, config),
-        height=height,
-        orientation=orientation or config.label_orientation,
+    data = _label_for(conn, code, config)
+    image = (
+        layout.render_stub(data)
+        if stub
+        else layout.render(
+            data, height=height, orientation=orientation or config.label_orientation
+        )
     )
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
@@ -59,7 +63,8 @@ def print_labels(
     # wastes tape and leaves you unsure which labels actually came out.
     labels = [(code, _label_for(conn, code, config)) for code in body.codes]
 
-    if not body.allow_empty:
+    # The stub is for the box with nothing in it yet, so the gate is not its.
+    if not body.allow_empty and not body.stub:
         blank = [code for code in body.codes if not store.has_contents(conn, code)]
         if blank:
             # 409, not 400: the request is fine, the box's state is not.
@@ -75,15 +80,16 @@ def print_labels(
     printed = []
     for code, data in labels:
         try:
-            written = backend.print_label(
-                layout.render(
+            image = (
+                layout.render_stub(data)
+                if body.stub
+                else layout.render(
                     data,
                     height=body.height,
                     orientation=body.orientation or config.label_orientation,
-                ),
-                code=code,
-                copies=body.copies,
+                )
             )
+            written = backend.print_label(image, code=code, copies=body.copies)
         except Exception as failure:  # noqa: BLE001 - every backend fails differently
             # 502: we are the gateway to the hardware, and the hardware failed.
             # record_print is deliberately not reached -- a print count that

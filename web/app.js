@@ -922,15 +922,27 @@ async function viewNew() {
         </label>
       </div>
       <div class="section">
-        <button class="btn" type="submit" id="create">Create</button>
-        <button class="btn quiet" type="submit" id="create-print" data-print
+        <button class="btn" type="submit" id="create-stub" data-print="stub">Create and print stub</button>
+        <p class="meta" style="margin:0.35rem 0 0">One inch of tape: just the number and the QR, to stick on before you pack.</p>
+        <button class="btn quiet" type="submit" id="create" style="margin-top:0.75rem">Create</button>
+        <button class="btn quiet" type="submit" id="create-print" data-print="label"
                 style="margin-top:0.5rem">Create and print label</button>
       </div>
     </form>`);
 
-  // Creating is the default -- first button, and what Enter does. Printing is
-  // the deliberate second choice: tape is the one thing here that cannot be
-  // undone. The first button names what it makes, following the kind picker.
+  // The stub is the first button because it is the usual move: make the
+  // record, stick an inch of tape on the empty box, pack, print the full
+  // label at the end. The plain Create names what it makes, following the
+  // kind picker.
+  //
+  // Enter, though, must never spend tape. A browser submits with the *first*
+  // submit button when Enter is pressed in a field, which is now the one that
+  // prints -- so Enter is pointed at the plain Create instead.
+  document.getElementById("new").addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.target.tagName !== "INPUT") return;
+    event.preventDefault();
+    event.currentTarget.requestSubmit(document.getElementById("create"));
+  });
   const kindPicker = document.querySelector("#new [name=kind]");
   const nameCreate = () => {
     const chosen = allKinds.find((k) => k.kind === kindPicker.value);
@@ -954,10 +966,10 @@ async function viewNew() {
     const sourceId = form.get("source_room_id");
     if (sourceId) payload.source_room_id = Number(sourceId);
 
-    // Which button was pressed. Enter in a field reports the first submit
-    // button, so the keyboard default is create-without-printing too.
+    // Which button was pressed: data-print is "stub", "label", or absent.
     const pressed = event.submitter || document.getElementById("create");
-    const wantsLabel = pressed.hasAttribute("data-print");
+    const printing = pressed.dataset.print || null;
+    const wantsLabel = printing !== null;
 
     try {
       let unprinted = null;
@@ -965,15 +977,18 @@ async function viewNew() {
         const made = await api("/boxes", { method: "POST", body: JSON.stringify(payload) });
         if (wantsLabel) {
           try {
-            await api("/labels/print", { method: "POST", body: JSON.stringify({ codes: [made.code] }) });
+            await api("/labels/print", {
+              method: "POST",
+              body: JSON.stringify({ codes: [made.code], stub: printing === "stub" }),
+            });
           } catch (error) { unprinted = error.message; }
         }
         return made;
       });
       location.hash = `#/b/${box.code}`;
       if (unprinted) {
-        failed(`${box.code} was created, but its label did not print: ${unprinted}`,
-               "Label not printed");
+        failed(`${box.code} was created, but its ${printing} did not print: ${unprinted}`,
+               printing === "stub" ? "Stub not printed" : "Label not printed");
       }
     } catch (error) { failed(error.message, "Not created"); }
   });

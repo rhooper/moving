@@ -70,6 +70,10 @@ class PrintRequest(Strict):
     #: with no contents costs tape and leaves the box indistinguishable from
     #: an unlabelled one until it is opened.
     allow_empty: bool = False
+    #: Print the one-inch stub (number and QR only) instead of the full label.
+    #: Exempt from the contents gate: the stub exists for the box that has
+    #: nothing in it yet.
+    stub: bool = False
 
 
 class CodeFormat(Strict):

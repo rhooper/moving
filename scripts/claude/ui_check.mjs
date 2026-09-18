@@ -142,21 +142,23 @@ const IN_NEW = async () => {
   const buttons = Array.from(document.querySelectorAll("#new button[type=submit]"));
   const kind = document.querySelector("#new [name=kind]");
 
-  check("the first button creates without printing",
-        buttons[0]?.id === "create" && !buttons[0].hasAttribute("data-print"), buttons[0]?.textContent);
-  check("the second button is the one that prints",
-        buttons[1]?.hasAttribute("data-print"), buttons[1]?.textContent);
-  check("the first button names the kind it makes",
-        /^Create \w+/.test(buttons[0].textContent) && !/print/i.test(buttons[0].textContent),
-        buttons[0].textContent);
+  const create = document.querySelector("#new #create");
+  check("the first button creates and prints the stub",
+        buttons[0]?.dataset.print === "stub", buttons[0]?.textContent);
+  check("the plain Create prints nothing",
+        buttons.includes(create) && !create.hasAttribute("data-print"), create?.textContent);
+  check("the last button is the one that prints the full label",
+        buttons.at(-1)?.dataset.print === "label", buttons.at(-1)?.textContent);
+  check("Create names the kind it makes",
+        /^Create \w+$/.test(create.textContent), create.textContent);
 
   const other = Array.from(kind.options).find((o) => o.value !== kind.value);
   if (other) {
     kind.value = other.value;
     kind.dispatchEvent(new Event("change", { bubbles: true }));
-    check("changing the kind renames the button",
-          buttons[0].textContent === `Create ${other.textContent.trim().toLowerCase()}`,
-          buttons[0].textContent);
+    check("changing the kind renames Create",
+          create.textContent === `Create ${other.textContent.trim().toLowerCase()}`,
+          create.textContent);
   }
   return results;
 };
