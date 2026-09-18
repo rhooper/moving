@@ -78,12 +78,12 @@ def enqueue(
     existing = conn.execute(
         "SELECT id, status FROM ai_jobs WHERE photo_id = ? ORDER BY id DESC LIMIT 1", (photo_id,)
     ).fetchone()
-    if existing is not None:
-        if not again or existing["status"] in ("pending", "running"):
-            return existing["id"]
-        # One row per photo: the state of a photo is the state of its job, and
-        # a history of reruns is not something anyone has asked to see.
-        conn.execute("DELETE FROM ai_jobs WHERE photo_id = ?", (photo_id,))
+    if existing is not None and (not again or existing["status"] in ("pending", "running")):
+        return existing["id"]
+    # A re-run is a new row, and the old one stays. A photo's state is its
+    # *latest* job (state_of orders by id), and the finished ones are what the
+    # estimate is made of: deleting them here once threw away the only history
+    # there was, so a re-run of a 4 s job counted down from the 20 s default.
 
     cursor = conn.execute(
         """

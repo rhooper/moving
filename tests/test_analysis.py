@@ -356,6 +356,21 @@ class TestEstimates:
 
         assert state["total_ms"] >= state["remaining_ms"] > 0
 
+    def test_asking_again_does_not_throw_away_what_the_last_run_taught(self, conn, config, box):
+        # Re-queueing used to delete the photo's finished job -- which was the
+        # history. With one photo that put the estimate back to the default.
+        photo = photographed(conn, config, box["code"])
+        conn.execute(
+            "UPDATE ai_jobs SET status = 'done', duration_ms = 4000, "
+            "completed_at = datetime('now') WHERE photo_id = ?",
+            (photo["id"],),
+        )
+
+        analysis.enqueue(conn, config, photo["id"], again=True)
+
+        assert analysis.estimate_ms(conn, config.vision_model) == 4000
+        assert analysis.state_of(conn, photo["id"])["remaining_ms"] == 4000
+
     def test_a_job_running_past_its_estimate_has_nothing_left_not_less(self, conn, config, box):
         photo = photographed(conn, config, box["code"])
         conn.execute(
