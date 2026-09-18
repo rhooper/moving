@@ -86,6 +86,15 @@ forever. All USB access — this command and printing — goes through
 would otherwise let two jobs interleave rasters on the one device. The watcher
 does nothing when the backend is `fake`, so tests never look for hardware.
 
+**Anything that opens the USB device must dispose of it** (`usb.util.dispose_resources`).
+The first version of the watcher did not, and it lives in the long-running
+service: the service held the QL-800 exclusively from startup, brother_ql's
+own open for every print job was refused, and printing failed with a
+*permission* error -- the process locked out by its own leaked handle. The
+tell is `ioreg -r -c IOUSBHostDevice -l | grep UsbExclusiveOwner` naming the
+service's pid, and `is_kernel_driver_active(0)` reading True from any other
+process. It is not a macOS permissions problem and no `sudo` fixes it.
+
 **Printing refuses a box with no recorded contents** (`allow_empty` off by
 default, 409). Previewing is not gated, and neither is the CLI — that is the
 escape hatch. One empty box rejects the whole batch, as an unknown code does.
@@ -283,6 +292,13 @@ word from the generated comment; they are escaped now.
   deliberately excluded while a photo changed nothing the list drew; the cover
   thumbnail put a photo *on* the row, so leaving it out meant the other phone
   kept showing a stale picture or a blank square.
+- **`showError()` is for a view that could not be drawn; `failed()` is for an
+  action that failed on a page that is still good.** `failed()` raises a native
+  `<dialog>` and leaves the page, scroll position and typed text alone. Using
+  `showError()` in an action handler costs the user their place -- that was
+  reported for printing and was true of every action.
+- **`el.hidden` only works because of the `[hidden] { display: none !important }`
+  rule** in `index.html`: the UA's own rule loses to any author `display`.
 - Scripts live in `scripts/claude/` with a purpose header.
 - Ruff's `B008` is disabled for FastAPI's `Depends`/`Query`/`Header` defaults
   via `extend-immutable-calls` — it is a false positive for that idiom.
