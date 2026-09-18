@@ -297,6 +297,14 @@ word from the generated comment; they are escaped now.
   `<dialog>` and leaves the page, scroll position and typed text alone. Using
   `showError()` in an action handler costs the user their place -- that was
   reported for printing and was true of every action.
+- **Every `<form id>` drawn in `web/app.js` needs a submit listener**, and
+  `tests/test_web_forms.py` enforces it. A form without one still submits --
+  natively: page reload, fields in the query string, nothing saved. The box
+  page's summary and destination forms shipped that way and never saved once.
+  That is the third half-landed patch in `app.js` (after `splitItems`); there
+  is no JS linter on this machine, so `node --check` plus these static guards
+  are all that stands between a patch script and production. `no-undef` would
+  have caught two of the three -- `brew install oxlint` is the cheap fix.
 - **`el.hidden` only works because of the `[hidden] { display: none !important }`
   rule** in `index.html`: the UA's own rule loses to any author `display`.
 - Scripts live in `scripts/claude/` with a purpose header.
