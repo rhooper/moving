@@ -1,6 +1,7 @@
 // Moving boxes -- phone-first PWA. Hash routing so a scanned label can land on
 // /#/b/CODE without needing server-side routes for every view.
 
+import { Autosaver, lineFor, policyFor, retryAfter } from "/autosave.js";
 import { analysisView, coverUrl, rowStatus, seenIn, stripFor } from "/covers.js";
 import {
   LiveChannel,
@@ -8,7 +9,6 @@ import {
   affects,
   hasUnsavedEdits,
   holdRefresh,
-  isDirty,
   onlySummaryChanged,
   partOf,
   reconcile,
@@ -58,8 +58,16 @@ async function request(url, options = {}) {
   }
   if (!response.ok) {
     let detail = `${response.status}`;
-    try { detail = (await response.json()).detail || detail; } catch { /* not json */ }
-    throw new Error(detail);
+    try {
+      const said = (await response.json()).detail;
+      // A validation failure's detail is a list of objects, which as a message
+      // reads "[object Object]". Its `msg` fields are the sentences.
+      if (typeof said === "string" && said) detail = said;
+      else if (Array.isArray(said)) detail = said.map((d) => d.msg).filter(Boolean).join("; ") || detail;
+    } catch { /* not json */ }
+    // The status rides along: autosave retries a server it could not reach,
+    // and does not pester one that understood and said no.
+    throw Object.assign(new Error(detail), { status: response.status });
   }
   return response.status === 204 ? null : response.json();
 }
@@ -118,37 +126,10 @@ function fieldValue(field) {
   return field.type === "checkbox" ? String(field.checked) : field.value;
 }
 
-// Cancel for a form on a record that already exists. Hidden until something
-// in the form differs from what was drawn, so an untouched page is not
-// littered with buttons; pressing it puts every field back to what
-// markPristine recorded. Nothing reaches the server either way -- these forms
-// only save when you press their save button.
-//
-// Anything that sets a field's value from code (a suggestion, dictation) must
-// dispatch an "input" event, or Cancel will not know there is something to
-// cancel.
-function wireCancel(form) {
-  const cancel = form?.querySelector("[data-cancel]");
-  if (!cancel) return;
-  const fields = () => Array.from(form.querySelectorAll("input, textarea, select"));
-  const sync = () => {
-    cancel.hidden = !isDirty(
-      fields().map((f) => ({ value: fieldValue(f), initial: f.dataset.initial })));
-  };
-  form.addEventListener("input", sync);
-  form.addEventListener("change", sync);
-  cancel.addEventListener("click", () => {
-    for (const field of fields()) {
-      const initial = field.dataset.initial ?? "";
-      if (field.type === "checkbox") field.checked = initial === "true";
-      else field.value = initial;
-    }
-    sync();
-    announce("Changes cancelled. Nothing was saved.");
-  });
-  sync();
-}
-
+// For code that sets a field's value itself (dictation). A programmatic
+// `.value =` fires no input event, and the input event is what autosave on the
+// record page listens for -- without this the dictated text would sit in the
+// field looking saved and never be sent.
 const edited = (field) => field.dispatchEvent(new Event("input", { bubbles: true }));
 
 // Any button that reaches the server goes through this. Without it a slow
@@ -293,6 +274,122 @@ function confirmed({ title, message, action }) {
     dialog.showModal();
   });
 }
+
+// --- a record saves itself as it is edited ---------------------------------
+//
+// The record page has no Save and no Cancel. Text saves after a pause in
+// typing and on leaving the field, a picker saves when it changes, and every
+// save can be stepped back with Undo, newest first. *When* to save, what is
+// still unsaved and how to take a save back all live in autosave.js, where
+// they are tested without a browser; this is the part that knows about fields
+// and the server.
+//
+// The saver outlives the fields. The page is redrawn under an open editing
+// session -- a handling chip, a print, a change of kind all redraw it -- and
+// the undo history, a save still in flight and any text the server has not
+// got yet all have to survive that. So there is one session per open record,
+// kept here, and each draw of the page plugs itself into it (`session.page`).
+
+// The fields that save themselves, by `name`, and what Undo calls each one.
+const AUTOSAVED = new Map([
+  ["content_summary", "summary"],
+  ["kind", "kind"],
+  ["destination_room_id", "destination room"],
+  ["source_room_id", "packed from"],
+  ["source_location", "where in that room"],
+  ["current_location", "location"],
+]);
+const ROOM_FIELDS = new Set(["destination_room_id", "source_room_id"]);
+
+// What the saver compares and sends: text without the space either side. The
+// field itself is left alone while it has the focus -- the space after "pots
+// and" is somebody about to type the next word.
+const tidy = (field) => (field.tagName === "SELECT" ? field.value : field.value.trim());
+
+// The status line each of the record's three forms carries. The text is a
+// polite live region, so "Saved" is spoken without taking the focus; Undo sits
+// beside it rather than inside it, so it is not read out as part of every
+// announcement. Always drawn and never hidden -- its height is reserved (see
+// .autosave in index.html), so a line appearing does not move the page under
+// a thumb.
+const AUTOSAVE_LINE = `
+  <p class="autosave">
+    <span class="autosave-state" role="status"></span>
+    <button type="button" class="undo" hidden>Undo</button>
+  </p>`;
+
+let editing = null;
+
+function editSession(code) {
+  // Coming back to a record after leaving it starts afresh: an Undo offered
+  // an hour later would put back a value somebody else may have changed
+  // since. Unless something is still unsaved -- that must not be dropped.
+  const resumable = editing && editing.code === code
+    && !(editing.left && !editing.auto.unsaved());
+  if (resumable) {
+    editing.left = false;
+    return editing;
+  }
+  // A different record. Whatever the old one still owes the server it goes on
+  // owing: its saver keeps its own retries going with no page attached.
+  leaveRecord();
+
+  const session = {
+    code,
+    page: null,         // the draw currently on screen: { landed, heard }
+    last: new Map(),    // form id -> "saved" | "undone", for the status lines
+    refused: new Map(), // field name -> the server's reason for saying no
+    undoAt: null,       // the form whose line carries the Undo button
+    left: false,
+  };
+  session.auto = new Autosaver({
+    save: (key, value) => saveField(session, key, value),
+    onState: (key, state, error) => {
+      if (state === "failed" && error?.status >= 400 && error.status < 500) {
+        session.refused.set(key, error.message);
+      } else {
+        session.refused.delete(key);
+      }
+      session.page?.heard(key, state);
+    },
+    // Retry a server that could not be reached; do not pester one that
+    // understood the request and refused it.
+    retryDelay: (failures, error) =>
+      (error?.status >= 400 && error.status < 500 ? null : retryAfter(failures)),
+  });
+  editing = session;
+  return session;
+}
+
+// One field per save, through the endpoints that were always there. The
+// location has its own because every change of it is written to the box's
+// history -- which is also why it alone waits to be left before it saves.
+async function saveField(session, key, value) {
+  const path = `/boxes/${encodeURIComponent(session.code)}`;
+  const sent = ROOM_FIELDS.has(key) ? (value ? Number(value) : null) : (value || null);
+  // keepalive: a save begun as the page is hidden or closed is still sent.
+  const fresh = key === "current_location"
+    ? await api(`${path}/location`, {
+        method: "POST", keepalive: true, body: JSON.stringify({ current_location: sent }) })
+    : await api(path, {
+        method: "PATCH", keepalive: true, body: JSON.stringify({ [key]: sent }) });
+  session.page?.landed(key, value, fresh);
+}
+
+// Going somewhere else, or the screen going dark, inside the pause: save now.
+// Up to 1.2 s of typing is otherwise sitting in a timer that may never fire.
+function leaveRecord() {
+  if (!editing) return;
+  editing.auto.commitAll();
+  editing.page = null;
+  editing.left = true;
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) editing?.auto.commitAll();
+});
+addEventListener("pagehide", () => editing?.auto.commitAll());
+addEventListener("online", () => editing?.auto.retryFailed());
 
 // --- looking at one photo ------------------------------------------------------
 //
@@ -947,6 +1044,15 @@ async function viewBoxes(query) {
 // So whole-page draws are counted, and any part that changed while one was
 // out is asked for again once the new page is up (see `overtaken` below).
 async function viewBox(code, options) {
+  // The fields are about to be replaced from the server. Anything sitting in
+  // a pause is sent first, *and waited for*: a page fetched while the save was
+  // still on its way would show the old text as if it were current, and then
+  // adopt it as the baseline. What could not be saved at all is put back into
+  // its field by the new page (see "carried over" in drawBox).
+  if (editing?.code === code) {
+    editing.auto.commitAll();
+    await editing.auto.idle();
+  }
   drawing += 1;
   try {
     await drawBox(code, options);
@@ -993,15 +1099,14 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
       </div>` : ""}
     <h1 class="code">${escape(box.code)}</h1>
     ${flags.length ? `<div class="flags">${flags.map((f) => `<span class="flag">${escape(f)}</span>`).join("")}</div>` : ""}
-    ${room ? `<div class="band">${escape(room.name)}</div>` : ""}
+    <div class="band" id="room-band"${room ? "" : " hidden"}>${escape(room?.name || "")}</div>
     <form id="summary-form">
       <label class="dlabel" for="what">${shape.contents ? "What is in it" : "What it is"}</label>
       <textarea id="what" name="content_summary" rows="2"
         placeholder="${shape.contents ? "pots, baking pans, stand mixer" : "Bicycle (Trek hybrid, blue)"}"
         >${escape(box.content_summary || "")}</textarea>
-      <div class="row" style="margin-top:0.5rem">
-        <button class="btn quiet" type="submit">Save ${shape.contents ? "summary" : "name"}</button>
-        <button class="btn quiet" type="button" data-cancel hidden>Cancel</button>
+      ${AUTOSAVE_LINE}
+      <div class="row">
         ${shape.contents ? '<button class="btn quiet" type="button" id="suggest">From contents</button>' : ""}
         <button class="btn quiet dictate" type="button" data-target="content_summary" hidden>Dictate</button>
       </div>
@@ -1028,10 +1133,7 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
         <label class="dlabel" for="dest-from">Where in that room (optional)</label>
         <input id="dest-from" name="source_location" placeholder="shelf 3, under the desk"
                value="${escape(box.source_location || "")}">
-        <div class="row" style="margin-top:0.75rem">
-          <button class="btn quiet" type="submit">Save</button>
-          <button class="btn quiet" type="button" data-cancel hidden>Cancel</button>
-        </div>
+        ${AUTOSAVE_LINE}
       </form>
     </div>
 
@@ -1056,11 +1158,11 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
                     ${i === at ? 'aria-current="true"' : ""}>${escape(s)}</button>`;
         }).join("")}
       </div>
-      <form id="location" class="row" style="margin-top:0.75rem">
+      <form id="location" style="margin-top:0.75rem">
         <input name="current_location" placeholder="Truck, garage stack 3, storage…"
-               value="${escape(box.current_location || "")}" aria-label="Current location">
-        <button class="btn" type="submit">Move</button>
-        <button class="btn quiet" type="button" data-cancel hidden>Cancel</button>
+               value="${escape(box.current_location || "")}" aria-label="Current location"
+               data-autosave="commit" enterkeyhint="done">
+        ${AUTOSAVE_LINE}
       </form>
     </div>
 
@@ -1158,12 +1260,195 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
   });
   strip.draw(photos);
 
-  // What it is / what is in it. Saved explicitly: the field is also where a
-  // suggestion lands, and that is offered, never applied. (A summary the
-  // server rebuilt from a photo is a different thing: it arrives already
-  // saved, and only ever replaces one that nobody typed.)
+  // --- the three forms that save themselves ---
+  //
+  // What it is; where it is going and where it came from; where it is now.
+  // They are still forms, so that Return in a single-line field means "save
+  // this now" rather than reloading the page with the fields in the URL.
   const summaryForm = document.getElementById("summary-form");
+  const destinationForm = document.getElementById("destination");
+  const locationForm = document.getElementById("location");
   const summaryField = summaryForm.querySelector("[name=content_summary]");
+  const savingForms = [summaryForm, destinationForm, locationForm];
+  const fieldOf = (key) => app.querySelector(`[name="${key}"]`);
+  const fieldsOf = (form) =>
+    Array.from(form.querySelectorAll("input, textarea, select")).filter((f) => AUTOSAVED.has(f.name));
+
+  const session = editSession(code);
+  const auto = session.auto;
+
+  // Carried over: a field the saver still owes the server -- a save in
+  // flight, one that failed, a pause not yet run out when something redrew
+  // the page -- gets its text back rather than the server's older value. Its
+  // `dataset.initial` stays the server's, so it reads as unsaved to the
+  // live-refresh hold, which is the truth. Everything else starts from here.
+  for (const form of savingForms) {
+    for (const field of fieldsOf(form)) {
+      const owed = auto.state(field.name);
+      if (owed && owed !== "clean") field.value = auto.value(field.name);
+      else auto.track(field.name, tidy(field));
+    }
+  }
+
+  // What Undo would take back if pressed now. An edit that is on its way to
+  // being saved will be the newest save by the time an undo can run (pressing
+  // Undo sends it first), so it is what the button names -- not the older
+  // save underneath it.
+  const owing = () => Array.from(AUTOSAVED.keys())
+    .filter((key) => ["unsaved", "saving"].includes(auto.state(key)));
+  // An edit that failed to save is newer still than anything that did save.
+  const stuck = () => Array.from(AUTOSAVED.keys()).filter((key) => auto.state(key) === "failed");
+  const undoTarget = () => owing()[0] || stuck()[0] || auto.canUndo();
+
+  function drawLines() {
+    const target = undoTarget();
+    for (const form of savingForms) {
+      const states = fieldsOf(form).map((field) => ({
+        state: auto.state(field.name),
+        policy: policyFor(field),
+        refused: session.refused.get(field.name),
+      }));
+      const { text, warn } = lineFor(states, session.last.get(form.id));
+      const line = form.querySelector(".autosave");
+      setText(line.querySelector(".autosave-state"), text);
+      line.classList.toggle("warn", warn);
+
+      // One Undo on the page, on the line of the form last edited, and named
+      // for what it will put back -- the history is one stack across all three
+      // forms, so the next step may belong to a different one. It stays put
+      // while a save is under way rather than blinking out and back on every
+      // pause in typing, which also keeps it one Tab from the field.
+      const undo = line.querySelector(".undo");
+      undo.hidden = !(target && session.undoAt === form.id);
+      if (!undo.hidden && !undo.classList.contains("working")) {
+        setText(undo, `Undo ${target === "content_summary" && !shape.contents ? "name" : AUTOSAVED.get(target)}`);
+      }
+    }
+  }
+
+  function showRoom() {
+    const now = rooms.find((r) => r.id === box.destination_room_id);
+    const band = document.getElementById("room-band");
+    setText(band, now?.name || "");
+    band.hidden = !now;
+  }
+
+  // The kind decides which sections exist, so it is the one save that redraws
+  // the page. Whatever had the focus gets it back, caret included: the redraw
+  // is this page's doing, not the person's.
+  async function redrawForKind() {
+    const active = document.activeElement;
+    const selector = active?.id ? `#${CSS.escape(active.id)}`
+      : active?.name ? `[name="${CSS.escape(active.name)}"]` : null;
+    let caret = null;
+    try { caret = [active.selectionStart, active.selectionEnd]; } catch { /* not a text field */ }
+    await viewBox(code, { keepBanner: true });
+    const again = selector && app.querySelector(selector);
+    if (!again || document.activeElement === again) return;
+    again.focus();
+    try { if (caret?.[0] != null) again.setSelectionRange(...caret); } catch { /* a picker */ }
+  }
+
+  session.page = {
+    // A save reached the server. Nothing is redrawn -- the caret is in one of
+    // these fields -- so the page's own idea of the record is brought up to
+    // date by hand: `box` (the print button reads it), the room band, and the
+    // field's `dataset.initial`, which is how the live-refresh hold knows the
+    // field is no longer half-edited.
+    landed(key, value, fresh) {
+      box = { ...box, [key]: fresh[key], summary_source: fresh.summary_source, updated_at: fresh.updated_at };
+      const field = fieldOf(key);
+      // If the field still holds what was sent (give or take the spaces that
+      // were not), it is pristine as it stands. If it has been typed in since,
+      // what was sent is the baseline and the rest is still an edit.
+      if (field) field.dataset.initial = tidy(field) === value ? field.value : value;
+      if (key === "destination_room_id") showRoom();
+      // A refresh held back behind this edit may be able to go now.
+      fieldClosed();
+    },
+    heard(key, state) {
+      const form = fieldOf(key)?.form;
+      if (state === "saved" && form) {
+        session.last.set(form.id, "saved");
+        session.undoAt = form.id;
+      }
+      if (state === "saved" && key === "kind") { redrawForKind(); return; }
+      drawLines();
+    },
+  };
+
+  const onEdit = (event) => {
+    const field = event.target;
+    if (!AUTOSAVED.has(field.name)) return;
+    auto.edit(field.name, tidy(field), policyFor(field));
+    session.undoAt = field.form.id;
+    drawLines();
+  };
+  const onLeave = (event) => {
+    const field = event.target;
+    if (!AUTOSAVED.has(field.name)) return;
+    // Out of the field, so its stray spaces can go without moving a caret.
+    if (field.tagName !== "SELECT" && field.value !== tidy(field)) {
+      if (field.dataset.initial === field.value) field.dataset.initial = tidy(field);
+      field.value = tidy(field);
+    }
+    auto.commit(field.name);
+    drawLines();
+  };
+  // Return in a single-line field. For the location this is one of the two
+  // ways it ever saves.
+  const onReturn = (event) => {
+    event.preventDefault();
+    for (const field of fieldsOf(event.currentTarget)) auto.commit(field.name);
+    drawLines();
+  };
+  summaryForm.addEventListener("submit", onReturn);
+  destinationForm.addEventListener("submit", onReturn);
+  locationForm.addEventListener("submit", onReturn);
+  for (const form of savingForms) {
+    // Both: a picker fires "change" everywhere but "input" only in newer
+    // browsers, and the second of the two finds nothing new to save.
+    form.addEventListener("input", onEdit);
+    form.addEventListener("change", onEdit);
+    form.addEventListener("focusout", onLeave);
+    form.querySelector(".undo").addEventListener("click", (event) => undoLast(event.currentTarget));
+  }
+
+  // Step back the most recent save, whichever form it was in. A deliberate
+  // press, not typing, so a failure here may say so in a dialog.
+  //
+  // Anything still on its way is sent first and waited for, so that Undo
+  // pressed straight after typing takes back the typing. An undo racing the
+  // save it is meant to follow could reach the server in either order.
+  async function undoLast(button) {
+    try {
+      const step = await busy(button, "Undoing…", async () => {
+        // One more try for anything that failed, too: if the network is back
+        // it lands, and is then undone like any other save.
+        auto.commitAll();
+        await auto.idle();
+        // Still not there. The newest thing to take back is then the unsaved
+        // edit itself, and the server never had it: give it up here, and send
+        // nothing. undo() would reach past it to the save beneath.
+        const [lost] = stuck();
+        if (lost) return { key: lost, value: auto.revert(lost) };
+        return auto.undo();
+      });
+      if (!step) { drawLines(); return; }
+      session.refused.delete(step.key);
+      const field = fieldOf(step.key);
+      if (field) {
+        field.value = step.value;
+        field.dataset.initial = step.value;
+      }
+      if (field?.form) session.last.set(field.form.id, "undone");
+      if (step.key === "kind") await redrawForKind();
+      else drawLines();
+    } catch (error) { failed(error.message, "Not undone"); }
+  }
+
+  drawLines();
+  wireDictation(app);
 
   // `box.updated`, applied in place when that is possible. It is what a
   // finished photo sends when it rebuilt the autogenerated summary -- and the
@@ -1173,7 +1458,7 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
     if (!summaryField.isConnected) { stale("summary")(); return; }
     const incoming = fresh.content_summary || "";
     const moved = incoming !== (summaryField.dataset.initial ?? "");
-    const inUse = hasUnsavedEdits([{
+    const inUse = auto.state("content_summary") !== "clean" || hasUnsavedEdits([{
       value: summaryField.value,
       initial: summaryField.dataset.initial ?? "",
       focused: document.activeElement === summaryField,
@@ -1184,52 +1469,20 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
     // safely can and raises the banner when it cannot. Never clobber typing.
     const needsPage = !onlySummaryChanged(box, fresh) || (moved && inUse);
     if (moved && !inUse) {
-      // Both the value and the record of what was drawn: the field must stay
-      // pristine, or Cancel would offer to "undo" a change nobody here made
-      // and every later refresh would be held behind it.
+      // The value, the record of what was drawn, and the saver's baseline,
+      // all three: the field must stay pristine. Miss the second and every
+      // later refresh is held behind it; miss the third and the saver takes
+      // the server's own text for an edit and saves it straight back -- as
+      // this person's, which would stop photos ever updating it again.
       summaryField.value = incoming;
       summaryField.dataset.initial = incoming;
-      edited(summaryField);
+      auto.track("content_summary", tidy(summaryField));
       box = { ...box, content_summary: fresh.content_summary, summary_source: fresh.summary_source };
       recount();
     }
     if (needsPage) requestRefresh();
     else box = fresh;
   }
-  for (const id of ["summary-form", "destination", "location"]) {
-    wireCancel(document.getElementById(id));
-  }
-  summaryForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const value = new FormData(summaryForm).get("content_summary").trim();
-    act(() => api(path, {
-      method: "PATCH", body: JSON.stringify({ content_summary: value || null }) }));
-  });
-
-  // Kind, where it is going, where it came from. An unset room is null, not
-  // the empty string a <select> reports.
-  const destinationForm = document.getElementById("destination");
-  destinationForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const form = new FormData(destinationForm);
-    const roomId = (name) => (form.get(name) ? Number(form.get(name)) : null);
-    act(() => api(path, {
-      method: "PATCH",
-      body: JSON.stringify({
-        kind: form.get("kind"),
-        destination_room_id: roomId("destination_room_id"),
-        source_room_id: roomId("source_room_id"),
-        source_location: form.get("source_location").trim() || null,
-      }),
-    }));
-  });
-
-  document.getElementById("location").addEventListener("submit", (event) => {
-    event.preventDefault();
-    const value = new FormData(event.target).get("current_location").trim();
-    act(() => api(`/boxes/${encodeURIComponent(code)}/location`, {
-      method: "POST", body: JSON.stringify({ current_location: value || null }) }));
-  });
   // Absent for a loose thing: a bicycle has no contents to add to.
   const addForm = document.getElementById("add-item");
   addForm?.addEventListener("submit", async (event) => {
@@ -1264,12 +1517,12 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
         announce("Nothing to summarise yet - add some items first.", { warn: true });
         return;
       }
-      // Offered, not applied: it lands in the field and you press Save -- or
-      // Cancel, which appears because the field now differs from what was drawn.
+      // Fills the field and saves at once, like picking from a list: there is
+      // no half-made choice to wait out, and Undo puts the old summary back.
       field.value = summary;
-      edited(field);
-      field.focus();
-      announce("Summary suggested from the contents. Save it, or Cancel to put the old one back.");
+      auto.edit("content_summary", tidy(field), "change");
+      session.undoAt = summaryForm.id;
+      drawLines();
     } catch (error) { failed(error.message); }
   });
 
@@ -1980,6 +2233,9 @@ async function route() {
   pending = false;
   notice.hidden = true;
   forgetParts();
+  // Leaving a record inside the pause autosave waits out: send it now. (If
+  // this is the same record being opened again, the session is picked up.)
+  leaveRecord();
   for (const [pattern, handler] of routes) {
     const match = hash.match(pattern);
     if (match) {

@@ -343,6 +343,44 @@ ul.items li.renaming .ai { display: none; }
 .say { border-left: 3px solid var(--ink); padding: 0.5rem 0.75rem; margin: 0 0 1rem; background: var(--sunk); }
 .say.warn { border-left-color: var(--signal); }
 
+/* The record page saves itself; this line under each of its forms says how
+   that is going, and carries Undo. It is always there and as tall as the
+   button it sometimes holds, so "Saved" arriving -- every few seconds, while
+   somebody types -- never moves the page. A failure is marked the way every
+   other one is: ink text, a signal rule down the side. */
+.autosave {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 2.25rem;
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  line-height: 1.3;
+}
+/* The text takes the room and Undo sits at the far end, so the button does
+   not slide sideways when "Saving…" becomes "Not saved yet — will retry". It
+   did, at first: pressing Undo blurs the field, which changes the text, which
+   moved the button out from under the finger between press and release. */
+.autosave-state { flex: 1; min-width: 0; }
+.autosave.warn .autosave-state {
+  color: var(--ink);
+  border-left: 3px solid var(--signal);
+  padding-left: 0.4rem;
+}
+.autosave .undo {
+  flex: 0 0 auto;
+  width: auto;
+  min-height: 2rem;
+  padding: 0.15rem 0.7rem;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  font-size: 0.8125rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
 /* The override for printing an empty box: present only when it applies, and
    never pre-ticked. */
 /* An action failed; the page behind it is still good. */

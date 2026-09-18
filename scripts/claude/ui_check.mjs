@@ -7,8 +7,9 @@
 // Usage:   node scripts/claude/ui_check.mjs [base-url] [box-code]
 //          defaults: http://127.0.0.1:8788  B-0004   (i.e. `make run`)
 //
-// Saves nothing: it only edits fields and cancels, and it counts the writes
-// the page makes while it does so to prove that. Needs Node 22+ (global
+// Saves nothing, on a page that now saves by itself: fields are changed and put
+// straight back inside the pause autosave waits out, and every write the page
+// attempts is counted to prove that none was made. Needs Node 22+ (global
 // WebSocket) and Google Chrome. No npm packages.
 //
 // The write paths (a rename that saves, a photo being read) are deliberately
@@ -23,7 +24,9 @@ import { join } from "node:path";
 const base = process.argv[2] || "http://127.0.0.1:8788";
 const code = process.argv[3] || "B-0004";
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-const PORT = 9333;
+// Overridable, because this is not the only headless Chrome on the machine:
+// two checks on one debugging port drive each other's pages.
+const PORT = Number(process.env.CDP_PORT) || 9333;
 
 const profile = mkdtempSync(join(tmpdir(), "ui-check-"));
 const chrome = spawn(CHROME, [
@@ -59,69 +62,76 @@ const IN_PAGE = async () => {
   const check = (name, passed, detail = "") => results.push([name, Boolean(passed), String(detail)]);
 
   await wait(() => $("#summary-form"), "the box page");
-  const field = $("#summary-form [name=content_summary]");
-  const cancel = $("#summary-form [data-cancel]");
-  const saved = field.value;
 
-  check("summary Cancel is hidden on an untouched page", cancel.hidden);
-
-  // Typing shows Cancel; Cancel restores.
-  field.value = saved + " EDITED";
-  field.dispatchEvent(new Event("input", { bubbles: true }));
-  check("typing reveals Cancel", !cancel.hidden);
-  cancel.click();
-  check("Cancel restores the typed-over summary", field.value === saved, field.value);
-  check("Cancel hides itself afterwards", cancel.hidden);
-
-  // From contents, then Cancel.
-  const suggest = $("#suggest");
-  if (suggest) {
-    suggest.click();
-    await wait(() => !suggest.disabled && ($("#oops")?.open || field.value !== saved || !$("#say").hidden),
-               "From contents to answer");
-    check("From contents raises no error dialog", !$("#oops")?.open, $("#oops p")?.textContent || "");
-    if (field.value !== saved) {
-      check("a suggestion reveals Cancel", !cancel.hidden);
-      cancel.click();
-      check("Cancel takes the suggestion back", field.value === saved, field.value);
-    }
-  }
-
-  // Destination form: a select change is cancellable too.
-  const room = $("#destination [name=destination_room_id]");
-  const roomCancel = $("#destination [data-cancel]");
-  const before = room.value;
-  const other = Array.from(room.options).find((o) => o.value !== before);
-  if (other) {   // a database with no rooms seeded has nothing to change to
-    room.value = other.value;
-    room.dispatchEvent(new Event("change", { bubbles: true }));
-    check("changing the destination reveals Cancel", !roomCancel.hidden);
-    roomCancel.click();
-    check("Cancel restores the destination", room.value === before, room.value);
-  }
-
-  // Location form.
-  const where = $("#location [name=current_location]");
-  const whereCancel = $("#location [data-cancel]");
-  const whereBefore = where.value;
-  where.value = "somewhere else";
-  where.dispatchEvent(new Event("input", { bubbles: true }));
-  check("editing the location reveals Cancel", !whereCancel.hidden);
-  whereCancel.click();
-  check("Cancel restores the location", where.value === whereBefore, where.value);
-
-  // Photos are read automatically now; the manual draft button and its review
-  // panel must be gone, not merely unreachable.
-  check("the Draft contents button is gone", !$("#draft-btn") && !$("#draft-panel"));
-
-  // Every write the page attempts from here on is counted. Renaming and then
-  // backing out must not reach the server at all.
+  // The record page saves itself as it is edited, so from the first line this
+  // counts every write the page attempts. Everything below is arranged to
+  // cause none: fields are changed and put back *at once*, inside the pause
+  // autosave waits out, and never focused, so nothing is ever left.
   const writes = [];
   const realFetch = window.fetch;
   window.fetch = (url, options = {}) => {
     if ((options.method || "GET").toUpperCase() !== "GET") writes.push(`${options.method} ${url}`);
     return realFetch(url, options);
   };
+  const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  const forms = ["summary-form", "destination", "location"].map((id) => document.getElementById(id));
+  check("the record's three forms are there", forms.every(Boolean));
+  check("none of them has a Save or a Cancel any more",
+        forms.every((f) => !f.querySelector("button[type=submit], [data-cancel]")),
+        forms.map((f) => f.querySelectorAll("button[type=submit], [data-cancel]").length).join(","));
+  check("each has a status line that is a polite live region",
+        forms.every((f) => f.querySelector(".autosave [role=status]")));
+  check("an untouched page says nothing and offers no Undo",
+        forms.every((f) => f.querySelector(".autosave-state").textContent === ""
+                           && f.querySelector(".autosave .undo").hidden));
+  for (const name of ["content_summary", "kind", "destination_room_id", "source_room_id",
+                      "source_location", "current_location"]) {
+    check(`the ${name} field is there`, Boolean($(`[name=${name}]`)));
+  }
+  check("the location saves only when left", $("[name=current_location]").dataset.autosave === "commit");
+  check("the copies field is not one of the autosaved ones",
+        $("#copies") && !$("#copies").closest("#summary-form, #destination, #location"));
+
+  // Typed, then put back before the pause runs out: nothing to save.
+  const field = $("#summary-form [name=content_summary]");
+  const line = $("#summary-form .autosave-state");
+  const saved = field.value;
+  const lineBefore = $("#summary-form .autosave").getBoundingClientRect().height;
+  field.value = saved + " EDITED";
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+  check("typing says it is saving", line.textContent === "Saving…", line.textContent);
+  check("the line appearing did not change its height",
+        $("#summary-form .autosave").getBoundingClientRect().height === lineBefore);
+  field.value = saved;
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+  check("putting the text back un-says it", line.textContent === "", line.textContent);
+
+  // The same in a field that saves only when left.
+  const where = $("#location [name=current_location]");
+  const whereBefore = where.value;
+  where.value = "somewhere else";
+  where.dispatchEvent(new Event("input", { bubbles: true }));
+  check("an edited location says how it gets saved",
+        /when you leave the field/.test($("#location .autosave-state").textContent),
+        $("#location .autosave-state").textContent);
+  where.value = whereBefore;
+  where.dispatchEvent(new Event("input", { bubbles: true }));
+
+  // Well past the pause. Had either edit survived, it would have been sent.
+  await pause(1600);
+  check("typing and putting it straight back saved nothing", writes.length === 0, writes.join("; "));
+  check("and left the fields as they were", field.value === saved && where.value === whereBefore);
+
+  // "From contents" writes now, so it is looked at and not pressed. The
+  // pickers save the moment they change, so they are not touched either.
+  // scripts/claude/autosave_check.mjs does all of that, against a throwaway.
+  check("From contents is offered on a record that holds contents",
+        Boolean($("#suggest")) === Boolean($("#items")));
+
+  // Photos are read automatically now; the manual draft button and its review
+  // panel must be gone, not merely unreachable.
+  check("the Draft contents button is gone", !$("#draft-btn") && !$("#draft-panel"));
 
   // Item names: tap to rename. Needs a box with at least one item.
   const names = Array.from(document.querySelectorAll("#items .name"));
@@ -216,7 +226,6 @@ const IN_PAGE = async () => {
           document.querySelectorAll("#shots figure").length === figures.length && writes.length === 0,
           writes.join("; "));
   }
-  window.fetch = realFetch;
 
   // Delete asks first. Only the Cancel path runs here -- this may be real data.
   const del = $("#delete");
@@ -235,6 +244,9 @@ const IN_PAGE = async () => {
     const still = await fetch(`/api/boxes/${here.split("/").pop()}`).then((r) => r.json());
     check("cancelling deleted nothing", !(still.box || still).deleted_at);
   }
+
+  check("the whole visit wrote nothing", writes.length === 0, writes.join("; "));
+  window.fetch = realFetch;
 
   return results;
 };

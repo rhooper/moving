@@ -10,6 +10,7 @@ const VERSION = "dev";
 const SHELL = [
   "/",
   "/app.js",
+  "/autosave.js",
   "/live.js",
   "/scan.js",
   "/text.js",
