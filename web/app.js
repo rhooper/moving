@@ -12,6 +12,7 @@ import {
   reconcile,
 } from "/live.js";
 import { splitItems } from "/text.js";
+import { KeyBuffer, entered } from "/wedge.js";
 
 const STATUSES = ["open", "packed", "loaded", "delivered", "unpacked"];
 const app = document.getElementById("app");
@@ -287,6 +288,60 @@ function confirmed({ title, message, action }) {
   });
 }
 
+// --- a barcode reader ---------------------------------------------------------
+//
+// A keyboard-wedge reader types what it scans and presses Return: the label's
+// Code 128 is the box number, its QR is the box URL. `entered` (wedge.js) says
+// what a piece of text points at; this decides whether to go there.
+//
+// A URL can only have come from a label, so it is opened without asking. A
+// bare number is only *shaped* like a code -- so is "kettle" -- and is looked
+// up first, or every one-word search would land on "no such box".
+async function openEntered(text) {
+  const target = entered(text);
+  if (!target) return false;
+  if (!target.scanned) {
+    try {
+      await api(`/boxes/${encodeURIComponent(target.code)}`);
+    } catch {
+      return false;  // no such box: let the caller treat it as a search
+    }
+  }
+  location.hash = `#/b/${encodeURIComponent(target.code)}`;
+  return true;
+}
+
+// The reader has no idea where the cursor is. With a field focused its keys go
+// into that field (the search box handles that, above); with *nothing* focused
+// they would go nowhere, so they are collected here instead.
+const scanKeys = new KeyBuffer();
+document.addEventListener("keydown", async (event) => {
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+  // A field takes its own keys, and a modal is a question being asked.
+  const typing = event.target instanceof Element
+    && event.target.closest("input, textarea, select, [contenteditable]");
+  if (typing || document.querySelector("dialog[open]")) return;
+
+  const now = performance.now();
+  // Firefox opens quick find on "/" and "'" when nothing is focused, which
+  // would swallow the rest of a scanned URL. Only while a scan is under way:
+  // a lone "/" still does what the browser means it to.
+  if (scanKeys.collecting(now) && (event.key === "/" || event.key === "'")) {
+    event.preventDefault();
+  }
+
+  const scannedText = scanKeys.feed(event.key, now);
+  if (scannedText === null) return;
+  // A *button* may well have the focus -- whichever was tapped last -- and the
+  // reader's Return would press it again. After "Print label", that is a scan
+  // that spends tape. The Return belongs to the scan, so it stops here.
+  event.preventDefault();
+  if (await openEntered(scannedText)) return;
+  // Read something, but it is not a box here: show the search for it rather
+  // than doing nothing, so a mis-scan is visible.
+  location.hash = `#/search/${encodeURIComponent(scannedText.trim())}`;
+});
+
 // --- views ----------------------------------------------------------------
 
 const boxesPath = (query) =>
@@ -409,9 +464,12 @@ async function viewBoxes(query) {
       ${list}
     </div>`);
 
-  document.getElementById("search").addEventListener("submit", (event) => {
+  document.getElementById("search").addEventListener("submit", async (event) => {
     event.preventDefault();
     const value = new FormData(event.target).get("q").trim();
+    // A barcode reader types a box number (the Code 128) or a box URL (the
+    // QR) and presses Return. Either opens the box; anything else searches.
+    if (await openEntered(value)) return;
     location.hash = value ? `#/search/${encodeURIComponent(value)}` : "#/";
   });
 

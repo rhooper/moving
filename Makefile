@@ -28,8 +28,9 @@ lint:  ## ruff over src, tests and scripts
 
 check: lint test  ## lint + test
 
-ui-check:  ## click through the box page in headless Chrome (needs `make run` going)
+ui-check:  ## real clicks and real barcode-reader keystrokes in headless Chrome (needs `make run` going)
 	node scripts/claude/ui_check.mjs http://127.0.0.1:$(PORT)
+	node scripts/claude/wedge_check.mjs http://127.0.0.1:$(PORT)
 
 deploy:  ## backup, test, restart the live service, verify its revision
 	scripts/claude/deploy.sh
