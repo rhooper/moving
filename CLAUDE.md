@@ -56,10 +56,15 @@ label id `62`, `FormFactor.ENDLESS`, `dots_total=(732, 0)`,
 `dots_printable=(696, 0)`. Render at **696 px wide**.
 
 **Labels are landscape by default: a fixed 900 x 696 px** (3 in x 62 mm at
-300 dpi; was 4 in until the 2026-09-18 redesign), identity left, itemised
-contents right. Fixed length on purpose — a shelf of same-size labels reads far
-better than ragged ones. With no items the identity takes the full width
-rather than printing an empty `CONTENTS` heading. The redesign also enlarged
+300 dpi; was 4 in until the 2026-09-18 redesign), **all identity**: code, QR,
+handling chips, room band, one summary line. Fixed length on purpose — a shelf
+of same-size labels reads far better than ragged ones. **The itemised contents
+column was removed on request** (same day): the list is one scan away in the
+app, and the tape is for finding the box from across a room. `LabelData` has
+no `items` field, `from_box` takes no items, and a test pins that adding items
+leaves the preview byte-identical — do not reintroduce it as a gap. One
+consequence: a box with items but no summary prints with no description at
+all, so "From contents" is the way to fill the summary. The redesign also enlarged
 everything (code +20%, QR +15%, FRAGILE +60% with a broken-glass icon, HEAVY
 with a weight icon, room band 25% bigger type padded a third of its height)
 and **deliberately dropped** the source line, weight, box count and footer —
