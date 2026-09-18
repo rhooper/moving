@@ -200,9 +200,29 @@ function announce(message, { warn = false } = {}) {
   banner.hidden = false;
 }
 
+// For a view that could not be drawn at all: there is no page to go back to,
+// so the error *is* the page.
 function showError(message) {
   show(`<div class="err"><strong>${escape(message)}</strong></div>
         <p><a href="#/">Back to boxes</a></p>`);
+}
+
+// For an action that failed on a page that is still good. A dialog you can
+// dismiss, and the page -- scroll position, typed text, your place in a long
+// box -- is left exactly as it was. Replacing the view here is how a failed
+// print used to cost you your spot.
+function failed(message, title = "That did not work") {
+  let dialog = document.getElementById("oops");
+  if (!dialog) {
+    dialog = document.createElement("dialog");
+    dialog.id = "oops";
+    dialog.innerHTML = `<h2></h2><p></p>
+      <form method="dialog"><button class="btn" autofocus>Dismiss</button></form>`;
+    document.body.append(dialog);
+  }
+  dialog.querySelector("h2").textContent = title;
+  dialog.querySelector("p").textContent = message;
+  if (!dialog.open) dialog.showModal();
 }
 
 // --- views ----------------------------------------------------------------
@@ -546,7 +566,7 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
         }
       });
       await viewBox(code);
-    } catch (error) { showError(error.message); }
+    } catch (error) { failed(error.message); }
   });
   const suggest = document.getElementById("suggest");
   suggest?.addEventListener("click", async () => {
@@ -562,7 +582,7 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
       field.value = summary;
       field.focus();
       announce("Summary suggested from the contents. Save it if you like it.");
-    } catch (error) { showError(error.message); }
+    } catch (error) { failed(error.message); }
   });
 
   // Spell out what is about to be destroyed. "Are you sure?" tells you
@@ -589,7 +609,7 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
     try {
       await busy(deleteButton, "Deleting…", () => api(path, { method: "DELETE" }));
       location.hash = "#/";
-    } catch (error) { showError(error.message); }
+    } catch (error) { failed(error.message); }
   });
 
   document.getElementById("restore")?.addEventListener("click", async (event) => {
@@ -597,7 +617,7 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
       await busy(event.target, "Restoring…", () =>
         api(`${path}/restore`, { method: "POST" }));
       await viewBox(code);
-    } catch (error) { showError(error.message); }
+    } catch (error) { failed(error.message); }
   });
 
   document.getElementById("purge")?.addEventListener("click", async (event) => {
@@ -613,18 +633,24 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
       await busy(event.target, "Deleting…", () =>
         api(`${path}/purge`, { method: "DELETE" }));
       location.hash = "#/";
-    } catch (error) { showError(error.message); }
+    } catch (error) { failed(error.message); }
   });
 
   const printButton = document.getElementById("print");
   printButton.addEventListener("click", async () => {
     const anyway = document.getElementById("print-anyway");
+    let result;
     try {
-      const result = await busy(printButton, "Printing…", () =>
+      result = await busy(printButton, "Printing…", () =>
         api("/labels/print", {
           method: "POST",
           body: JSON.stringify({ codes: [code], allow_empty: Boolean(anyway?.checked) }),
         }));
+    } catch (error) {
+      failed(error.message, "Label not printed");
+      return;
+    }
+    try {
       if (result.backend === "fake") {
         // The request succeeded and no tape came out. Saying "Printed" here
         // would be a lie, and it is the lie that gets the button pressed again.
@@ -637,7 +663,7 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
         announce(`Printed ${code}.`);
       }
       await viewBox(code, { keepBanner: true });
-    } catch (error) { showError(error.message); }
+    } catch (error) { failed(error.message); }
   });
 
   document.getElementById("shot").addEventListener("change", async (event) => {
@@ -652,7 +678,7 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
       // No content-type header: the browser must set the multipart boundary.
       await api(`${path}/photos`, { method: "POST", body });
       await viewBox(code);
-    } catch (error) { showError(error.message); }
+    } catch (error) { failed(error.message); }
     finally { event.target.disabled = false; }
   });
 
@@ -729,13 +755,13 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
           }
         });
         await viewBox(code);
-      } catch (error) { showError(error.message); }
+      } catch (error) { failed(error.message); }
     });
   }
 
   async function act(operation) {
     try { await operation(); await viewBox(code); }
-    catch (error) { showError(error.message); }
+    catch (error) { failed(error.message); }
   }
 
   // Last, so a half-built page is never the thing a refresh redraws.
@@ -797,11 +823,18 @@ async function viewNew() {
       const box = await api("/boxes", { method: "POST", body: JSON.stringify(payload) });
       // Printing a box with nothing recorded is refused, and rightly so --
       // create it and let the box page offer the override.
+      let unprinted = null;
       if (payload.content_summary) {
-        await api("/labels/print", { method: "POST", body: JSON.stringify({ codes: [box.code] }) });
+        try {
+          await api("/labels/print", { method: "POST", body: JSON.stringify({ codes: [box.code] }) });
+        } catch (error) { unprinted = error.message; }
       }
       location.hash = `#/b/${box.code}`;
-    } catch (error) { showError(error.message); }
+      if (unprinted) {
+        failed(`${box.code} was created, but its label did not print: ${unprinted}`,
+               "Label not printed");
+      }
+    } catch (error) { failed(error.message, "Not created"); }
   });
 }
 
