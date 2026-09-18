@@ -9,7 +9,7 @@
 PORT ?= 8788
 
 .DEFAULT_GOAL := help
-.PHONY: help setup run test lint check deploy install uninstall status labels backup
+.PHONY: help setup run test lint check ui-check deploy install uninstall status labels backup
 
 help:  ## list targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -27,6 +27,9 @@ lint:  ## ruff over src, tests and scripts
 	uv run ruff check src tests scripts
 
 check: lint test  ## lint + test
+
+ui-check:  ## click through the box page in headless Chrome (needs `make run` going)
+	node scripts/claude/ui_check.mjs http://127.0.0.1:$(PORT)
 
 deploy:  ## backup, test, restart the live service, verify its revision
 	scripts/claude/deploy.sh
