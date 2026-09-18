@@ -143,6 +143,22 @@ function printerLine(press) {
   return `<p class="${cls}">${escape(mark)} - ${escape(press.detail)}</p>`;
 }
 
+// The printer's state sits in the bar, visible from every page: finding out it
+// is off only once you have scrolled to Print is finding out too late.
+async function refreshPrinterBadge() {
+  const badge = document.getElementById("printer-badge");
+  if (!badge) return;
+  try {
+    const press = await api("/printer");
+    const wrong = !press.ready || !press.prints;
+    badge.hidden = !wrong;
+    badge.textContent = press.prints ? "Printer offline" : "Preview only";
+    badge.title = press.detail;
+  } catch {
+    badge.hidden = true;  // the server is unreachable; that is its own problem
+  }
+}
+
 // The Web Speech API is Chrome-only; on Firefox and Safari the keyboard's own
 // microphone does the job, so the button simply stays hidden rather than
 // sitting there dead.
@@ -391,6 +407,17 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
     </div>
 
     <div class="section">
+      <h2>Handling</h2>
+      <div class="flags-set">
+        ${[["fragile", "Fragile"], ["heavy", "Heavy"], ["open_first", "Open first"]]
+          .map(([key, label]) => `
+            <button class="chip ${box[key] ? "on" : ""}" data-flag="${escape(key)}"
+              aria-pressed="${box[key] ? "true" : "false"}">${escape(label)}</button>`).join("")}
+      </div>
+      <p class="meta">These print on the label.</p>
+    </div>
+
+    <div class="section">
       <h2>Where it is now</h2>
       <div class="track" role="group" aria-label="Box status">
         ${STATUSES.map((s, i) => {
@@ -479,6 +506,13 @@ async function viewBox(code, { keepBanner = false, at = null } = {}) {
         <button class="btn quiet" id="delete">Delete this ${escape(shape.label.toLowerCase())}</button>
       </div>
     </div>`}`);
+
+  for (const button of app.querySelectorAll("[data-flag]")) {
+    button.addEventListener("click", () => {
+      const key = button.dataset.flag;
+      act(() => api(path, { method: "PATCH", body: JSON.stringify({ [key]: !box[key] }) }));
+    });
+  }
 
   for (const button of app.querySelectorAll("[data-status]")) {
     button.addEventListener("click", () => act(() =>
@@ -1106,6 +1140,9 @@ async function route() {
 
 addEventListener("hashchange", route);
 route();
+
+refreshPrinterBadge();
+setInterval(refreshPrinterBadge, 60000);
 live.start();
 
 if ("serviceWorker" in navigator) {

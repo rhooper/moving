@@ -270,6 +270,33 @@ ul.items button { width: auto; min-height: 2rem; padding: 0.2rem 0.5rem; border:
 }
 .anyway input { width: auto; min-height: auto; }
 
+/* Printer trouble, in the bar, on every page. */
+.badge {
+  display: flex;
+  align-items: center;
+  padding-inline: 0.9rem;
+  background: var(--signal);
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.8125rem;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+/* Handling flags: on or off, and they print on the label. */
+.flags-set { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.chip {
+  width: auto;
+  min-height: var(--tap);
+  padding-inline: 1rem;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-weight: 700;
+  cursor: pointer;
+}
+.chip.on { background: var(--signal); border-color: var(--signal); color: #fff; }
+
 /* Destructive, and irreversible: marked, at the bottom, and not a thing you
    land on by accident. */
 .section.danger { border-top-color: var(--signal); }
@@ -340,6 +367,7 @@ label.btn { display: inline-flex; align-items: center; justify-content: center; 
   <a href="#/scan" id="nav-scan">Scan</a>
   <a href="#/new" id="nav-new">New box</a>
   <a href="#/settings" id="nav-settings">Settings</a>
+  <span id="printer-badge" class="badge" hidden></span>
 </nav>
 <script type="module" src="/app.js"></script>
 </body>
