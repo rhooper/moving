@@ -6,6 +6,7 @@ Working notes for Claude sessions. See `README.md` for user-facing docs and
 ## Commands
 
 ```bash
+make help                        # thin front door over everything below
 uv sync                          # install deps (Python 3.13)
 uv run moving serve              # dev server on :8787
 uv run moving seed-rooms         # starter set of rooms
