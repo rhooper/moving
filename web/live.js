@@ -118,13 +118,55 @@ export function isDirty(fields) {
 export function holdRefresh(state, now = Date.now()) {
   const {
     editing = false,
-    drafting = false,
     pointerDown = false,
     lastTouch = 0,
     settleMs = SETTLE_MS,
   } = state || {};
-  if (editing || drafting || pointerDown) return true;
+  if (editing || pointerDown) return true;
   return lastTouch > 0 && now - lastTouch < settleMs;
+}
+
+// Events that change one self-contained part of a box page. Photo analysis
+// runs in the background and reports through exactly these three, usually
+// while somebody is typing into the very page it is updating -- so they are
+// applied to their own part in place instead of waiting, held, behind a
+// focused field for a whole-page redraw.
+const PARTS = new Map([
+  ["items.changed", "items"],
+  ["photos.changed", "photos"],
+  ["box.updated", "summary"],
+]);
+
+/**
+ * Which part of an open box page `event` can be applied to on its own, or
+ * null when only a whole refresh will do (a resync most of all: nobody knows
+ * what was missed).
+ */
+export function partOf(event) {
+  return (event && PARTS.get(event.kind)) || null;
+}
+
+// What `box.updated` may change without the rest of the page caring.
+// `updated_at` moves on every write, so it says nothing about what changed.
+const SUMMARY_KEYS = new Set(["content_summary", "summary_source", "updated_at"]);
+
+/**
+ * Whether `after` differs from the box that was drawn in nothing but its
+ * summary. `box.updated` covers the flags, the rooms and the kind as well;
+ * when any of those moved, patching the summary alone would leave the page
+ * quietly wrong, so the caller falls back to a whole refresh.
+ *
+ * Compares every key rather than a list of the ones the page draws today, so
+ * a field added to the page later cannot be forgotten here.
+ */
+export function onlySummaryChanged(before, after) {
+  if (!before || !after) return false;
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  for (const key of keys) {
+    if (SUMMARY_KEYS.has(key)) continue;
+    if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) return false;
+  }
+  return true;
 }
 
 /**
@@ -149,8 +191,15 @@ export function reconcile(parent, items, { key, create, update }) {
   for (const item of items) {
     const id = String(key(item));
     let element = existing.get(id);
-    if (element) existing.delete(id);
-    else element = create(item);
+    if (element) {
+      existing.delete(id);
+    } else {
+      element = create(item);
+      // Keyed here rather than left to every `create` to remember. One that
+      // forgot would never be found again: each update would draw a second
+      // copy of the list under the first.
+      element.dataset.key = id;
+    }
     update(element, item);
     // Already in the right place? Then leave it completely alone: even
     // re-inserting a node where it already is counts as a move.

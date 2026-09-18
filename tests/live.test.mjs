@@ -11,6 +11,8 @@ import {
   hasUnsavedEdits,
   holdRefresh,
   isDirty,
+  onlySummaryChanged,
+  partOf,
   reconcile,
 } from "../web/live.js";
 
@@ -146,9 +148,59 @@ test("an unsaved edit holds the refresh", () => {
   assert.equal(holdRefresh({ editing: true }, 10000), true);
 });
 
-test("an open AI draft holds the refresh", () => {
-  // The proposal exists only in the DOM; a redraw would silently discard it.
-  assert.equal(holdRefresh({ drafting: true }, 10000), true);
+test("nothing but an edit or a gesture holds the refresh", () => {
+  // There used to be a third reason -- an unaccepted AI draft on screen. The
+  // review panel is gone (analysis is applied server-side), and a leftover
+  // flag nobody sets must not be able to hold the screen.
+  assert.equal(holdRefresh({ drafting: true }, 10000), false);
+});
+
+// --- updating one part of an open box, even while the rest is held ----------
+
+test("items, photos and the box row each map to one part of the box page", () => {
+  assert.equal(partOf({ kind: "items.changed", code: "B-0007" }), "items");
+  assert.equal(partOf({ kind: "photos.changed", code: "B-0007" }), "photos");
+  assert.equal(partOf({ kind: "box.updated", code: "B-0007" }), "summary");
+});
+
+test("anything else has no part of its own and means a whole refresh", () => {
+  // A resync most of all: nobody knows what was missed.
+  for (const kind of ["resync", "box.status", "box.location", "box.deleted", "label.printed"]) {
+    assert.equal(partOf({ kind }), null, kind);
+  }
+  assert.equal(partOf(null), null);
+  assert.equal(partOf({}), null);
+});
+
+const drawn = {
+  code: "B-0007", content_summary: "kettle", summary_source: "auto",
+  fragile: 0, status: "open", updated_at: "2026-09-18 10:00:00",
+};
+
+test("a rewritten summary alone can be applied without redrawing the page", () => {
+  const fresh = { ...drawn, content_summary: "kettle, 3 mugs", updated_at: "2026-09-18 10:00:09" };
+  assert.equal(onlySummaryChanged(drawn, fresh), true);
+  // The same goes for who wrote it.
+  assert.equal(onlySummaryChanged(drawn, { ...fresh, summary_source: "manual" }), true);
+});
+
+test("nothing changed at all is also fine to apply in place", () => {
+  assert.equal(onlySummaryChanged(drawn, { ...drawn }), true);
+});
+
+test("a change to anything else the page draws needs the whole page", () => {
+  assert.equal(onlySummaryChanged(drawn, { ...drawn, fragile: 1 }), false);
+  assert.equal(onlySummaryChanged(drawn, { ...drawn, status: "packed" }), false);
+  // A key appearing or vanishing counts: the server grew a field this page
+  // may be drawing.
+  assert.equal(onlySummaryChanged(drawn, { ...drawn, deleted_at: "2026-09-18" }), false);
+  const { fragile: _gone, ...without } = drawn;
+  assert.equal(onlySummaryChanged(drawn, without), false);
+});
+
+test("a box that could not be compared is treated as changed", () => {
+  assert.equal(onlySummaryChanged(null, drawn), false);
+  assert.equal(onlySummaryChanged(drawn, null), false);
 });
 
 // --- keeping a row the same element across a refresh ------------------------
@@ -333,4 +385,22 @@ test("typing a change and typing it back leaves nothing to cancel", () => {
 test("a field that was drawn empty and is still empty is clean", () => {
   // dataset.initial is absent for a field drawn with no value.
   assert.equal(isDirty([{ value: "", initial: undefined }]), false);
+});
+
+test("a row whose create forgot to key it is still found next time", () => {
+  // This happened: the photo strip's figures were made without data-key, so
+  // every update missed them all, drew a second copy of the strip beneath the
+  // first, and removed only one stale figure (they all shared the key
+  // `undefined`). reconcile knows the key, so it sets it rather than trusting
+  // every create to remember.
+  const forgetful = { ...rows, create: () => new FakeNode(undefined) };
+  const parent = new FakeParent();
+  const draw = (codes) => reconcile(parent, codes.map((code) => ({ code })), forgetful);
+
+  draw(["A", "B"]);
+  const before = parent.children;
+  draw(["A", "B"]);
+
+  assert.deepEqual(parent.keys(), ["A", "B"]);
+  assert.deepEqual(parent.children, before, "the rows were duplicated or replaced");
 });

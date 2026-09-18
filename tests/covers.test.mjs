@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { coverOf, coverUrl, stripFor, thumbUrl } from "../web/covers.js";
+import { analysisView, coverOf, coverUrl, stripFor, thumbUrl } from "../web/covers.js";
 
 test("a thumbnail url points at the thumb, never the full image", () => {
   // A list of 200 boxes pulling 2048px originals is the failure this guards.
@@ -80,4 +80,144 @@ test("the strip keeps the fields the caption and delete controls need", () => {
 test("an empty strip is an empty list, not a crash", () => {
   assert.deepEqual(stripFor([]), []);
   assert.deepEqual(stripFor(null), []);
+});
+
+test("the strip carries each photo's analysis through untouched", () => {
+  const analysis = { status: "running", remaining_ms: 9000, total_ms: 20000 };
+  const strip = stripFor([{ id: 1, is_primary: 1, analysis }, { id: 2, is_primary: 0, analysis: null }]);
+
+  assert.deepEqual(strip[0].analysis, analysis);
+  assert.equal(strip[1].analysis, null);
+});
+
+// --- what a photo's analysis looks like, and when ---------------------------
+//
+// The server sends a snapshot: how long is left *as of the reply*. Everything
+// after that is this side's clock, so the function takes the snapshot and how
+// long ago it arrived and says what to draw. The case that matters most is the
+// estimate running out before the job does: a ring that fills and then just
+// sits there full is a lie about being finished.
+
+const running = { status: "running", remaining_ms: 12000, total_ms: 20000, items_found: null, error: null };
+
+test("a photo nobody has analysed shows no state at all", () => {
+  // Photos taken before analysis existed, and photos of a loose item.
+  for (const nothing of [null, undefined]) {
+    const view = analysisView(nothing);
+    assert.equal(view.state, "none");
+    assert.equal(view.busy, false);
+    assert.equal(view.retry, false);
+    assert.equal(view.label, "");
+  }
+});
+
+test("a running job starts the ring where the server says it is", () => {
+  const view = analysisView(running, 0);
+
+  assert.equal(view.state, "running");
+  assert.equal(view.busy, true);
+  assert.equal(view.indeterminate, false);
+  assert.ok(Math.abs(view.fraction - 0.4) < 1e-9, `fraction ${view.fraction}`);
+  assert.equal(view.label, "Reading… ~12 s");
+});
+
+test("time passing on this side moves the ring and the seconds", () => {
+  const view = analysisView(running, 6000);
+
+  assert.ok(Math.abs(view.fraction - 0.7) < 1e-9, `fraction ${view.fraction}`);
+  assert.equal(view.label, "Reading… ~6 s");
+});
+
+test("the seconds round up, so it never says zero while still counting", () => {
+  assert.equal(analysisView(running, 11600).label, "Reading… ~1 s");
+});
+
+test("a job waiting behind others says so, and its wait includes theirs", () => {
+  const queued = { status: "pending", remaining_ms: 25000, total_ms: 25000 };
+  const view = analysisView(queued, 0);
+
+  assert.equal(view.state, "pending");
+  assert.equal(view.busy, true);
+  assert.equal(view.fraction, 0);
+  assert.equal(view.label, "Queued… ~25 s");
+});
+
+test("past zero and still not done, the ring gives up counting rather than sit full", () => {
+  for (const elapsed of [12000, 12001, 90000]) {
+    const view = analysisView(running, elapsed);
+    assert.equal(view.busy, true);
+    assert.equal(view.indeterminate, true, `at ${elapsed} ms`);
+    // No fraction at all: there must be nothing a caller could draw as full.
+    assert.equal(view.fraction, null);
+    assert.equal(view.label, "Still reading…");
+  }
+  const queued = { status: "pending", remaining_ms: 1000, total_ms: 1000 };
+  assert.equal(analysisView(queued, 5000).label, "Still queued…");
+});
+
+test("the fraction never reaches one while the job is unfinished", () => {
+  for (let elapsed = 0; elapsed < 12000; elapsed += 500) {
+    const { fraction } = analysisView(running, elapsed);
+    assert.ok(fraction >= 0 && fraction < 1, `fraction ${fraction} at ${elapsed} ms`);
+  }
+});
+
+test("an estimate that makes no sense is indeterminate, not a division by zero", () => {
+  // total_ms of 0, missing, or smaller than what is left: no honest fraction.
+  assert.equal(analysisView({ status: "running", remaining_ms: 5000, total_ms: 0 }).indeterminate, true);
+  assert.equal(analysisView({ status: "running", remaining_ms: 5000 }).indeterminate, true);
+  const odd = analysisView({ status: "running", remaining_ms: 5000, total_ms: 2000 });
+  assert.equal(odd.indeterminate, false);
+  assert.equal(odd.fraction, 0);
+  assert.equal(odd.label, "Reading… ~5 s");
+});
+
+test("a clock that ran backwards does not un-finish the ring past its start", () => {
+  // performance.now() is monotonic, but a caller could pass anything.
+  const view = analysisView(running, -5000);
+  assert.ok(Math.abs(view.fraction - 0.4) < 1e-9);
+});
+
+test("a finished job says how many things it saw", () => {
+  const done = (n) => analysisView({ status: "done", remaining_ms: 0, total_ms: 9000, items_found: n });
+
+  assert.equal(done(3).label, "3 items found");
+  assert.equal(done(1).label, "1 item found");
+  assert.equal(done(0).label, "Nothing recognised");
+  assert.equal(done(3).busy, false);
+  assert.equal(done(3).retry, false);
+  // Elapsed time means nothing once it is done.
+  assert.equal(analysisView({ status: "done", items_found: 2 }, 60000).label, "2 items found");
+});
+
+test("a finished job with no count still reads as finished", () => {
+  assert.equal(analysisView({ status: "done", items_found: null }).label, "Photo read");
+});
+
+test("a failed job shows why, and offers another go", () => {
+  const view = analysisView({ status: "error", remaining_ms: 0, total_ms: 0, error: "model not loaded" });
+
+  assert.equal(view.state, "error");
+  assert.equal(view.busy, false);
+  assert.equal(view.retry, true);
+  assert.equal(view.label, "model not loaded");
+});
+
+test("a long error is cut short for the strip, and kept whole for the tooltip", () => {
+  const error = "connection refused ".repeat(20).trim();
+  const view = analysisView({ status: "error", error });
+
+  assert.ok(view.label.length <= 60, `label is ${view.label.length} long`);
+  assert.ok(view.label.endsWith("…"));
+  assert.equal(view.title, error);
+});
+
+test("a failure with no message still says something", () => {
+  assert.equal(analysisView({ status: "error", error: null }).label, "Could not read this photo");
+  assert.equal(analysisView({ status: "error", error: "   " }).label, "Could not read this photo");
+});
+
+test("a status this side has never heard of draws nothing rather than crashing", () => {
+  assert.equal(analysisView({ status: "paused" }).state, "none");
+  assert.equal(analysisView({}).state, "none");
 });

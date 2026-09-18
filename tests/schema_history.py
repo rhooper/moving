@@ -15,6 +15,14 @@ import sqlite3
 #: How to undo each migration, newest first. Keyed by the version the step
 #: removes: running UNDO[5] takes a database from version 5 to version 4.
 UNDO: dict[int, list[str]] = {
+    6: [
+        "DROP INDEX IF EXISTS idx_ai_jobs_queue",
+        "DROP INDEX IF EXISTS idx_ai_jobs_photo",
+        "ALTER TABLE ai_jobs DROP COLUMN photo_id",
+        "ALTER TABLE ai_jobs DROP COLUMN started_at",
+        "ALTER TABLE ai_jobs DROP COLUMN duration_ms",
+        "ALTER TABLE boxes DROP COLUMN summary_source",
+    ],
     5: [
         "DROP INDEX IF EXISTS idx_boxes_deleted",
         "ALTER TABLE boxes DROP COLUMN deleted_at",

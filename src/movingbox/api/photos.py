@@ -7,11 +7,11 @@ import sqlite3
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
 
-from .. import ai, storage, store
+from .. import ai, analysis, storage, store
 from ..config import Config
 from ..vision import base
 from . import events
-from .app import get_config, get_conn, get_events, get_vision_provider
+from .app import get_analyst, get_config, get_conn, get_events, get_vision_provider
 from .schemas import CaptionUpdate, DraftRequest
 
 router = APIRouter(tags=["photos"])
@@ -27,6 +27,7 @@ def upload(
     conn: sqlite3.Connection = Depends(get_conn),
     config: Config = Depends(get_config),
     changes: events.Publisher = Depends(get_events),
+    analyst: analysis.Analyst | None = Depends(get_analyst),
 ) -> dict:
     # Deliberately sync, and reading through file.file rather than `await
     # file.read()`. An async endpoint runs on the event loop while the sync
@@ -44,11 +45,18 @@ def upload(
         # 415, not 400: the request was well formed, the payload was not usable.
         raise HTTPException(status_code=415, detail=str(bad)) from bad
 
+    # Analysis starts without being asked. Queued, not run: the model takes
+    # seconds to tens of seconds and this request should not. Idempotent, so
+    # the phone retrying an upload does not analyse the same photo twice.
+    analysis.enqueue(conn, config, photo["id"])
+    if analyst is not None:
+        analyst.wake()
+
     # Announced even when the sha256 matched an existing photo and nothing was
     # written: the phone retrying an upload is exactly when another device
     # most wants to know a photo landed.
     changes.publish(events.PHOTOS_CHANGED, code)
-    return photo
+    return storage.with_analysis(conn, photo)
 
 
 @router.get("/api/boxes/{code}/photos")
@@ -139,6 +147,33 @@ def delete(
         raise HTTPException(status_code=404, detail=f"No photo {photo_id}")
     changes.publish(events.PHOTOS_CHANGED, store.code_of(conn, photo["box_id"]))
     return Response(status_code=204)
+
+
+@router.post("/photos/{photo_id}/analyse", status_code=202)
+def analyse(
+    photo_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+    config: Config = Depends(get_config),
+    changes: events.Publisher = Depends(get_events),
+    analyst: analysis.Analyst | None = Depends(get_analyst),
+) -> dict:
+    """Queue one photo for analysis again: a retry after an error, or a re-run.
+
+    202, not 200: the answer is "queued", and the result arrives as events.
+    """
+    photo = storage.get_photo(conn, photo_id)
+    if photo is None:
+        raise HTTPException(status_code=404, detail=f"No photo {photo_id}")
+    if analysis.enqueue(conn, config, photo_id, again=True) is None:
+        # 409: the request is fine; this record is a thing, not a container.
+        raise HTTPException(
+            status_code=409,
+            detail="This is a single thing, not a box: there are no contents to list.",
+        )
+    if analyst is not None:
+        analyst.wake()
+    changes.publish(events.PHOTOS_CHANGED, store.code_of(conn, photo["box_id"]))
+    return storage.with_analysis(conn, photo)
 
 
 @router.post("/api/boxes/{code}/ai/draft")
