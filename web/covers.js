@@ -60,8 +60,12 @@ export function stripFor(photos) {
 // estimate that makes no sense -- are pinned down by tests rather than by
 // staring at a spinner.
 
+// A closer look is the slower, more careful model, run only when asked for;
+// it says so, so a ten-second wait is not mistaken for the quick read stalling.
 const WORDS = { pending: "Queued", running: "Reading" };
 const STILL = { pending: "Still queued…", running: "Still reading…" };
+const CLOSER_WORDS = { pending: "Queued", running: "Looking closer" };
+const CLOSER_STILL = { pending: "Still queued…", running: "Still looking…" };
 const ERROR_LENGTH = 60;
 
 const NO_ANALYSIS = Object.freeze({
@@ -119,20 +123,23 @@ export function analysisView(analysis, elapsedMs = 0) {
       ...NO_ANALYSIS, state: status, busy: true, indeterminate: true,
       // With time still on the clock but no span to measure it against, the
       // seconds are still worth showing; past zero there is nothing to count.
-      label: remaining > 0 ? countdown(status, remaining) : STILL[status],
+      label: remaining > 0
+        ? countdown(status, remaining, analysis.detail)
+        : (analysis.detail ? CLOSER_STILL : STILL)[status],
     };
   }
   return {
     ...NO_ANALYSIS, state: status, busy: true,
     fraction: Math.min(Math.max(1 - remaining / total, 0), 0.999),
-    label: countdown(status, remaining),
+    label: countdown(status, remaining, analysis.detail),
   };
 }
 
 // Rounded up, so the last second reads "~1 s" rather than "~0 s" while the
 // ring is visibly still moving.
-function countdown(status, remainingMs) {
-  return `${WORDS[status]}… ~${Math.ceil(remainingMs / 1000)} s`;
+function countdown(status, remainingMs, closer = false) {
+  const words = closer ? CLOSER_WORDS : WORDS;
+  return `${words[status]}… ~${Math.ceil(remainingMs / 1000)} s`;
 }
 
 // What a list row says about a record beside its summary: what it is, over
@@ -151,12 +158,24 @@ export function rowStatus(box) {
 // from whatever people typed -- this is the evidence for one picture, so a
 // wrong item can be traced to the photo it came from.
 export function seenIn(analysis) {
-  const base = { state: "none", heading: "Seen in this photo", summary: "", items: [], note: "" };
+  // `closer`: "offer" once a quick read is in -- including one that found
+  // nothing, which is exactly when you want it; "done" after a closer look;
+  // null while anything is running, and for a photo that failed (a second
+  // model will not reach a server the first could not) or was never read.
+  const base = {
+    state: "none", heading: "Seen in this photo", summary: "", items: [], note: "", closer: null,
+  };
   if (!analysis) {
     return { ...base, note: "This photo has not been read." };
   }
   if (analysis.status === "pending" || analysis.status === "running") {
-    return { ...base, state: "busy", note: "This photo is still being read." };
+    return {
+      ...base,
+      state: "busy",
+      note: analysis.detail
+        ? "Taking a closer look at this photo. It is slower than the first read."
+        : "This photo is still being read.",
+    };
   }
   if (analysis.status === "error") {
     return { ...base, state: "error", note: `It could not be read: ${analysis.error || "no reason given"}` };
@@ -166,8 +185,10 @@ export function seenIn(analysis) {
   return {
     ...base,
     state: "done",
+    heading: analysis.detail ? "Seen on a closer look" : base.heading,
     summary: analysis.summary || "",
     items,
     note: items.length ? "" : "Nothing was recognised in this photo.",
+    closer: analysis.detail ? "done" : "offer",
   };
 }

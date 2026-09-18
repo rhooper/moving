@@ -314,3 +314,65 @@ test("an old server that sends no list does not break the viewer", async () => {
 
   assert.deepEqual(seen.items, []);
 });
+
+// --- a quick read by default, a closer look when asked ---------------------------------
+
+test("a closer look in progress says so, under the photo", async () => {
+  const { analysisView } = await import("../web/covers.js");
+
+  const running = analysisView({ status: "running", detail: true, remaining_ms: 9200, total_ms: 10000 }, 0);
+  const queued = analysisView({ status: "pending", detail: true, remaining_ms: 19000, total_ms: 20000 }, 0);
+  const overdue = analysisView({ status: "running", detail: true, remaining_ms: 1000, total_ms: 10000 }, 5000);
+
+  assert.equal(running.label, "Looking closer… ~10 s");
+  assert.match(queued.label, /^Queued… ~19 s$/);
+  assert.equal(overdue.label, "Still looking…");
+});
+
+test("a quick read in progress is worded as it always was", async () => {
+  const { analysisView } = await import("../web/covers.js");
+
+  const running = analysisView({ status: "running", detail: false, remaining_ms: 6100, total_ms: 7000 }, 0);
+
+  assert.equal(running.label, "Reading… ~7 s");
+});
+
+test("the viewer offers a closer look once a quick read is in", async () => {
+  const { seenIn } = await import("../web/covers.js");
+
+  const quick = seenIn({ status: "done", detail: false, items: [{ name: "kettle", qty: 1 }] });
+
+  assert.equal(quick.closer, "offer");
+});
+
+test("it offers one even when the quick read found nothing -- that is when you want it", async () => {
+  const { seenIn } = await import("../web/covers.js");
+
+  assert.equal(seenIn({ status: "done", detail: false, items: [] }).closer, "offer");
+});
+
+test("after a closer look it says so, and does not offer another", async () => {
+  const { seenIn } = await import("../web/covers.js");
+
+  const close = seenIn({ status: "done", detail: true, items: [{ name: "kettle", qty: 1 }] });
+
+  assert.equal(close.closer, "done");
+  assert.equal(close.heading, "Seen on a closer look");
+});
+
+test("while a closer look is running the viewer says that, not 'being read'", async () => {
+  const { seenIn } = await import("../web/covers.js");
+
+  const busy = seenIn({ status: "running", detail: true, items: null });
+
+  assert.equal(busy.closer, null);
+  assert.match(busy.note, /closer look/);
+});
+
+test("nothing is offered for a photo that was never read, is being read, or failed", async () => {
+  const { seenIn } = await import("../web/covers.js");
+
+  assert.equal(seenIn(null).closer, null);
+  assert.equal(seenIn({ status: "pending", detail: false }).closer, null);
+  assert.equal(seenIn({ status: "error", detail: false, error: "offline" }).closer, null);
+});
