@@ -64,7 +64,19 @@ app, and the tape is for finding the box from across a room. `LabelData` has
 no `items` field, `from_box` takes no items, and a test pins that adding items
 leaves the preview byte-identical — do not reintroduce it as a gap. One
 consequence: a box with items but no summary prints with no description at
-all, so "From contents" is the way to fill the summary. The redesign also enlarged
+all, so "From contents" is the way to fill the summary.
+
+**Landscape type is set 50% larger than the sizes in the code, where the label
+can afford it** (`LANDSCAPE_SCALES`, `landscape_scale()`). A flat 1.5x does not
+survive handling flags: chips cannot share a row beside the QR, so two flags
+squeeze the summary out and three push the room band off the tape. The
+renderer tries 1.5, 1.4 ... 1.0 and keeps the first scale where the furniture
+fits and the summary keeps two lines of room; 1.0 is the proven-to-fit size, so
+the search always ends. The summary additionally shrinks toward its base size
+before a word is ever cut. The QR is **not** scaled -- it was sized on tape for
+scanning distance. `make proof` is the test print without tape: the stress
+cases (0-3 flags, loose item, long code, no room) plus `CODES="B-0003 ..."`
+from the real database, drawn inline in iTerm via imgcat. The redesign also enlarged
 everything (code +20%, QR +15%, FRAGILE +60% with a broken-glass icon, HEAVY
 with a weight icon, room band 25% bigger type padded a third of its height)
 and **deliberately dropped** the source line, weight, box count and footer —
