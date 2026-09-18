@@ -64,8 +64,45 @@ class TestSending:
             def write(self, payload):
                 written.append(bytes(payload))
 
+            def close(self):
+                pass
+
         assert printer.disable_auto_power_off(config, find_device=FakeDevice) is True
         assert written[0].endswith(b"\x1b\x69\x55\x41\x00\x00")
+
+
+class TestReleasingTheDevice:
+    """The watcher lives in the long-running service; a handle it keeps is a
+    handle nothing else can have. This shipped broken once: the service held
+    the QL-800 exclusively from startup (ioreg: UsbExclusiveOwner = the
+    service's own pid), so brother_ql's second open -- every print job -- was
+    refused, and the process was locked out of the printer by itself."""
+
+    def test_the_device_is_released_once_the_command_is_sent(self, config):
+        closed = []
+
+        class FakeDevice:
+            def write(self, payload):
+                pass
+
+            def close(self):
+                closed.append(1)
+
+        assert printer.disable_auto_power_off(config, find_device=FakeDevice) is True
+        assert closed == [1]
+
+    def test_it_is_released_even_when_the_write_fails(self, config):
+        closed = []
+
+        class FakeDevice:
+            def write(self, payload):
+                raise OSError("pipe error")
+
+            def close(self):
+                closed.append(1)
+
+        assert printer.disable_auto_power_off(config, find_device=FakeDevice) is False
+        assert closed == [1]
 
 
 class TestExclusiveAccess:

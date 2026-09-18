@@ -65,8 +65,30 @@ def auto_power_off_command(invalidate: int = QL800_INVALIDATE) -> bytes:
     return bytes(invalidate) + b"\x1b\x40" + b"\x1b\x69\x55\x41\x00\x00"
 
 
+class _UsbLink:
+    """An open QL-800: write to it, then close it.
+
+    Closing is the point. pyusb keeps the device claimed until its resources
+    are disposed, and this runs inside the long-lived service -- a link left
+    open holds the printer exclusively for the life of the process, and every
+    later print job (brother_ql opens the device itself) is refused.
+    """
+
+    def __init__(self, device, endpoint):
+        self._device = device
+        self._endpoint = endpoint
+
+    def write(self, payload: bytes) -> None:
+        self._endpoint.write(payload)
+
+    def close(self) -> None:
+        import usb.util
+
+        usb.util.dispose_resources(self._device)
+
+
 def _open_ql800():
-    """The printer as a writable USB endpoint, or None."""
+    """The printer as an open link, or None. The caller must close() it."""
     import usb.core
     import usb.util
 
@@ -74,17 +96,23 @@ def _open_ql800():
     if device is None:
         return None
 
-    with contextlib.suppress(NotImplementedError, Exception):
-        if device.is_kernel_driver_active(0):
-            device.detach_kernel_driver(0)
+    try:
+        with contextlib.suppress(NotImplementedError, Exception):
+            if device.is_kernel_driver_active(0):
+                device.detach_kernel_driver(0)
 
-    device.set_configuration()
-    interface = device.get_active_configuration()[(0, 0)]
-    return usb.util.find_descriptor(
-        interface,
-        custom_match=lambda e: usb.util.endpoint_direction(e.bEndpointAddress)
-        == usb.util.ENDPOINT_OUT,
-    )
+        device.set_configuration()
+        interface = device.get_active_configuration()[(0, 0)]
+        endpoint = usb.util.find_descriptor(
+            interface,
+            custom_match=lambda e: usb.util.endpoint_direction(e.bEndpointAddress)
+            == usb.util.ENDPOINT_OUT,
+        )
+    except Exception:
+        # Half-opened is still opened: let go before reporting the failure.
+        usb.util.dispose_resources(device)
+        raise
+    return _UsbLink(device, endpoint)
 
 
 def disable_auto_power_off(config: Config, find_device=None) -> bool:
@@ -96,10 +124,13 @@ def disable_auto_power_off(config: Config, find_device=None) -> bool:
     opener = find_device or _open_ql800
     try:
         with exclusive():
-            endpoint = opener()
-            if endpoint is None:
+            link = opener()
+            if link is None:
                 return False
-            endpoint.write(auto_power_off_command())
+            try:
+                link.write(auto_power_off_command())
+            finally:
+                link.close()
     except Exception as exc:  # noqa: BLE001 - reported to the caller
         log.info("could not disable auto power-off: %s", exc)
         return False
