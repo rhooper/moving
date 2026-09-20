@@ -465,6 +465,12 @@ try {
         (await valueOf("content_summary")) === "pots and lids and a wok, colander, sieve, whisk", await valueOf("content_summary"));
   check("and the new page still says it is not saved", line.warn && line.text === "Not saved yet — will retry", JSON.stringify(line));
   check("the chip itself was saved", (await server(api)).fragile === 1);
+  // The badge above the summary is the one place a raised flag is drawn with
+  // the printed label's own glyph. Checked here because this is where a flag
+  // actually gets raised; ui_check only ever looks.
+  const badge = await evaluate('(() => { const b = document.querySelector(".flags .flag");'
+    + ' return b ? b.textContent.trim() + "|" + b.querySelector("svg.i use").getAttribute("href") : "none"; })()');
+  check("and the record wears a Fragile badge, word and glyph", badge === "Fragile|#i-fragile", badge);
   await waitFor(`${q("#summary-form .autosave-state")}.textContent === "Saved"`, "the carried-over edit to land", 12000);
   check("it lands once the network lets it", (await server(api)).content_summary === "pots and lids and a wok, colander, sieve, whisk",
         (await server(api)).content_summary);

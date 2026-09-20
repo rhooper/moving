@@ -324,6 +324,36 @@ const IN_PAGE = async () => {
   $("#container-code").value = "";
   $("#container-code").dataset.initial = "";
 
+  // The icon family (docs/design/icons), inlined once as a <symbol> sprite and
+  // referenced with <use>. A <use> pointing at a symbol that is not there
+  // draws nothing at all, in silence -- no console error, no broken-image box
+  // -- so the marks are resolved and measured here rather than trusted.
+  const marks = Array.from(document.querySelectorAll("svg.i use"));
+  check("every mark on the record resolves to a symbol in the sprite",
+        marks.length > 0 && marks.every((u) => document.querySelector(u.getAttribute("href"))?.tagName === "symbol"),
+        marks.map((u) => u.getAttribute("href")).join(" "));
+  check("and each is actually drawn, not collapsed to nothing",
+        marks.every((u) => u.ownerSVGElement.getBoundingClientRect().width >= 16),
+        marks.map((u) => u.ownerSVGElement.getBoundingClientRect().width).join(","));
+  check("none of them is announced: the word beside it carries the meaning",
+        marks.every((u) => u.ownerSVGElement.getAttribute("aria-hidden") === "true"));
+
+  const chips = Array.from(document.querySelectorAll(".flags-set .chip"));
+  check("each handling chip keeps its word and gains the label's own glyph",
+        chips.length === 3 && chips.every((c) => c.querySelector("svg.i use") && c.textContent.trim() !== ""),
+        chips.map((c) => c.textContent.trim()).join(","));
+  // The `on` state is white on the signal colour; the glyph is currentColor,
+  // so it goes white with the word. The colour says the state, never the icon.
+  check("the glyph takes the chip's colour, whichever state it is in",
+        chips.every((c) => getComputedStyle(c.querySelector("svg.i")).fill === getComputedStyle(c).color),
+        chips.map((c) => `${getComputedStyle(c.querySelector("svg.i")).fill} vs ${getComputedStyle(c).color}`).join(" | "));
+  const badges = Array.from(document.querySelectorAll(".flags .flag"));
+  const raised = ["fragile", "open_first", "heavy"].filter((k) => (record.box || record)[k]);
+  check("one badge above the summary per raised flag, each a word and a glyph",
+        badges.length === raised.length
+          && badges.every((b) => b.querySelector("svg.i use") && b.textContent.trim() !== ""),
+        `${badges.map((b) => b.textContent.trim()).join(",")} for ${raised.join(",") || "no flags"}`);
+
   check("the whole visit wrote nothing", writes.length === 0, writes.join("; "));
   window.fetch = realFetch;
 
@@ -365,6 +395,12 @@ const IN_NESTED = async () => {
         Array.from(document.querySelectorAll("#boxlist li")).every((li) => (li.querySelector(".in").textContent !== "")
           === (rows.find((b) => b.code === li.dataset.key)?.child_count > 0)));
   check("nested records are not in the top-level list", rows.every((b) => !b.parent_code));
+  // The empty thumbnail was the same open box on every row, which said
+  // nothing about the row it was on. It draws the record's own kind now.
+  check("a row with no photo draws what the record is",
+        rows.every((b) => $(`#boxlist li[data-key="${b.code}"] .t .tk use`)?.getAttribute("href") === `#i-${b.kind}`),
+        rows.map((b) => `${b.kind}:${$(`#boxlist li[data-key="${b.code}"] .t .tk use`)?.getAttribute("href")}`).join(" "));
+  const listThumb = Math.round($("#boxlist li .t").getBoundingClientRect().width);
 
   const full = await fetch(`/api/boxes/${holder.code}`).then((r) => r.json());
   await open(`#/b/${holder.code}`, "#inside");
@@ -373,6 +409,15 @@ const IN_NESTED = async () => {
           const row = $(`#inside li[data-key="${k.code}"]`);
           return row && row.querySelector(".in").textContent === (k.child_count ? `${k.child_count} inside` : "");
         }), Array.from(document.querySelectorAll("#inside li .in")).map((i) => i.textContent).join(","));
+  // The things inside a container are the things in your hands; the list is
+  // the index. Measured, because --thumb is a token the nested list overrides
+  // and a typo there is silently the list's own size.
+  const insideThumb = Math.round($("#inside li .t").getBoundingClientRect().width);
+  check("a row inside a container is drawn half again the size of a list row",
+        insideThumb === Math.round(listThumb * 1.5), `${insideThumb} vs ${listThumb}`);
+  check("and the kind's mark in it grows to match, on whole pixels",
+        Math.round($("#inside li .t .tk").getBoundingClientRect().width) === 40,
+        String($("#inside li .t .tk")?.getBoundingClientRect().width));
   check("Delete is not offered while things are inside; why is said instead",
         $("#delete-row").hidden && /Move the .*inside it out first/.test($("#delete-blocked").textContent), $("#delete-blocked")?.textContent);
   const singles = Array.from(document.querySelectorAll('.seg[data-name="kind"] input:disabled')).map((r) => r.value).sort();
@@ -463,6 +508,34 @@ const IN_NEW = async () => {
         desktop ? (at.top >= bar.top - 1 && at.bottom <= bar.bottom + 1)
                 : (at.bottom <= bar.top + 1 && at.right > window.innerWidth / 2),
         JSON.stringify({ at, bar, innerWidth: window.innerWidth }));
+  // The bar: a mark over the word on a phone, beside it on a desktop, and
+  // never instead of it -- "Items" and "New" are not guessable from a list
+  // glyph and a plus, and the bar has the room for both.
+  const tabs = Array.from(document.querySelectorAll("nav.bar a"));
+  check("every tab in the bar keeps its word and wears a mark",
+        tabs.length === 4 && tabs.every((a) => a.querySelector("svg.i use") && a.querySelector("span")?.textContent.trim()),
+        tabs.map((a) => a.textContent.trim()).join(","));
+  check("and what a screen reader hears is still the word",
+        tabs.every((a) => a.textContent.trim() === a.querySelector("span").textContent.trim()
+                          && a.querySelector("svg.i").getAttribute("aria-hidden") === "true"));
+  const mark = tabs[0].querySelector("svg.i").getBoundingClientRect();
+  check(desktop ? "the mark is 20px, beside the word" : "the mark is 24px, over the word",
+        Math.round(mark.width) === (desktop ? 20 : 24), String(mark.width));
+  check("stacking it did not push the word out of the bar",
+        tabs.every((a) => a.getBoundingClientRect().bottom <= bar.bottom + 1));
+  // Which tab you are on. `toggleAttribute` wrote aria-current="" here for
+  // months, and the stylesheet asks for [aria-current="page"] -- so the bar
+  // never marked the current page and nobody noticed until the marks arrived.
+  const here = tabs.filter((a) => a.getAttribute("aria-current") === "page");
+  check("the bar says which page you are on",
+        here.length === 1 && here[0].getAttribute("href") === location.hash,
+        `at ${location.hash}: ` + tabs.map((a) => `${a.getAttribute("href")}=${a.getAttribute("aria-current")}`).join(" "));
+  const other = tabs.find((a) => a !== here[0]);
+  check("and it is drawn differently from the others",
+        Boolean(here[0]) && getComputedStyle(here[0]).backgroundColor !== getComputedStyle(other).backgroundColor,
+        here[0] ? `${getComputedStyle(here[0]).backgroundColor} vs ${getComputedStyle(other).backgroundColor}`
+                : "no tab is marked current");
+
   const buttons = Array.from(document.querySelectorAll("#new button[type=submit]"));
   const form = document.getElementById("new");
   const kinds = await fetch("/api/settings/kinds").then((r) => r.json());

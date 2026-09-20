@@ -72,27 +72,3 @@ def test_the_override_prints_anyway(client, empty):
 def test_the_override_is_off_unless_asked_for(client, empty):
     # Default-on would make the whole gate pointless.
     assert client.post("/api/labels/print", json={"codes": [empty]}).status_code == 409
-
-
-class TestSuggestedSummary:
-    def test_a_summary_is_suggested_from_the_items(self, client, empty):
-        client.post(f"/api/boxes/{empty}/items", json={"name": "baking pan", "qty": 3})
-        client.post(f"/api/boxes/{empty}/items", json={"name": "kettle"})
-
-        suggestion = client.get(f"/api/boxes/{empty}/summary-suggestion").json()
-
-        assert suggestion["summary"] == "3 baking pans, kettle"
-
-    def test_suggesting_does_not_change_the_box(self, client, empty):
-        # Same rule as the photo draft: propose, never apply.
-        client.post(f"/api/boxes/{empty}/items", json={"name": "kettle"})
-
-        client.get(f"/api/boxes/{empty}/summary-suggestion")
-
-        assert client.get(f"/api/boxes/{empty}").json()["content_summary"] is None
-
-    def test_a_box_with_no_items_suggests_nothing(self, client, empty):
-        assert client.get(f"/api/boxes/{empty}/summary-suggestion").json()["summary"] == ""
-
-    def test_an_unknown_box_is_404(self, client):
-        assert client.get("/api/boxes/B-9999/summary-suggestion").status_code == 404

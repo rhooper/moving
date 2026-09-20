@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { analysisView, coverOf, coverUrl, stripFor, thumbUrl } from "../web/covers.js";
+import { analysisView, coverOf, coverUrl, flagIcon, kindIcon, stripFor, thumbUrl } from "../web/covers.js";
 
 test("a thumbnail url points at the thumb, never the full image", () => {
   // A list of 200 boxes pulling 2048px originals is the failure this guards.
@@ -460,4 +460,47 @@ test("a photo of a single thing is never offered a read, and says why", async ()
   assert.equal(seen.rerun, null);
   assert.equal(seen.closer, null);
   assert.match(seen.note, /single thing/);
+});
+
+// --- which mark stands for a record, and for a way of handling it ---------
+//
+// The empty thumbnail used to draw the same open box on every row, which said
+// nothing. A <use> at a symbol that is not there draws nothing at all, in
+// silence, so the mapping is worth pinning: an unknown kind must land on a
+// mark that exists, not on a name built out of whatever the server said.
+
+test("each kind of record has its own mark", () => {
+  const marks = ["box", "tub", "crate", "bag", "item", "furniture"]
+    .map((kind) => kindIcon({ kind }));
+  assert.deepEqual(marks, ["i-box", "i-tub", "i-crate", "i-bag", "i-item", "i-furniture"]);
+  assert.equal(new Set(marks).size, marks.length);
+});
+
+test("a record with no kind, or one this app has never heard of, still draws", () => {
+  // rowStatus calls an absent kind a box; so does this, so the row's word and
+  // its mark cannot disagree.
+  assert.equal(kindIcon({}), "i-box");
+  assert.equal(kindIcon({ kind: "" }), "i-box");
+  assert.equal(kindIcon({ kind: "pallet" }), "i-box");
+  assert.equal(kindIcon(null), "i-box");
+});
+
+test("the mark a row draws matches the word beside it", async () => {
+  const { rowStatus } = await import("../web/covers.js");
+  for (const kind of ["box", "tub", "crate", "bag", "item", "furniture"]) {
+    assert.equal(kindIcon({ kind }), `i-${rowStatus({ kind }).kind}`);
+  }
+});
+
+test("the handling flags carry the printed label's own glyphs", () => {
+  // fragile and heavy are drawn on the tape too; that is the whole argument
+  // for them being here. open_first is the one invented mark (a 1).
+  assert.equal(flagIcon("fragile"), "i-fragile");
+  assert.equal(flagIcon("heavy"), "i-heavy");
+  assert.equal(flagIcon("open_first"), "i-open-first");
+});
+
+test("a flag nobody has drawn a mark for gets none, rather than a broken one", () => {
+  assert.equal(flagIcon("wobbly"), "");
+  assert.equal(flagIcon(undefined), "");
 });

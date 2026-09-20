@@ -2,7 +2,7 @@
 // /#/b/CODE without needing server-side routes for every view.
 
 import { Autosaver, lineFor, policyFor, retryAfter } from "/autosave.js";
-import { analysisView, coverUrl, rowStatus, seenIn, stripFor } from "/covers.js";
+import { analysisView, coverUrl, flagIcon, kindIcon, rowStatus, seenIn, stripFor } from "/covers.js";
 import {
   LiveChannel,
   SETTLE_MS,
@@ -92,6 +92,35 @@ function escape(value) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+// A mark from the sprite inlined in index.html. Two forms, because this file
+// draws in two ways and they have to agree: markup for the pages built from
+// template literals, DOM for the rows reconcile keeps in place. Both are
+// aria-hidden -- the word beside a mark is what carries the meaning, and no
+// mark is ever drawn without one.
+//
+// createElementNS, not createElement: `document.createElement("svg")` makes an
+// HTMLUnknownElement that renders nothing, in silence.
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+const iconMarkup = (name, cls = "i") =>
+  `<svg class="${escape(cls)}" aria-hidden="true"><use href="#${escape(name)}"/></svg>`;
+
+function iconNode(name, cls = "i") {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("class", cls);
+  svg.setAttribute("aria-hidden", "true");
+  svg.append(document.createElementNS(SVG_NS, "use"));
+  setIcon(svg, name);
+  return svg;
+}
+
+// A row is built once and updated in place, so the mark has to be able to
+// change without the element being rebuilt.
+function setIcon(svg, name) {
+  const use = svg && svg.querySelector("use");
+  if (use && use.getAttribute("href") !== `#${name}`) use.setAttribute("href", `#${name}`);
+}
+
 // Alphabetical, whatever order the server keeps them in: a row of nine
 // pushbuttons is scanned by name, and "Kitchen" is found faster between
 // "Guest Room" and "Living Room" than wherever it was added.
@@ -113,11 +142,13 @@ function mount(row) {
   return row;
 }
 
+// The badges above the summary, in the order they read best. Each carries
+// its mark as well as its word: two of the three are printed on the tape.
 function flagsOf(box) {
   return [
-    box.fragile && "Fragile",
-    box.open_first && "Open first",
-    box.heavy && "Heavy",
+    box.fragile && { key: "fragile", label: "Fragile" },
+    box.open_first && { key: "open_first", label: "Open first" },
+    box.heavy && { key: "heavy", label: "Heavy" },
   ].filter(Boolean);
 }
 
@@ -1685,6 +1716,9 @@ function rowFor(box) {
   link.setAttribute("href", `#/b/${encodeURIComponent(box.code)}`);
   const frame = document.createElement("span");
   frame.className = "t";
+  // Under the photo, not instead of it: an <img> that arrives later simply
+  // paints over the mark, so nothing has to decide which of the two shows.
+  frame.append(iconNode(kindIcon(box), "i tk"));
   const thumb = document.createElement("img");
   thumb.alt = "";  // decorative: the code beside it already names the box
   thumb.loading = "lazy";
@@ -1722,6 +1756,7 @@ function fillRow(row, box) {
   setText(where.querySelector(".k"), said.kind);
   setText(where.querySelector(".st"), said.status);
   setText(where.querySelector(".in"), said.inside);
+  setIcon(row.querySelector("span.t .tk"), kindIcon(box));
   setThumb(row.querySelector("span.t img"), coverUrl(box));
   const at = row.querySelector(".at");
   const parent = box.parent_code || "";
@@ -1779,7 +1814,7 @@ async function viewBoxes(query) {
   const list = boxes.length
     ? `<ul class="boxlist" id="boxlist">${boxes.map((b) => `
         <li data-key="${escape(b.code)}"><a href="#/b/${escape(b.code)}">
-          <span class="t">${coverUrl(b)
+          <span class="t">${iconMarkup(kindIcon(b), "i tk")}${coverUrl(b)
             ? `<img src="${escape(coverUrl(b))}" alt="" loading="lazy">`
             : '<img alt="" loading="lazy" hidden>'}</span>
           <span class="c">${escape(b.code)}</span>
@@ -1882,7 +1917,7 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
       </div>` : ""}
     <nav class="trail" id="trail" aria-label="Inside" hidden></nav>
     <h1 class="code">${escape(box.code)}</h1>
-    ${flags.length ? `<div class="flags">${flags.map((f) => `<span class="flag">${escape(f)}</span>`).join("")}</div>` : ""}
+    ${flags.length ? `<div class="flags">${flags.map((f) => `<span class="flag">${iconMarkup(flagIcon(f.key))}${escape(f.label)}</span>`).join("")}</div>` : ""}
     <div class="band" id="room-band"${room ? "" : " hidden"}>${escape(room?.name || "")}</div>
     <form id="summary-form">
       <label class="dlabel" for="what">${shape.contents ? "What is in it" : "What it is"}</label>
@@ -1917,7 +1952,7 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
         ${[["fragile", "Fragile"], ["heavy", "Heavy"], ["open_first", "Open first"]]
           .map(([key, label]) => `
             <button class="chip ${box[key] ? "on" : ""}" data-flag="${escape(key)}"
-              aria-pressed="${box[key] ? "true" : "false"}">${escape(label)}</button>`).join("")}
+              aria-pressed="${box[key] ? "true" : "false"}">${iconMarkup(flagIcon(key))}${escape(label)}</button>`).join("")}
       </div>
       <p class="meta">These print on the label.</p>
     </div>
@@ -2174,7 +2209,13 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
       const link = document.createElement("a");
       link.setAttribute("href", `#/b/${encodeURIComponent(parent.code)}`);
       link.textContent = parent.code;
-      line.replaceChildren("Inside ", link, ` (${describe(parent)}).`);
+      // One span, not three loose children: the line is a flex row (so the
+      // tap-sized link centres in it and the line keeps its height either
+      // way), and a flex container drops the spaces around a bare text run --
+      // "Inside B-0012 (crate)." would come out with no spaces at all.
+      const said = document.createElement("span");
+      said.append("Inside ", link, ` (${describe(parent)}).`);
+      line.replaceChildren(said);
     } else {
       line.textContent = "Not inside anything.";
     }
@@ -3205,7 +3246,10 @@ async function route() {
     const match = hash.match(pattern);
     if (match) {
       for (const link of document.querySelectorAll(".bar a")) {
-        link.toggleAttribute("aria-current", link.getAttribute("href") === hash);
+        // Not toggleAttribute: it writes aria-current="", and both the
+        // stylesheet and assistive tech ask for the token "page".
+        if (link.getAttribute("href") === hash) link.setAttribute("aria-current", "page");
+        else link.removeAttribute("aria-current");
       }
       try { return await handler(...match.slice(1)); }
       catch (error) { return showError(error.message); }

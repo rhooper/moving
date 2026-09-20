@@ -17,6 +17,7 @@ uv run moving backup             # verified backup + prune
 uv run moving export --format csv -o out.csv
 uv run moving manifest           # box counts per room
 scripts/claude/try_vision.py     # call the real model (slow, non-deterministic)
+scripts/claude/try_summary.py    # the summary model over real contents lists, timed
 uv run pytest                    # printer forced to `fake` in conftest
 scripts/claude/install-service.sh          # launchd + tailscale serve (persistent https)
 scripts/claude/install-service.sh --uninstall
@@ -243,6 +244,95 @@ machine on the owner's own photos, through the app's own request and parser
   cabinet of labelled drawers came back as one good sentence and no items, and
   the record was left blank; the model's sentence is now the fallback when
   there are no items to build a summary from. Items win as soon as there are any.
+
+**A small model phrases the "From contents" summary; the background one does
+not.** `phrasing.py`, behind `GET /api/boxes/{code}/summary-suggestion`. The
+assembled line is a flat inventory -- "stock pot, 3 baking pans, stand mixer,
+colander, 2 mixing bowls, 6 tea towels" -- and what was asked for is the kind
+of thing in the box and a few examples: "Kitchen essentials - a stock pot,
+baking pans, and a stand mixer". The full list is one scan away in the app,
+which is the trade the printed label already made when the contents column was
+dropped.
+
+- **Only the button phrases.** `analysis.refresh_summary` -- the worker that
+  fills a summary after a photo -- stays on plain assembly, and
+  `test_the_background_summary_is_never_written_by_a_model` pins it by walking
+  the module's imports. It already waits on a vision call, and a second
+  round-trip would slow every photo for a line nobody is watching. "From
+  contents" is somebody standing over a button, so it can afford a model.
+- **`qwen2.5:7b` (`MOVING_SUMMARY_MODEL`), measured, not assumed.** Every
+  candidate was run over the same realistic contents lists through the app's
+  own request and parser (2026-09-20, `scripts/claude/try_summary.py`), each
+  alone in memory:
+
+  | model | median | worst | what it writes |
+  |---|---|---|---|
+  | **`qwen2.5:7b`** (4.7 GB) | **0.31 s** | 0.60 s | the shape asked for on 5 of 7 boxes, and the *same* answer on 6 of 7 across three runs |
+  | `qwen3-vl:4b-instruct` (3.3 GB) | 0.34 s | 0.52 s | as good when it obeys, but re-lists everything it is given on 3 of 7 -- which is what the assembler already does |
+  | `gemma3:4b` (3.3 GB) | 0.52 s | 0.74 s | the most natural English ("Odds & ends"), but a different answer nearly every run |
+  | `qwen3-vl:8b-instruct` (6.1 GB) | 0.57 s | 2.22 s | good lines, but dropped Chinese characters into an English one ("Household杂物") -- unprintable in Inter |
+  | `qwen3.5:2b` (2.7 GB) | **74 s** | 119 s | unusable: a *thinking* checkpoint, ~8,000 tokens of reasoning a line, the answer in `message.thinking`, often only the template back |
+
+  `qwen3.5:2b` is the same trap CLAUDE.md already records for the bare
+  `qwen3-vl` tags, in a new family: **check what a tag actually is rather than
+  trusting that a small model is a fast one.** `gemma3:4b` was rejected for
+  vision for inventing things; here it invents nothing, and loses on
+  consistency instead -- judge each on what it is measured doing.
+- **`qwen3-vl:4b-instruct` is the runner-up and is free** (already resident for
+  photos, no extra RAM and no extra model slot). One env var swaps to it if
+  fidelity is ever wanted over brevity.
+- **The prompt is `phrasing.INSTRUCTION`, versioned like the vision ones.**
+  Three drafts, and both rewrites came from measurement. The first let every
+  model invent what was in an undescribed bag ("3 bags of assorted items
+  including a bag of screws, a bag of nails"). The second fixed that. The
+  third dropped a worked example that was leaking into short lists.
+- **Nothing under `phrasing.ENOUGH` (3) distinct things is sent to a model at
+  all.** With one or two lines every candidate padded its answer out of the
+  prompt's own example -- "Kitchen essentials - a kettle, clamps and a tin of
+  screws" for a box holding a kettle. There is nothing to generalise from two
+  things, and "kettle, toaster" is already the best line those contents have.
+  So the brief's three-unnamed-bags case correctly answers "3 bags", from the
+  assembler.
+- **Falling back is the normal case, not the error case.** No model
+  configured, too little to generalise from, Ollama down, the model not
+  pulled, an answer past `TIMEOUT` (5 s -- ten times the measured warm answer,
+  and short enough that a press landing while the photo worker holds Ollama
+  falls back rather than hanging), a reply with no JSON in it: every one hands
+  back `summarise.from_items` and says which in the response's `source`
+  (`"model"` or `"assembled"`). Offline keeping working was a project choice
+  long before this.
+- **`config.phrase_summaries` is off in the dataclass and on in `from_env`**,
+  the same shape as `auto_analyse` and for the same reason: every test builds
+  a Config directly, so nothing in the suite can reach a model. Verified by
+  running the suite with Ollama's port blocked at the socket. Off, the button
+  still assembles -- which is also the switch (`MOVING_PHRASE_SUMMARIES=0`) if
+  the phrasing is not wanted. `MOVING_VISION_PROVIDER=stub` gives a
+  deterministic phraser too, so the browser checks never touch a model.
+
+**The summary model is kept warm, and Ollama only holds three.**
+`phrasing.Warmer` is a daemon thread started by the app's lifespan handler,
+shaped like `AutoOffWatcher` but it never stops -- the point is that the model
+is still resident hours later, when the next box is packed. A cold load is
+seconds against a warm answer's third of one, which is the only reason a button
+can afford a model at all. It cannot fail startup and cannot die: Ollama being
+down, or the model not pulled, is logged at debug and retried every minute.
+
+- **`OLLAMA_MAX_LOADED_MODELS` defaults to 3, and this app now wants exactly
+  three** -- the summary model and the two vision ones. Cycling a fourth model
+  past Ollama made *every* press time out at 5 s, on a model that answers in
+  0.27 s when it is the one loaded; it looked like a slow model and was
+  eviction thrash. So the warmer pings every five minutes
+  (`REFRESH = KEEP_ALIVE_SECONDS / 6`) rather than every twenty: the idle
+  timeout is not the only thing that unloads a model, and a ping on one that
+  is already there costs 10-40 ms. Raise `OLLAMA_MAX_LOADED_MODELS` if
+  anything else on the machine starts evicting these.
+- **The warm ping's `num_ctx` must match the real request's.** Ollama keys a
+  loaded model by its runner options, so asking for a different context
+  unloads and reloads the model that was just warmed -- the exact cold start
+  the warmer exists to prevent. `warm_request` and `build_request` both read
+  `phrasing.CONTEXT`, and a test compares them.
+- The preload is `POST /api/generate` with no prompt; Ollama answers
+  `done_reason: "load"` and generates nothing.
 
 **Every uploaded photo is analysed in the background, and what is found is
 applied** (`analysis.py`; spec in `docs/superpowers/specs/2026-09-18-photo-analysis.md`).
@@ -522,8 +612,19 @@ word from the generated comment; they are escaped now.
   (`summarise.from_items`). The "From contents" button puts one in the field,
   which autosaves like any edit (Undo restores the old one) and so becomes the
   person's. Photo analysis *applies* one, but only to a summary that is empty
-  or already autogenerated. Plain assembly either way:
-  instant, identical every time, offline.
+  or already autogenerated.
+- **What is nested inside counts as contents** (`summarise.contents`, and
+  `from_contents` over it). A crate holding three bags is not an empty crate,
+  and said so on its label until this landed -- the print gate had counted
+  children since nesting, but the summary was built from the `items` table
+  alone. A child contributes its own `content_summary` when it has one
+  ("winter coats" beats the word "bag" on the outer label) and otherwise what
+  it *is*, in the list rows' words: "large box", "bag", "loose item". The size
+  is spelled in full where `rowStatus` abbreviates to "XL" -- that exists for
+  a narrow cell that cannot wrap. Mapping lives in `summarise` rather than at
+  each call site because there are three of those (the endpoint, the photo
+  worker, and the model prompt) and they must agree; feeding `_merge`
+  well-formed names is what makes three bags read as "3 bags".
 - **AI output is provenance-tagged**: items the model adds get `source='ai'`.
   Whether AI output is *applied* depends on the path -- see "Every uploaded
   photo is analysed" above. `ai.draft_for_box` proposes and writes nothing.
@@ -727,8 +828,9 @@ word from the generated comment; they are escaped now.
   every browser check against it: `ui_check` and `wedge_check` (read-only, and
   they assert they wrote nothing -- these two also run against the live service
   after a deploy), and the ones that write -- `autosave_check` (real typing,
-  pauses, blur, Undo, failed saves made at the network layer), `copies_check`
-  and `viewer_check` -- which **refuse port 8787 and any non-loopback host**.
+  pauses, blur, Undo, failed saves made at the network layer), `copies_check`,
+  `viewer_check` and `nesting_check` -- which **refuse port 8787 and any
+  non-loopback host**.
   All drive headless Chrome over CDP with Node's built-in WebSocket, no npm.
   The static guards cannot see an undefined variable inside a click handler;
   these can, and have caught: a stale element reference left by a merge, a
@@ -771,6 +873,34 @@ word from the generated comment; they are escaped now.
 - Scripts live in `scripts/claude/` with a purpose header.
 - Ruff's `B008` is disabled for FastAPI's `Depends`/`Query`/`Header` defaults
   via `extend-immutable-calls` — it is a false positive for that idiom.
+
+## The API key is the app's, not the assistant's
+
+**Mandatory restriction, stated by the owner on 2026-09-20:** "you are not
+allowed to use this api key directly... you may not use this api key for
+anything but the specifically designed operations for classifying images and
+summarizing text to do with the user interactions in the UI."
+
+The Anthropic key lives in `.env` (gitignored, mode 600) and belongs to the
+running application. Its only sanctioned uses are the two the app was built
+for, and only when a person's action in the UI triggers them: classifying an
+uploaded photo, and phrasing a contents list into a record's summary.
+
+**The line is between the app working and the assistant spending.** Starting
+the app and exercising it -- `make run`, the local checks and CI targets,
+uploading a photo, pressing "From contents", "Look closer" -- is the app doing
+the job it was built for, and is sanctioned: that is how the cloud path gets
+verified. What is never sanctioned is a Claude session or subagent calling the
+API *itself*: `curl`, the SDK, a REPL, or a script of its own, whether to check
+the key works, benchmark a model, compare providers, or try a prompt. Route
+every real call through the application's own code paths, and keep the spend to
+what a person's use of the app would have cost.
+
+Being unable to *read* the key is not the restriction; the restriction is on
+*using* it, and it holds wherever a key is reachable. `.claude/settings.json`
+denies reading `.env`, `security find-generic-password` and `op read`, which
+says how the owner wants this handled. Build and prove everything against fakes
+and `MOVING_VISION_PROVIDER=stub`; no test may make a network call.
 
 ## Domain model gotcha
 
@@ -816,15 +946,97 @@ house. It sits in the app's own top-left corner as the origin, and it also
 reads as a home packed in a box. One evenodd path on a 16-unit grid with every
 coordinate even (ring 2, gap 2, house 8), so it is pixel-exact at 16, 24 and
 32 px -- which is why it is drawn at 32 on a phone and 24 in the desktop bar,
-never 28. Inline SVG so `currentColor` follows the theme; true black, no
-radius, no accent. Chosen over "the label as an object" (read as a dashboard,
+never 28. Inline SVG so `currentColor` follows the theme; true black, hard
+corners, no accent. Chosen over "the label as an object" (read as a dashboard,
 or as "print") and the ISO this-way-up arrows (read as "upload"). Not yet used
 as the PWA icon, which is still a white bar on black and reads as a minus sign.
 
+**The icon family is the home mark's grid, and ships in three places only**
+(source, the rejected sketches and the reasoning in `docs/design/icons/`; the
+marks are inlined as one `<symbol>` sprite at the top of `<body>` in
+`index.html` and drawn as `<svg class="i"><use href="#i-...">`). One evenodd
+path each, no radius, no accent, no icon font, nothing from `node_modules`.
+
+- **The nav bar**: the mark over the word at 24 px on a phone (which is why
+  the bar is `--bar`, 56 px, and everything floating above it -- `#live`, the
+  version -- measures from `--bar` and not from `--tap`), beside the word at
+  20 px on a desktop. **Never a mark without its word**: "Items" and "New"
+  are not guessable from a list glyph and a plus.
+- **The list row's empty thumbnail**: the record's own kind at 26 px
+  (`--kind-icon`), where one generic open box used to be drawn on every row.
+  It sits *under* the photo, as the old placeholder did, so nothing decides
+  which of the two shows. `kindIcon()` in `covers.js`, beside `rowStatus`.
+- **The three handling flags** at 16 px, in the `.chip` toggles and the
+  `.flag` badges. Fragile and heavy are the printed label's own glyphs, which
+  is the whole argument for them; open-first (a 1) is the one invented mark.
+
+Four traps, each of which fails silently:
+
+- **`fill` must be set on the referencing element, not on the sprite.** A
+  `<use>` clones the symbol into a shadow tree whose ancestors are the
+  referencing `<svg>` -- the sprite's own root is not among them, so its
+  `fill="currentColor"` never reaches the paths. That is the `.i` rule; miss
+  it and every mark is black, which in dark mode is black on black. It is
+  also what makes a chip's `on` state carry its glyph: the colour is the
+  chip's state, never the icon's.
+- **A `<use>` at a symbol that is not there draws nothing, in silence** -- no
+  console error, no broken-image box. `tests/test_web_icons.py` checks every
+  id against the sprite; `ui_check` resolves and measures them for real.
+- **`document.createElement("svg")` makes an HTMLUnknownElement** that
+  renders nothing. `iconNode()` uses `createElementNS`; `iconMarkup()` is the
+  template-literal form, and `setIcon()` lets a row change kind in place.
+- **The marks are decoration**: every one is `aria-hidden`, the word beside
+  it is the accessible name, and nothing labelled lost its name.
+
+**Drawn, tried and turned down** (NOTES.md 4-6; putting them back is a
+regression, not a gap): the status track (open and unpacked are the same open
+box; the track already says done / now / next in words), the nesting buttons
+and the breadcrumb `›` (arrows into and out of a tray read as download and
+upload; the separator is typographic), the section headings, Delete (a bin
+icon invites the tap the danger section exists to prevent), "Look closer" (a
+magnifier promises zoom) and the size row (there is no honest picture of
+"medium").
+
+**`--radius: 4px` -- the box-like surfaces are slightly rounded** (asked for
+2026-09-20, reversing the earlier "no radius"). Through the token and never a
+literal, and a test walks every `border-radius` in the stylesheet and allows
+only `var(--radius)`, `50%` (the spinner and the countdown ring) and `0`.
+Rounded: the form controls (one rule, so every button, field, chip and status
+step), the pushbutton rows (*every* button in a row, not the ends only -- the
+row wraps), the list row's thumbnail, dialogs and the viewer's image, the
+live-refresh banner, `.say`, and the photo figure as one card whose parts keep
+square corners. **The printed label is untouched** -- it is rendered in Python
+onto tape and a thermal printer's corners are square. Two on-screen elements
+mirror the tape most directly and are rounded anyway, so they are the two to
+change if that is ever regretted: the room band and the flag badges (on a
+phone the band bleeds past both screen edges, so its radius shows only on a
+desktop). Square on purpose: `.section` and `.err` are a rule, not a box; the
+printer badge is a slice of the bar; and the icons and the home mark are
+glyphs -- type, not surfaces.
+
+**A container's contents are drawn at half again a list row's size**
+(`#inside { --thumb: 66px; --kind-icon: 40px; }`, overriding the tokens rather
+than restating sizes). The list is an index; what is inside the crate in your
+hands is the thing you are looking at. 40 rather than the arithmetic 39
+because multiples of 8 land every edge of a 16-unit glyph on a pixel.
+
+**The way out of a nested record is a tap target, not a caption.** The
+breadcrumb links and the link in "What it is inside" are one rule (`.trail a,
+#inside-of a`): body size, bold, and padded to a full `--tap` on the touch
+dimension -- horizontal padding stays at about a space, so the sentence still
+reads as one. `#inside-of` keeps that height **whether or not there is a link
+in it**, because a move redraws it in place and the section below must not
+jump. It is a flex row, which is why `showInside()` wraps its sentence in a
+span: a flex container turns each text run into an anonymous item and drops
+the spaces around it, so "Inside B-0012 (crate)." would arrive unspaced.
+`#goes-with` carries the same link and is deliberately left at caption size --
+it is a statement about where the record is going, not the way out.
+
 Design note: the PWA deliberately mirrors the printed label — Inter (served from
 the package, not duplicated), the code set huge as the hero, room in the same
-black knockout band, true black rather than a tinted near-black. The point is
-that after scanning a physical object the screen confirms it is the same one.
+black knockout band, true black rather than a tinted near-black. The corners
+are the one deliberate departure. The point is that after scanning a physical
+object the screen confirms it is the same one.
 
 **Every phase of the plan is built.** Schema, store, REST API, search, label
 rendering, three printer backends, CLI, PWA with scanner, exports, manifest,
@@ -843,6 +1055,12 @@ Since then (2026-09-18, 422 tests): box/item/tub kinds with per-prefix
 configurable codes, cover photos, soft delete with a bin, handling-flag
 toggles (fragile/heavy/open-first) that print as icon chips, the printer badge
 in the nav bar, the auto-power-off watcher, and the 3-inch label redesign.
+
+And since that (2026-09-20, 703 tests): things inside things, and then a pass
+over the look -- the icon family in the bar, the list row and the handling
+flags; `--radius: 4px` on the box-like surfaces; a container's contents drawn
+half again the size of a list row; and the way out of a nested record made a
+tap target. All four are written up above, under the home mark.
 Remote: **github.com/rhooper/moving (private)** — push after merging to main.
 
 Known limitations that are real, not decisions:
