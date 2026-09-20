@@ -785,6 +785,17 @@ try {
   await waitFor(`${q("#container .autosave-state")}.textContent === "Saved"`, "the move to save");
   sent = writesSince(mark);
   check("Put it inside saves the move, once", sent.length === 1 && JSON.stringify(patchOf(sent[0])) === JSON.stringify({ parent_code: crate2.code }), show(sent));
+  // This record was marked fragile earlier on, and the crate is not: the page
+  // offers to mark the crate too. Declined here; nesting_check.mjs accepts.
+  const notNow = async (what) => {
+    await waitFor(`Boolean(document.querySelector("dialog.ask[open]"))`, `the fragile prompt ${what}`);
+    const said = await evaluate(`document.querySelector("dialog.ask[open] p").textContent`);
+    await click("dialog.ask [value=no]");
+    await waitFor(`!document.querySelector("dialog.ask[open]")`, "Not now");
+    return said;
+  };
+  check("a fragile thing put inside an unmarked container is asked about", (await notNow("on the move")).includes(crate2.code));
+  check("Not now leaves the container unmarked", (await server(`/api/boxes/${crate2.code}`)).fragile === 0);
   check("the page shows where it is now, breadcrumb and all, without a redraw",
         (await insideOf()) === `Inside ${crate2.code} (hallway crate).` && (await trailText()) === `${crate2.code} › this` && (await pageSurvived()),
         `${await insideOf()} / ${await trailText()}`);
@@ -805,6 +816,7 @@ try {
   check("a scanned QR (a URL) is understood as the code", (await foundText()) === `${crate2.code}: hallway crate.`, await foundText());
   await click("#container-put");
   await waitFor(`${q("#container .autosave-state")}.textContent === "Saved"`, "the scanned move to save");
+  await notNow("on the scanned move");
   check("and put inside", (await record()).parent?.code === crate2.code);
   mark = writes().length;
   await click("#container-take");
@@ -838,7 +850,7 @@ try {
   await waitFor(`${q("#container .autosave")}.classList.contains("warn")`, "the server's refusal");
   line = await lineOf("container");
   check("the server refuses the loop; its reason is on the line, no dialog, and it stays where it was",
-        /^Not saved — /.test(line.text) && /inside/.test(line.text) && !(await dialogOpen()) && (await record()).parent === null
+        line.text.startsWith("Not saved — ") && /inside/.test(line.text) && !(await dialogOpen()) && (await record()).parent === null
           && (await insideOf()) === "Not inside anything.", JSON.stringify(line));
   sent = writesSince(mark);
   check("and it is not retried", sent.length === 1 && sent[0].status === 422, show(sent));

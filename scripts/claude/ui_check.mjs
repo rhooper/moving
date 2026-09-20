@@ -384,7 +384,7 @@ const IN_NESTED = async () => {
   const child = full.children[0];
   await open(`#/b/${child.code}`, "#trail");
   check("a nested record shows the way out above its code, each step a link",
-        $("#trail a")?.getAttribute("href") === `#/b/${holder.code}` && /this$/.test($("#trail").textContent.trim())
+        $("#trail a")?.getAttribute("href") === `#/b/${holder.code}` && $("#trail").textContent.trim().endsWith("this")
           && $("#trail").compareDocumentPosition($("h1.code")) & Node.DOCUMENT_POSITION_FOLLOWING,
         $("#trail")?.innerText);
   check("and says what it is inside, as a link", $("#inside-of a")?.getAttribute("href") === `#/b/${holder.code}`, $("#inside-of")?.textContent);
