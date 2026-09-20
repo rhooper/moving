@@ -48,6 +48,14 @@ class NotDeleted(ValueError):
     """Purging applies only to something already in the bin."""
 
 
+class NotEmpty(ValueError):
+    """A container with things still inside it cannot be deleted.
+
+    Binning it would strand them: out of the list because they are nested, and
+    out of reach because the thing they are nested in is gone.
+    """
+
+
 def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return dict(row) if row is not None else None
 
@@ -90,9 +98,22 @@ def list_rooms(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 # --- boxes ---------------------------------------------------------------
 
 
-def create_box(conn: sqlite3.Connection, *, actor: str | None = None, **fields) -> dict[str, Any]:
-    """Create a box with the next unused code, indexed and logged."""
-    unknown = set(fields) - set(EDITABLE)
+def create_box(
+    conn: sqlite3.Connection,
+    *,
+    actor: str | None = None,
+    parent_code: str | None = None,
+    **fields,
+) -> dict[str, Any]:
+    """Create a box with the next unused code, indexed and logged.
+
+    `parent_code` creates it already inside a container. It is checked before
+    anything is written, so a refused parent does not cost a code.
+    """
+    parent_id = _parent_for(conn, None, parent_code) if parent_code is not None else None
+    if parent_id is not None:
+        fields = {**fields, "parent_id": parent_id}
+    unknown = set(fields) - set(EDITABLE) - {"parent_id"}
     if unknown:
         raise ValueError(f"Not settable at creation: {sorted(unknown)}")
 
@@ -133,6 +154,10 @@ def update_box(conn: sqlite3.Connection, code: str, **fields) -> dict[str, Any]:
     if "kind" in fields:
         kinds.check(fields["kind"])
     becoming = fields.get("kind", box["kind"])
+    if not kinds.holds_contents(becoming) and children_of(conn, code):
+        raise ValueError(
+            f"{code} has things inside it, so it has to stay a container. Move them out first."
+        )
     if "size" in fields:
         kinds.check_size(fields["size"], becoming)
     elif not kinds.holds_contents(becoming) and box["size"] is not None:
@@ -166,6 +191,13 @@ def delete_box(
     box = get_box(conn, code)
     if box is None:
         return False
+    inside = children_of(conn, code)
+    if inside:
+        raise NotEmpty(
+            f"{code} has {len(inside)} thing{'' if len(inside) == 1 else 's'} inside it "
+            f"({', '.join(c['code'] for c in inside[:5])}{'...' if len(inside) > 5 else ''}). "
+            f"Move them out or delete them first."
+        )
 
     conn.execute(
         "UPDATE boxes SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
@@ -295,6 +327,18 @@ _COVER = """(
      WHERE photos.box_id = boxes.id AND photos.is_primary = 1
 ) AS cover_photo_id"""
 
+#: How many things are directly inside, not counting anything in the bin. An
+#: index seek per row (idx_boxes_parent), bounded by the page size.
+_INSIDE = """(
+    SELECT COUNT(*) FROM boxes AS inner_box
+     WHERE inner_box.parent_id = boxes.id AND inner_box.deleted_at IS NULL
+) AS child_count"""
+
+#: The code of what it is inside, so a search result can say where it is.
+_PARENT = """(
+    SELECT outer_box.code FROM boxes AS outer_box WHERE outer_box.id = boxes.parent_id
+) AS parent_code"""
+
 
 def list_boxes(
     conn: sqlite3.Connection,
@@ -320,6 +364,11 @@ def list_boxes(
             return []
         where.append(f"id IN ({', '.join('?' * len(matched))})")
         params.extend(matched)
+    else:
+        # Browsing shows the top level only: what is inside something is seen
+        # by opening it. *Searching* looks everywhere -- "where is the
+        # samovar?" must find the bag in the box in the crate.
+        where.append("parent_id IS NULL")
     if status is not None:
         where.append("status = ?")
         params.append(status)
@@ -335,7 +384,8 @@ def list_boxes(
 
     clause = f"WHERE {' AND '.join(where)}"
     rows = conn.execute(
-        f"SELECT *, {_COVER} FROM boxes {clause} ORDER BY id DESC LIMIT ? OFFSET ?",
+        f"SELECT *, {_COVER}, {_INSIDE}, {_PARENT} FROM boxes {clause} "
+        f"ORDER BY id DESC LIMIT ? OFFSET ?",
         (*params, limit, offset),
     ).fetchall()
     boxes = [dict(r) for r in rows]
@@ -390,7 +440,9 @@ def has_contents(conn: sqlite3.Connection, code: str) -> bool:
     named = bool((box.get("content_summary") or "").strip())
     if not kinds.holds_contents(box.get("kind") or kinds.DEFAULT):
         return named
-    return named or bool(list_items(conn, code))
+    # A crate of three bags says enough about itself, with nothing typed and
+    # no items of its own.
+    return named or bool(list_items(conn, code)) or bool(children_of(conn, code))
 
 
 def room_name(conn: sqlite3.Connection, room_id: int | None) -> str | None:
@@ -398,6 +450,85 @@ def room_name(conn: sqlite3.Connection, room_id: int | None) -> str | None:
         return None
     row = conn.execute("SELECT name FROM rooms WHERE id = ?", (room_id,)).fetchone()
     return row["name"] if row else None
+
+
+# --- nesting ---------------------------------------------------------------
+#
+# A record may be inside one other record. `parent_id` has no foreign key (see
+# migration 0009), so everything that keeps it honest is here.
+
+
+def _parent_for(conn: sqlite3.Connection, code: str | None, parent_code: str | None) -> int | None:
+    """The id to store for `parent_code`, or raise ValueError saying why not.
+
+    `code` is the record being moved, or None for one that does not exist yet.
+    """
+    if parent_code is None:
+        return None
+    parent = get_box(conn, parent_code)
+    if parent is None:
+        raise ValueError(f"there is no {parent_code} to put it inside")
+    if not kinds.holds_contents(parent["kind"] or kinds.DEFAULT):
+        raise ValueError(
+            f"{parent_code} is a {kinds.label_for(parent['kind']).lower()}, not a container: "
+            f"nothing can go inside it"
+        )
+    if code is not None:
+        if parent_code == code:
+            raise ValueError(f"{code} cannot go inside itself")
+        # Walk outwards from the would-be parent. Meeting the record being
+        # moved means it is already somewhere inside that record.
+        if code in [step["code"] for step in [*path_to(conn, parent_code), parent]]:
+            raise ValueError(
+                f"{parent_code} is already inside {code}, so {code} cannot go inside it"
+            )
+    return parent["id"]
+
+
+def set_parent(conn: sqlite3.Connection, code: str, parent_code: str | None) -> dict[str, Any]:
+    """Put a record inside a container, or (with None) take it out."""
+    box = _require(conn, code)
+    parent_id = _parent_for(conn, code, parent_code)
+    conn.execute(
+        "UPDATE boxes SET parent_id = ?, updated_at = datetime('now') WHERE id = ?",
+        (parent_id, box["id"]),
+    )
+    return get_box(conn, code)
+
+
+def children_of(conn: sqlite3.Connection, code: str) -> list[dict[str, Any]]:
+    """What is directly inside, oldest first, leaving out anything in the bin.
+
+    Shaped like a row of the list -- cover photo, count of what is inside *it* --
+    because that is how the record page draws them.
+    """
+    box = get_box(conn, code, include_deleted=True)
+    if box is None:
+        return []
+    rows = conn.execute(
+        f"SELECT *, {_COVER}, {_INSIDE}, {_PARENT} FROM boxes "
+        f"WHERE parent_id = ? AND deleted_at IS NULL ORDER BY id",
+        (box["id"],),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def path_to(conn: sqlite3.Connection, code: str) -> list[dict[str, Any]]:
+    """The containers a record is inside, outermost first. Empty at top level.
+
+    Bounded, so a loop that somehow got into the data cannot hang a request.
+    """
+    box = get_box(conn, code, include_deleted=True)
+    steps: list[dict[str, Any]] = []
+    seen = set()
+    while box is not None and box["parent_id"] is not None and box["parent_id"] not in seen:
+        seen.add(box["parent_id"])
+        row = conn.execute("SELECT * FROM boxes WHERE id = ?", (box["parent_id"],)).fetchone()
+        box = dict(row) if row else None
+        if box is not None:
+            steps.append(box)
+    # Walked outwards from the record; a breadcrumb reads inwards.
+    return list(reversed(steps))
 
 
 # --- items ---------------------------------------------------------------

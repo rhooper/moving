@@ -40,6 +40,9 @@ class BoxWrite(Strict):
     group_name: str | None = None
     group_index: int | None = None
     group_total: int | None = None
+    #: The code of the container this is inside; null takes it out. By code
+    #: rather than id because a code is what people and labels carry.
+    parent_code: str | None = None
 
     def set_fields(self) -> dict:
         """Only the fields the caller actually sent."""
