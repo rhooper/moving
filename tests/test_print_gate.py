@@ -91,6 +91,26 @@ class TestSuggestedSummary:
 
         assert client.get(f"/api/boxes/{empty}").json()["content_summary"] is None
 
+    def test_what_is_nested_inside_is_suggested_too(self, client, empty):
+        # Three bags in a crate: "3 bags", not an empty suggestion and not
+        # "bag, bag, bag".
+        for _ in range(3):
+            client.post("/api/boxes", json={"kind": "bag", "parent_code": empty})
+
+        suggestion = client.get(f"/api/boxes/{empty}/summary-suggestion").json()
+
+        assert suggestion["summary"] == "3 bags"
+
+    def test_a_nested_record_offers_its_own_summary_to_its_container(self, client, empty):
+        client.post(
+            "/api/boxes",
+            json={"kind": "bag", "parent_code": empty, "content_summary": "winter coats"},
+        )
+
+        suggestion = client.get(f"/api/boxes/{empty}/summary-suggestion").json()
+
+        assert suggestion["summary"] == "winter coats"
+
     def test_a_box_with_no_items_suggests_nothing(self, client, empty):
         assert client.get(f"/api/boxes/{empty}/summary-suggestion").json()["summary"] == ""
 

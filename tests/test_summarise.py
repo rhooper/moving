@@ -58,3 +58,49 @@ def test_truncation_says_how_many_were_left_out():
 def test_items_keep_their_given_order():
     # The order things were listed usually reflects what is most notable.
     assert summarise.from_items(items("piano", "sock")).startswith("piano")
+
+
+def child(kind="bag", *, summary=None, size=None):
+    """A nested record, shaped as store.children_of returns one."""
+    return {"kind": kind, "content_summary": summary, "size": size}
+
+
+class TestWhatIsNestedInside:
+    """A container's children are contents too.
+
+    A crate holding three bags is not empty, and its label should not say so.
+    """
+
+    def test_unnamed_children_merge_rather_than_repeating(self):
+        # Three bags, none of them described: "3 bags", not "bag, bag, bag".
+        result = summarise.from_contents([], [child(), child(), child()])
+
+        assert result == "3 bags"
+
+    def test_a_child_that_has_a_summary_contributes_it(self):
+        inside = [child("box", summary="kettle and mugs")]
+
+        assert summarise.from_contents([], inside) == "kettle and mugs"
+
+    def test_a_child_without_one_is_named_by_its_size_and_kind(self):
+        # The same words the list rows use, so the label and the app agree.
+        inside = [child("crate", size="large"), child("crate", size="large")]
+
+        assert summarise.from_contents([], inside) == "2 large crates"
+
+    def test_a_loose_thing_inside_is_named_by_what_it_is(self):
+        assert summarise.from_contents([], [child("item")]) == "loose item"
+
+    def test_items_come_before_what_is_nested_inside(self):
+        result = summarise.from_contents(items("kettle"), [child()])
+
+        assert result == "kettle, bag"
+
+    def test_a_child_named_like_an_item_merges_with_it(self):
+        # Counting is the whole point of the merge: two bags, not "bag, bag".
+        result = summarise.from_contents([{"name": "bag", "qty": 1}], [child()])
+
+        assert result == "2 bags"
+
+    def test_with_no_children_it_is_the_plain_assembly(self):
+        assert summarise.from_contents(items("kettle", "toaster")) == "kettle, toaster"

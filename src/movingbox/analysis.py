@@ -279,6 +279,11 @@ def refresh_summary(conn: sqlite3.Connection, code: str, *, described: str | Non
     back as one good sentence and no items, and the record said nothing at all.
     Items win as soon as there are any -- they are what search and the contents
     list are made of, and a summary that disagrees with them reads as a bug.
+
+    Plain assembly, deliberately: this runs in the worker, behind a vision call
+    that is already the bottleneck, and a second model round-trip would make
+    every photo slower for a line nobody is waiting on. "From contents" is the
+    path a person waits on, and that one phrases -- see `phrasing.py`.
     """
     box = store.get_box(conn, code)
     if box is None:
@@ -288,7 +293,13 @@ def refresh_summary(conn: sqlite3.Connection, code: str, *, described: str | Non
         return False
 
     fallback = " ".join((described or "").split())[: base.SUMMARY_MAX].strip()
-    summary = summarise.from_items(store.list_items(conn, code)) or fallback or None
+    # What is nested inside counts as contents too: a crate holding three
+    # bags is not empty, and its label should not read as though it were.
+    summary = (
+        summarise.from_contents(store.list_items(conn, code), store.children_of(conn, code))
+        or fallback
+        or None
+    )
     if summary == box["content_summary"] and box["summary_source"] == "auto":
         return False
     conn.execute(

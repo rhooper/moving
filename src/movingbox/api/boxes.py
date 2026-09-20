@@ -290,13 +290,17 @@ def delete_item(
 
 @router.get("/boxes/{code}/summary-suggestion")
 def suggest_summary(code: str, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
-    """A summary assembled from the box's items.
+    """A summary of the box's items and of whatever is nested inside it.
 
     Proposed, never applied -- the same rule as a photo draft. The caller puts
     it in the field and decides whether to keep it.
+
+    What is inside counts as contents: a crate holding three bags is not empty,
+    and the print gate has said so since nesting landed.
     """
     _require_readable(conn, code)
-    return {"summary": summarise.from_items(store.list_items(conn, code))}
+    contents = summarise.contents(store.list_items(conn, code), store.children_of(conn, code))
+    return {"summary": summarise.from_items(contents)}
 
 
 @router.get("/boxes/{code}/events")
