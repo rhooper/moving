@@ -117,6 +117,11 @@ const band = () => evaluate(`(() => { const b = ${q("#room-band")}; return b.hid
 const roomRow = () => evaluate(`(() => { const r = ${q('.seg[data-name="destination_room_id"]')}; return r ? { hidden: r.hidden, disabled: r.disabled } : null; })()`);
 const goesWith = () => evaluate(`(() => { const l = ${q("#goes-with")}; return l && !l.hidden ? l.textContent : null; })()`);
 const fragileOf = async (code) => (await api(`/boxes/${code}`)).fragile;
+// Measured rather than read off the stylesheet: a tap target is a rendered
+// box, and --tap is a token two rules have to agree about.
+const reach = (selector) => evaluate(`(() => { const el = ${q(selector)}; if (!el) return null;
+  const b = el.getBoundingClientRect();
+  return { h: Math.round(b.height), size: Math.round(parseFloat(getComputedStyle(el).fontSize)) }; })()`);
 
 try {
   const rooms = await api("/rooms");
@@ -139,6 +144,17 @@ try {
   check("nested: the band shows the inherited room", (await band()) === kitchen.name, await band());
   check("nested: the line links to that container", (await evaluate(`${q("#goes-with a")}?.getAttribute("href")`)) === `#/b/${crate}`);
 
+  // The way out of a nested record: the link a thumb reaches for with the
+  // other hand holding the box. Both places it appears have to be a full tap
+  // tall and set at the body size, not as a caption.
+  const crumb = await reach("#trail a");
+  check("nested: the breadcrumb out is a tap-sized target, at the body size",
+        crumb && crumb.h >= 48 && crumb.size >= 16, JSON.stringify(crumb));
+  const wayOut = await reach("#inside-of a");
+  check("nested: so is the link in 'What it is inside'",
+        wayOut && wayOut.h >= 48 && wayOut.size >= 16, JSON.stringify(wayOut));
+  const lineInside = await reach("#inside-of");
+
   // Take it out: its own row comes back, in place, and the band empties.
   await evaluate(`${q("#summary-form [name=content_summary]")}.__mark = "kept"`);
   await click("#container-take");
@@ -147,6 +163,12 @@ try {
         JSON.stringify(await roomRow()) === JSON.stringify({ hidden: false, disabled: false })
           && (await evaluate(`${q("#summary-form [name=content_summary]")}.__mark`)) === "kept", JSON.stringify(await roomRow()));
   check("taken out: no inherited room, no band, no line", (await band()) === null && (await goesWith()) === null);
+  // The line is redrawn in place when a record is moved, so it must be the
+  // same height with the link gone -- otherwise the section jumps under the
+  // finger that just pressed Take it out.
+  const lineLoose = await reach("#inside-of");
+  check("taken out: the line keeps its height, so nothing below it moves",
+        lineInside && lineLoose && lineInside.h === lineLoose.h, `${JSON.stringify(lineInside)} vs ${JSON.stringify(lineLoose)}`);
   await click("#container .undo");
   await waitFor(`${q('.seg[data-name="destination_room_id"]')}.hidden`, "undoing that");
   check("put back by Undo: the row goes away again and the room returns", (await band()) === kitchen.name && (await goesWith()) !== null);

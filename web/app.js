@@ -1734,7 +1734,13 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
       const link = document.createElement("a");
       link.setAttribute("href", `#/b/${encodeURIComponent(parent.code)}`);
       link.textContent = parent.code;
-      line.replaceChildren("Inside ", link, ` (${describe(parent)}).`);
+      // One span, not three loose children: the line is a flex row (so the
+      // tap-sized link centres in it and the line keeps its height either
+      // way), and a flex container drops the spaces around a bare text run --
+      // "Inside B-0012 (crate)." would come out with no spaces at all.
+      const said = document.createElement("span");
+      said.append("Inside ", link, ` (${describe(parent)}).`);
+      line.replaceChildren(said);
     } else {
       line.textContent = "Not inside anything.";
     }

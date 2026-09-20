@@ -304,10 +304,47 @@ ul.items li.renaming .ai { display: none; }
 
 /* The way out of a nested record: the path, outermost first, above the code.
    One line on a desktop; on a phone it may wrap. */
-.trail { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.3rem 0.45rem; margin: 0.25rem 0 -0.25rem; font-size: 0.9375rem; color: var(--muted); }
-.trail a { font-weight: 650; color: var(--ink); }
+.trail { display: flex; flex-wrap: wrap; align-items: center; gap: 0 0.15rem; margin: 0.25rem 0 -0.25rem; font-size: 1rem; color: var(--muted); }
 .trail .sep { user-select: none; }
 @media (min-width: 46rem) { .trail { flex-wrap: nowrap; white-space: nowrap; } }
+
+/* Both links to the containing record -- the breadcrumb above the code and
+   the line in "What it is inside" -- in one rule, so they cannot drift apart.
+   Asked for as "make the parent container font larger to make it easy to
+   click": this is the link a thumb reaches for while the other hand is
+   holding the box, and it was set as a caption. Body size now, and padded to
+   a full --tap on the touch dimension.
+
+   The padding is what makes the target, so it must not be what makes the
+   layout: the line it sits in keeps the same height whether or not there is
+   a link in it (see #inside-of below), and the first crumb is pulled back by
+   its own padding so the row still starts on the column's edge. A tap target
+   that moves between the press and the release is a bug this project has
+   already had once, on Undo. */
+.trail a, #inside-of a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  /* Vertical is what makes the target; horizontal only has to keep the
+     sentence reading as a sentence, so it stays at the width of a space. */
+  padding-inline: 0.25rem;
+  border-radius: var(--radius);
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+.trail a:first-child { margin-left: -0.25rem; }
+/* The last step of the breadcrumb is the page you are on -- not a link, but
+   spaced like one, so the separators sit evenly between the steps. */
+.trail [aria-current] { padding-inline: 0.25rem; }
+.trail a:focus-visible, #inside-of a:focus-visible { outline: 3px solid var(--signal); outline-offset: -3px; }
+
+/* The line that says what this record is inside. It holds its height whether
+   it carries the link out or says "Not inside anything.", so a move -- which
+   redraws it in place, under a finger -- never shifts the section below it.
+   One flex item: the sentence is wrapped in a span by showInside(), because a
+   flex container would otherwise swallow the spaces around the link. */
+#inside-of { display: flex; flex-wrap: wrap; align-items: center; min-height: var(--tap); margin: 0; font-size: 1rem; }
 
 .empty { color: var(--muted); padding: 2rem 0; }
 .empty p { margin: 0 0 1rem; }
