@@ -179,6 +179,48 @@ class TestWhatTheParentShows:
         assert client.post("/api/labels/print", json={"codes": [crate]}).status_code == 200
 
 
+class TestTheLabel:
+    def test_a_nested_record_with_no_room_prints_its_containers_room(self, client, conn, config):
+        # A nested record goes where its container goes: the label says so.
+        from movingbox.api.labels import _label_for
+
+        room = client.post("/api/rooms", json={"name": "Kitchen"}).json()["id"]
+        crate = made(client, kind="crate", destination_room_id=room)
+        box = made(client, kind="box", parent_code=crate)
+        bag = made(client, kind="bag", parent_code=box)
+
+        assert _label_for(conn, bag, config).room == "Kitchen"
+
+    def test_the_containers_room_wins_over_a_room_of_its_own(self, client, conn, config):
+        # A box that was going to the garage and was then put in a crate for the
+        # kitchen goes to the kitchen: it is in the crate. Its own room stays in
+        # the database for when it is taken out again.
+        from movingbox.api.labels import _label_for
+
+        kitchen = client.post("/api/rooms", json={"name": "Kitchen"}).json()["id"]
+        garage = client.post("/api/rooms", json={"name": "Garage"}).json()["id"]
+        crate = made(client, kind="crate", destination_room_id=kitchen)
+        own = made(client, kind="box", parent_code=crate, destination_room_id=garage)
+
+        assert _label_for(conn, own, config).room == "Kitchen"
+        assert client.get(f"/api/boxes/{own}").json()["destination_room_id"] == garage
+        client.patch(f"/api/boxes/{own}", json={"parent_code": None})
+        assert _label_for(conn, own, config).room == "Garage"
+
+    def test_no_container_with_a_room_falls_back_to_its_own(self, client, conn, config):
+        from movingbox.api.labels import _label_for
+
+        garage = client.post("/api/rooms", json={"name": "Garage"}).json()["id"]
+        crate = made(client, kind="crate")
+        own = made(client, kind="box", parent_code=crate, destination_room_id=garage)
+        bare = made(client, kind="bag", parent_code=crate)
+        alone = made(client, kind="box")
+
+        assert _label_for(conn, own, config).room == "Garage"
+        assert _label_for(conn, bare, config).room is None
+        assert _label_for(conn, alone, config).room is None
+
+
 class TestTheListAndSearch:
     def test_nested_records_stay_out_of_the_top_level_list(self, client):
         crate = made(client, kind="crate")
