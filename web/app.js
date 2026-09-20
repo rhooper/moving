@@ -14,8 +14,8 @@ import {
   reconcile,
 } from "/live.js";
 import {
-  addedInside, addInsideRequest, blockedDelete, describe, editorSections, inheritedRoom,
-  kindsToAddInside, mayHold, notYetFragile, trail,
+  addedInside, addInsideRequest, blockedDelete, cameraTrouble, describe, editorSections, frameSize,
+  inheritedRoom, kindsToAddInside, mayHold, notYetFragile, trail,
 } from "/nesting.js";
 import { choose, chosen, restrict, segmented } from "/segmented.js";
 import { splitItems } from "/text.js";
@@ -703,6 +703,10 @@ async function offerFragileClimb(record) {
   return steps;
 }
 
+// How hard a captured frame is squeezed. The server re-encodes anyway; this is
+// only about what goes over the wifi.
+const PHOTO_QUALITY = 0.82;
+
 // --- adding something inside a container ----------------------------------------
 //
 // Resolves when the dialog closes. Creating is POST /api/boxes with the kind,
@@ -722,12 +726,20 @@ function addInside({ parent, kinds, rooms, shape }) {
     <p class="meta">It goes where the ${what} goes. Everything else can be done from its own page.</p>
     <div data-seg="kind"></div>
     <p class="dlabel">A photo of it, if there is something to see</p>
-    <div class="row">
-      <label class="btn" for="adder-shot">Take a photo
-        <input id="adder-shot" type="file" accept="image/*" capture="environment" hidden>
-      </label>
+    <div class="shotbox" id="adder-box" hidden>
+      <video id="adder-cam" playsinline muted hidden></video>
+      <img id="adder-still" alt="What was just photographed" hidden>
+    </div>
+    <div class="row" id="adder-shots" hidden>
+      <button class="btn" type="button" id="adder-shutter">Take the photo</button>
+      <button class="btn quiet" type="button" id="adder-retake" hidden>Take another</button>
     </div>
     <p class="meta" id="adder-photo">No photo yet, and none is needed. A photo is read in the background and names what is inside.</p>
+    <div class="row">
+      <label class="btn quiet" for="adder-shot">Choose a photo
+        <input id="adder-shot" type="file" accept="image/*" hidden>
+      </label>
+    </div>
     <div data-seg="source_room_id"></div>
     <p class="meta warn" id="adder-said" hidden></p>
     <form method="dialog" class="row adder-acts">
@@ -743,13 +755,119 @@ function addInside({ parent, kinds, rooms, shape }) {
     name: "source_room_id", legend: "Packed from", options: roomChoices(forSource(rooms)),
     optional: true, empty: "Not recorded" }));
 
+  // The viewfinder, live in the dialog: "can we use javascript to have a live
+  // camera immediately during adding a subitem?" -- point and tap, instead of
+  // handing off to the camera app and coming back through its confirm screen.
+  // Asked for when the dialog opens rather than at page load: nobody wants a
+  // camera prompt for browsing a list.
+  //
+  // Everything about it that can fail is ordinary -- no permission, no camera,
+  // a plain LAN address -- so none of it is an error: the line says which
+  // happened, the box is put away rather than left grey and dead, and the file
+  // picker underneath is still there. That picker has no `capture` attribute
+  // on purpose: the live camera is the camera now, and its job is the other
+  // half, choosing a photo already taken.
   const shot = dialog.querySelector("#adder-shot");
   const photoLine = dialog.querySelector("#adder-photo");
+  const box = dialog.querySelector("#adder-box");
+  const cam = dialog.querySelector("#adder-cam");
+  const still = dialog.querySelector("#adder-still");
+  const shots = dialog.querySelector("#adder-shots");
+  const shutter = dialog.querySelector("#adder-shutter");
+  const retake = dialog.querySelector("#adder-retake");
+  const say = (text) => setText(photoLine, text);
+  let stream = null;
+  let captured = null;   // { blob, name } from the viewfinder
+  let preview = null;    // the object URL behind the thumbnail, to be revoked
+
+  // One way out for the camera, whatever closed the dialog: `close` fires for
+  // Cancel, Escape, the backdrop and a finished Add alike, so this is the only
+  // place that stops anything. A track left running keeps the camera light on
+  // and drains a phone that is carried round a house all day.
+  const release = () => {
+    if (stream) for (const track of stream.getTracks()) track.stop();
+    stream = null;
+    if (preview) { URL.revokeObjectURL(preview); preview = null; }
+  };
+
+  function showViewfinder() {
+    box.hidden = false;
+    still.hidden = true;
+    cam.hidden = false;
+    shots.hidden = false;
+    shutter.hidden = false;
+    retake.hidden = true;
+    say("Point it at what is going in, then take the photo.");
+  }
+
+  function showPhoto(url, note) {
+    box.hidden = false;
+    still.src = url;
+    still.hidden = false;
+    cam.hidden = true;
+    // Another go only while there is a camera to go back to.
+    shots.hidden = !stream;
+    shutter.hidden = true;
+    retake.hidden = !stream;
+    say(note);
+  }
+
+  async function startCamera() {
+    // Checked before asking: over a plain LAN address getUserMedia rejects
+    // with nothing that explains itself (CLAUDE.md, "HTTPS is not optional").
+    if (!window.isSecureContext) { say(cameraTrouble(null, { secure: false })); return; }
+    say("Starting the camera…");
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        // Photographing a box wants the back camera.
+        video: { facingMode: { ideal: "environment" } },
+      });
+    } catch (error) {
+      say(cameraTrouble(error));
+      return;
+    }
+    if (!dialog.isConnected) { release(); return; }   // closed while it was asking
+    cam.srcObject = stream;
+    await cam.play().catch(() => { /* autoplay refused; the frames still come */ });
+    showViewfinder();
+  }
+
+  shutter.addEventListener("click", async () => {
+    const size = frameSize(cam.videoWidth, cam.videoHeight);
+    if (!size) { say("The camera has not quite started. Give it a moment."); return; }
+    const canvas = document.createElement("canvas");
+    canvas.width = size.width;
+    canvas.height = size.height;
+    canvas.getContext("2d").drawImage(cam, 0, 0, size.width, size.height);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", PHOTO_QUALITY));
+    if (!blob) { say("That frame could not be kept. Take another, or choose a photo."); return; }
+    if (preview) URL.revokeObjectURL(preview);
+    preview = URL.createObjectURL(blob);
+    captured = { blob, name: `${parent.code}-inside.jpg` };
+    shot.value = "";   // one photo at a time: this one wins over an older choice
+    showPhoto(preview, "This is the photo. It is read in the background and names what is inside.");
+  });
+
+  retake.addEventListener("click", () => {
+    captured = null;
+    showViewfinder();
+  });
+
   shot.addEventListener("change", () => {
     const file = shot.files[0];
-    setText(photoLine, file ? `Photo: ${file.name || "taken"}. It will be read once the record exists.`
-                            : "No photo yet, and none is needed.");
+    if (!file) { say("No photo yet, and none is needed."); return; }
+    captured = null;   // the chosen one wins over anything taken here
+    if (preview) URL.revokeObjectURL(preview);
+    preview = URL.createObjectURL(file);
+    showPhoto(preview, `Photo: ${file.name || "chosen"}. It will be read once the record exists.`);
   });
+
+  // Whichever of the two there is; never both.
+  const photoToSend = () => {
+    if (captured) return captured;
+    const file = shot.files[0];
+    return file ? { blob: file, name: file.name || "photo.jpg" } : null;
+  };
 
   // Once the record exists the two Add buttons change meaning: the photo can
   // be tried again, or the record opened to add one there.
@@ -772,10 +890,10 @@ function addInside({ parent, kinds, rooms, shape }) {
             body: JSON.stringify(addInsideRequest({ kind, parentCode: parent.code, sourceRoom: source })),
           });
         }
-        const file = shot.files[0];
-        if (file) {
+        const photo = photoToSend();
+        if (photo) {
           const body = new FormData();
-          body.append("file", file, file.name || "photo.jpg");
+          body.append("file", photo.blob, photo.name);
           try {
             await api(`/boxes/${encodeURIComponent(made.code)}/photos`, { method: "POST", body });
           } catch (error) { photoError = error; }
@@ -808,9 +926,16 @@ function addInside({ parent, kinds, rooms, shape }) {
   });
 
   dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close("no"); });
-  dialog.addEventListener("close", () => dialog.remove());
+  // The tab going away is the one exit that never fires `close`.
+  addEventListener("pagehide", release);
+  dialog.addEventListener("close", () => {
+    release();
+    removeEventListener("pagehide", release);
+    dialog.remove();
+  });
   document.body.append(dialog);
   dialog.showModal();
+  startCamera();
 }
 
 // The line under "Inside this crate", on whichever draw of the page is up,
