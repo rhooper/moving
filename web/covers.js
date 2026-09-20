@@ -157,16 +157,28 @@ export function rowStatus(box) {
 // photo. Not the record's contents list, which is merged from every photo and
 // from whatever people typed -- this is the evidence for one picture, so a
 // wrong item can be traced to the photo it came from.
-export function seenIn(analysis) {
+export function seenIn(analysis, { readable = true } = {}) {
   // `closer`: "offer" once a quick read is in -- including one that found
   // nothing, which is exactly when you want it; "done" after a closer look;
   // null while anything is running, and for a photo that failed (a second
   // model will not reach a server the first could not) or was never read.
+  //
+  // `rerun`: what the button that runs the ordinary read should say, or null
+  // when it should not be there -- while a read is queued or running (it would
+  // only queue a second behind the first), and on a record that is a single
+  // thing, whose photos are never read and which the server would refuse.
   const base = {
-    state: "none", heading: "Seen in this photo", summary: "", items: [], note: "", closer: null,
+    state: "none", heading: "Seen in this photo", summary: "", items: [], note: "",
+    closer: null, rerun: null,
   };
+  if (!readable) {
+    return {
+      ...base,
+      note: "Photos of a single thing are not read: there are no contents to list.",
+    };
+  }
   if (!analysis) {
-    return { ...base, note: "This photo has not been read." };
+    return { ...base, note: "This photo has not been read.", rerun: "Read this photo" };
   }
   if (analysis.status === "pending" || analysis.status === "running") {
     return {
@@ -178,7 +190,12 @@ export function seenIn(analysis) {
     };
   }
   if (analysis.status === "error") {
-    return { ...base, state: "error", note: `It could not be read: ${analysis.error || "no reason given"}` };
+    return {
+      ...base,
+      state: "error",
+      note: `It could not be read: ${analysis.error || "no reason given"}`,
+      rerun: "Try again",
+    };
   }
   // An older server sends a count and no list; show nothing rather than break.
   const items = Array.isArray(analysis.items) ? analysis.items : [];
@@ -190,5 +207,6 @@ export function seenIn(analysis) {
     items,
     note: items.length ? "" : "Nothing was recognised in this photo.",
     closer: analysis.detail ? "done" : "offer",
+    rerun: "Read again",
   };
 }

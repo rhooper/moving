@@ -399,7 +399,7 @@ addEventListener("online", () => editing?.auto.retryFailed());
 // lets the photo strip repaint it if the model finishes while it is open.
 const showing = { id: null, render: null };
 
-function viewPhoto(photo) {
+function viewPhoto(photo, { readable = true } = {}) {
   const dialog = document.createElement("dialog");
   dialog.className = "viewer";
   const full = `/photos/${encodeURIComponent(photo.id)}/full`;
@@ -410,16 +410,18 @@ function viewPhoto(photo) {
       <p class="meta summary" hidden></p>
       <ul class="items"></ul>
       <p class="meta note" hidden></p>
-      <p class="closer" hidden>
-        <button type="button" class="btn quiet" data-closer>Look closer</button>
-        <span class="meta">A slower, more careful read. It adds to what is listed here.</span>
+      <p class="reads" hidden>
+        <button type="button" class="btn quiet" data-rerun hidden></button>
+        <button type="button" class="btn quiet" data-closer hidden>Look closer</button>
+        <span class="meta closer-hint" hidden>Look closer is a slower, more careful read.
+          Either one adds to what is listed; neither removes anything.</span>
       </p>
       <p class="meta"><a href="${escape(full)}" target="_blank" rel="noreferrer">Open the picture on its own</a></p>
       <form method="dialog"><button class="btn" autofocus>Close</button></form>
     </div>`;
 
   const render = (latest) => {
-    const seen = seenIn(latest.analysis);
+    const seen = seenIn(latest.analysis, { readable });
     dialog.dataset.state = seen.state;
     setText(dialog.querySelector("h2"), seen.heading);
     const summary = dialog.querySelector(".summary");
@@ -444,21 +446,31 @@ function viewPhoto(photo) {
       return row;
     }));
     list.hidden = !seen.items.length;
-    dialog.querySelector(".closer").hidden = seen.closer !== "offer";
+    const rerun = dialog.querySelector("[data-rerun]");
+    rerun.hidden = !seen.rerun;
+    if (seen.rerun) setText(rerun, seen.rerun);
+    const offerCloser = seen.closer === "offer";
+    dialog.querySelector("[data-closer]").hidden = !offerCloser;
+    dialog.querySelector(".closer-hint").hidden = !offerCloser;
+    dialog.querySelector(".reads").hidden = !seen.rerun && !offerCloser;
   };
   render(photo);
 
   // The quick model reads every photo; this asks the careful one. Nothing to
   // redraw here: the queued job comes back as photos.changed, the strip
   // repaints, and it repaints this viewer with it (see `showing`).
-  const closer = dialog.querySelector("[data-closer]");
-  closer.addEventListener("click", async () => {
+  //
+  // Both buttons queue a job and draw what comes back. `busy()` puts a button's
+  // old words back when it finishes, so the render comes after it, not inside.
+  const ask = (button, query, problem) => button.addEventListener("click", async () => {
     try {
-      const queued = await busy(closer, "Asking…", () =>
-        request(`/photos/${encodeURIComponent(photo.id)}/analyse?detail=true`, { method: "POST" }));
+      const queued = await busy(button, "Asking…", () =>
+        request(`/photos/${encodeURIComponent(photo.id)}/analyse${query}`, { method: "POST" }));
       render(queued);
-    } catch (error) { failed(error.message, "Could not look closer"); }
+    } catch (error) { failed(error.message, problem); }
   });
+  ask(dialog.querySelector("[data-rerun]"), "", "Could not read the photo");
+  ask(dialog.querySelector("[data-closer]"), "?detail=true", "Could not look closer");
 
   showing.id = photo.id;
   showing.render = render;
@@ -802,7 +814,7 @@ function photosPart(strip, { path, contents, changed, stale, ask, finished }) {
     figure.querySelector(".pic a").addEventListener("click", (event) => {
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
       event.preventDefault();
-      viewPhoto(lastHeard.get(figure) || photo);
+      viewPhoto(lastHeard.get(figure) || photo, { readable: contents });
     });
 
     // Not under /api: photo files and their controls sit at the root, so

@@ -376,3 +376,43 @@ test("nothing is offered for a photo that was never read, is being read, or fail
   assert.equal(seenIn({ status: "pending", detail: false }).closer, null);
   assert.equal(seenIn({ status: "error", detail: false, error: "offline" }).closer, null);
 });
+
+// --- (re)running the ordinary read, from the viewer -------------------------------------
+
+test("a photo that was never read can be read from the viewer", async () => {
+  const { seenIn } = await import("../web/covers.js");
+
+  assert.equal(seenIn(null).rerun, "Read this photo");
+});
+
+test("a photo that failed can be tried again", async () => {
+  const { seenIn } = await import("../web/covers.js");
+
+  assert.equal(seenIn({ status: "error", error: "ollama is not running" }).rerun, "Try again");
+});
+
+test("a photo that has been read can be read again, quick or closer", async () => {
+  const { seenIn } = await import("../web/covers.js");
+
+  assert.equal(seenIn({ status: "done", detail: false, items: [] }).rerun, "Read again");
+  assert.equal(seenIn({ status: "done", detail: true, items: [] }).rerun, "Read again");
+});
+
+test("nothing is offered while a read is queued or running", async () => {
+  // It would only queue a second job behind the first.
+  const { seenIn } = await import("../web/covers.js");
+
+  assert.equal(seenIn({ status: "pending" }).rerun, null);
+  assert.equal(seenIn({ status: "running", detail: true }).rerun, null);
+});
+
+test("a photo of a single thing is never offered a read, and says why", async () => {
+  // A bicycle has no contents to list, and the server refuses the request.
+  const { seenIn } = await import("../web/covers.js");
+
+  const seen = seenIn(null, { readable: false });
+
+  assert.equal(seen.rerun, null);
+  assert.equal(seen.closer, null);
+  assert.match(seen.note, /single thing/);
+});
