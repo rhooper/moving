@@ -439,6 +439,30 @@ const IN_NEW = async () => {
         home?.getAttribute("href") === "#/" && home?.getAttribute("aria-label") === "Home");
   check("it is big enough to hit", Boolean(box) && box.height >= 44 && box.width >= 44,
         `${box?.width}x${box?.height}`);
+
+  // Rooms read in alphabetical order, in both rows, whatever order the server
+  // lists them in.
+  for (const name of ["destination_room_id", "source_room_id"]) {
+    const labels = [...document.querySelectorAll(`#new input[name="${name}"] + span`)]
+      .map((s) => s.textContent.trim());
+    const sorted = [...labels].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+    check(`the ${name.replace("_room_id", "")} rooms are alphabetical`,
+          labels.length > 1 && JSON.stringify(labels) === JSON.stringify(sorted), JSON.stringify(labels));
+  }
+
+  // The running version: stamped into the page by the server, so it must match
+  // what /health says, and it sits at the right -- above the bar on a phone,
+  // in the bar on a desktop -- without taking a tap-sized slot from the menu.
+  const shown = document.getElementById("version")?.textContent;
+  const health = await (await fetch("/health")).json();
+  check("the version on the page is the one running", shown === `v${health.version}`, `${shown} vs ${health.version}`);
+  const at = document.getElementById("version").getBoundingClientRect();
+  const bar = document.querySelector("nav.bar").getBoundingClientRect();
+  const desktop = window.innerWidth >= 46 * 16;
+  check(desktop ? "on a desktop it sits in the bar" : "on a phone it sits above the bar, at the right",
+        desktop ? (at.top >= bar.top - 1 && at.bottom <= bar.bottom + 1)
+                : (at.bottom <= bar.top + 1 && at.right > window.innerWidth / 2),
+        JSON.stringify({ at, bar, innerWidth: window.innerWidth }));
   const buttons = Array.from(document.querySelectorAll("#new button[type=submit]"));
   const form = document.getElementById("new");
   const kinds = await fetch("/api/settings/kinds").then((r) => r.json());

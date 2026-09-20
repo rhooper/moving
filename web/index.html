@@ -331,6 +331,16 @@ ul.items li.renaming .ai { display: none; }
     flex: 0 0 auto;
     padding-inline: 1.5rem;
   }
+  /* .bar .version, not .version: the phone rule above is written later in
+     this file than this block, and at equal specificity later wins. */
+  .bar .version {
+    position: static;
+    display: flex;
+    align-items: center;
+    padding: 0 1rem;
+    background: var(--paper);
+    font-size: 0.8125rem;
+  }
 }
 
 /* Shown only when a change arrived while someone was mid-edit or mid-tap, so
@@ -446,6 +456,21 @@ dialog.viewer .reads .meta { flex: 1 1 100%; margin: 0; }
 
 dialog .row > * { flex: 1; }
 .btn.danger { background: var(--signal); border-color: var(--signal); color: #fff; }
+
+/* The running version. On a phone it sits just above the bar, at the right,
+   out of the bar's flex flow so it takes no tap-sized slot; on a desktop it is
+   an item of the bar, beside the menu (see the wide-screen rules below). */
+.version {
+  position: fixed;
+  right: 0.75rem;
+  bottom: calc(var(--tap) + env(safe-area-inset-bottom) + 0.3rem);
+  padding: 0.1rem 0.4rem;
+  background: var(--paper);  /* it floats over the list; give it something to sit on */
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  pointer-events: none;
+}
 
 /* Printer trouble, in the bar, on every page. */
 .badge {
@@ -659,6 +684,8 @@ label.btn, a.btn { display: inline-flex; align-items: center; justify-content: c
   <a href="#/new" id="nav-new">New</a>
   <a href="#/settings" id="nav-settings">Settings</a>
   <span id="printer-badge" class="badge" hidden></span>
+  <!-- Filled in by the server with the running version (assets.py). -->
+  <span id="version" class="version"></span>
 </nav>
 <script type="module" src="/app.js"></script>
 </body>

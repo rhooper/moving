@@ -170,3 +170,19 @@ class TestNamingARevisionForAThrowawayServer:
 
         with TestClient(create_app(config)) as c:
             assert 'src="/app.js"' in c.get("/").text
+
+
+class TestTheVersionOnThePage:
+    """Asked for: the version next to the menu (desktop), above the menubar (phone)."""
+
+    def test_the_page_carries_the_version(self, client):
+        import movingbox
+
+        slot = f'id="version" class="version">v{movingbox.__version__}</span>'
+        assert slot in client.get("/").text
+
+    def test_in_a_dev_checkout_too(self, dev):
+        # No revision, but there is always a version.
+        import movingbox
+
+        assert f">v{movingbox.__version__}</span>" in dev.get("/").text

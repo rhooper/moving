@@ -89,8 +89,12 @@ function escape(value) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-const forDestination = (rooms) => rooms.filter((r) => r.kind !== "source");
-const forSource = (rooms) => rooms.filter((r) => r.kind !== "destination");
+// Alphabetical, whatever order the server keeps them in: a row of nine
+// pushbuttons is scanned by name, and "Kitchen" is found faster between
+// "Guest Room" and "Living Room" than wherever it was added.
+const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+const forDestination = (rooms) => rooms.filter((r) => r.kind !== "source").sort(byName);
+const forSource = (rooms) => rooms.filter((r) => r.kind !== "destination").sort(byName);
 
 // The room and kind pickers are rows of pushbuttons (segmented.js), built
 // after the page is drawn; these are what each row offers.

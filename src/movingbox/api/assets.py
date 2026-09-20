@@ -61,7 +61,18 @@ def cache_header(asked_for: str | None, revision: str) -> str:
     return REVALIDATE
 
 
-def respond(path: Path, *, asked_for: str | None, revision: str) -> Response:
+#: Where the page shows the running version; filled in as it is served, so it
+#: is right without a request and cannot go stale under a cached page.
+_VERSION_SLOT = '<span id="version" class="version"></span>'
+
+
+def stamped(html: str, version: str) -> str:
+    return html.replace(_VERSION_SLOT, f'<span id="version" class="version">v{version}</span>', 1)
+
+
+def respond(
+    path: Path, *, asked_for: str | None, revision: str, version: str | None = None
+) -> Response:
     """One file from the web root, rewritten if it refers to others."""
     media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
     if path.suffix == ".js":
@@ -71,7 +82,8 @@ def respond(path: Path, *, asked_for: str | None, revision: str) -> Response:
 
     headers = {"Cache-Control": cache_header(asked_for, revision)}
     if path.suffix in _REWRITTEN:
-        return Response(
-            versioned(path.read_text(), revision), media_type=media_type, headers=headers
-        )
+        text = versioned(path.read_text(), revision)
+        if version and path.suffix == ".html":
+            text = stamped(text, version)
+        return Response(text, media_type=media_type, headers=headers)
     return Response(path.read_bytes(), media_type=media_type, headers=headers)

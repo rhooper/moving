@@ -311,7 +311,10 @@ def create_app(config: Config | None = None) -> FastAPI:
         def page() -> Response:
             # Never cached: it is what *names* the versioned files.
             return assets.respond(
-                WEB_ROOT / "index.html", asked_for=None, revision=app.state.revision
+                WEB_ROOT / "index.html",
+                asked_for=None,
+                revision=app.state.revision,
+                version=movingbox.__version__,
             )
 
         @app.get("/{name}", include_in_schema=False)
