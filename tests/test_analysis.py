@@ -366,6 +366,36 @@ class TestTheSummary:
 
         assert self.summary(conn, mine["code"]) == ("Grandma's tea set", "manual")
 
+    def test_what_is_nested_inside_counts_towards_the_summary(self, conn, config, box):
+        # A crate holding three bags is not an empty crate, and its label
+        # should not read as one.
+        for _ in range(3):
+            store.create_box(conn, kind="bag", parent_code=box["code"])
+        photographed(conn, config, box["code"])
+
+        worker(config, Seen(saw(("kettle", 1)))).run_once()
+
+        assert self.summary(conn, box["code"]) == ("kettle, 3 bags", "auto")
+
+    def test_the_background_summary_is_never_written_by_a_model(self):
+        # The worker runs behind a vision call that is already the bottleneck,
+        # so its summary stays plain assembly: instant, offline, the same every
+        # time. Only "From contents" -- which a person is waiting on -- phrases.
+        # Checked on the imports rather than the text, so saying so in a
+        # docstring does not trip it.
+        import ast
+        import inspect
+
+        tree = ast.parse(inspect.getsource(analysis))
+        imported = {
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom | ast.Import)
+            for alias in node.names
+        }
+
+        assert "phrasing" not in imported
+
     def test_the_new_summary_is_searchable(self, conn, config, box):
         from movingbox import search
 

@@ -17,6 +17,7 @@ uv run moving backup             # verified backup + prune
 uv run moving export --format csv -o out.csv
 uv run moving manifest           # box counts per room
 scripts/claude/try_vision.py     # call the real model (slow, non-deterministic)
+scripts/claude/try_summary.py    # the summary model over real contents lists, timed
 uv run pytest                    # printer forced to `fake` in conftest
 scripts/claude/install-service.sh          # launchd + tailscale serve (persistent https)
 scripts/claude/install-service.sh --uninstall
@@ -243,6 +244,95 @@ machine on the owner's own photos, through the app's own request and parser
   cabinet of labelled drawers came back as one good sentence and no items, and
   the record was left blank; the model's sentence is now the fallback when
   there are no items to build a summary from. Items win as soon as there are any.
+
+**A small model phrases the "From contents" summary; the background one does
+not.** `phrasing.py`, behind `GET /api/boxes/{code}/summary-suggestion`. The
+assembled line is a flat inventory -- "stock pot, 3 baking pans, stand mixer,
+colander, 2 mixing bowls, 6 tea towels" -- and what was asked for is the kind
+of thing in the box and a few examples: "Kitchen essentials - a stock pot,
+baking pans, and a stand mixer". The full list is one scan away in the app,
+which is the trade the printed label already made when the contents column was
+dropped.
+
+- **Only the button phrases.** `analysis.refresh_summary` -- the worker that
+  fills a summary after a photo -- stays on plain assembly, and
+  `test_the_background_summary_is_never_written_by_a_model` pins it by walking
+  the module's imports. It already waits on a vision call, and a second
+  round-trip would slow every photo for a line nobody is watching. "From
+  contents" is somebody standing over a button, so it can afford a model.
+- **`qwen2.5:7b` (`MOVING_SUMMARY_MODEL`), measured, not assumed.** Every
+  candidate was run over the same realistic contents lists through the app's
+  own request and parser (2026-09-20, `scripts/claude/try_summary.py`), each
+  alone in memory:
+
+  | model | median | worst | what it writes |
+  |---|---|---|---|
+  | **`qwen2.5:7b`** (4.7 GB) | **0.31 s** | 0.60 s | the shape asked for on 5 of 7 boxes, and the *same* answer on 6 of 7 across three runs |
+  | `qwen3-vl:4b-instruct` (3.3 GB) | 0.34 s | 0.52 s | as good when it obeys, but re-lists everything it is given on 3 of 7 -- which is what the assembler already does |
+  | `gemma3:4b` (3.3 GB) | 0.52 s | 0.74 s | the most natural English ("Odds & ends"), but a different answer nearly every run |
+  | `qwen3-vl:8b-instruct` (6.1 GB) | 0.57 s | 2.22 s | good lines, but dropped Chinese characters into an English one ("Household杂物") -- unprintable in Inter |
+  | `qwen3.5:2b` (2.7 GB) | **74 s** | 119 s | unusable: a *thinking* checkpoint, ~8,000 tokens of reasoning a line, the answer in `message.thinking`, often only the template back |
+
+  `qwen3.5:2b` is the same trap CLAUDE.md already records for the bare
+  `qwen3-vl` tags, in a new family: **check what a tag actually is rather than
+  trusting that a small model is a fast one.** `gemma3:4b` was rejected for
+  vision for inventing things; here it invents nothing, and loses on
+  consistency instead -- judge each on what it is measured doing.
+- **`qwen3-vl:4b-instruct` is the runner-up and is free** (already resident for
+  photos, no extra RAM and no extra model slot). One env var swaps to it if
+  fidelity is ever wanted over brevity.
+- **The prompt is `phrasing.INSTRUCTION`, versioned like the vision ones.**
+  Three drafts, and both rewrites came from measurement. The first let every
+  model invent what was in an undescribed bag ("3 bags of assorted items
+  including a bag of screws, a bag of nails"). The second fixed that. The
+  third dropped a worked example that was leaking into short lists.
+- **Nothing under `phrasing.ENOUGH` (3) distinct things is sent to a model at
+  all.** With one or two lines every candidate padded its answer out of the
+  prompt's own example -- "Kitchen essentials - a kettle, clamps and a tin of
+  screws" for a box holding a kettle. There is nothing to generalise from two
+  things, and "kettle, toaster" is already the best line those contents have.
+  So the brief's three-unnamed-bags case correctly answers "3 bags", from the
+  assembler.
+- **Falling back is the normal case, not the error case.** No model
+  configured, too little to generalise from, Ollama down, the model not
+  pulled, an answer past `TIMEOUT` (5 s -- ten times the measured warm answer,
+  and short enough that a press landing while the photo worker holds Ollama
+  falls back rather than hanging), a reply with no JSON in it: every one hands
+  back `summarise.from_items` and says which in the response's `source`
+  (`"model"` or `"assembled"`). Offline keeping working was a project choice
+  long before this.
+- **`config.phrase_summaries` is off in the dataclass and on in `from_env`**,
+  the same shape as `auto_analyse` and for the same reason: every test builds
+  a Config directly, so nothing in the suite can reach a model. Verified by
+  running the suite with Ollama's port blocked at the socket. Off, the button
+  still assembles -- which is also the switch (`MOVING_PHRASE_SUMMARIES=0`) if
+  the phrasing is not wanted. `MOVING_VISION_PROVIDER=stub` gives a
+  deterministic phraser too, so the browser checks never touch a model.
+
+**The summary model is kept warm, and Ollama only holds three.**
+`phrasing.Warmer` is a daemon thread started by the app's lifespan handler,
+shaped like `AutoOffWatcher` but it never stops -- the point is that the model
+is still resident hours later, when the next box is packed. A cold load is
+seconds against a warm answer's third of one, which is the only reason a button
+can afford a model at all. It cannot fail startup and cannot die: Ollama being
+down, or the model not pulled, is logged at debug and retried every minute.
+
+- **`OLLAMA_MAX_LOADED_MODELS` defaults to 3, and this app now wants exactly
+  three** -- the summary model and the two vision ones. Cycling a fourth model
+  past Ollama made *every* press time out at 5 s, on a model that answers in
+  0.27 s when it is the one loaded; it looked like a slow model and was
+  eviction thrash. So the warmer pings every five minutes
+  (`REFRESH = KEEP_ALIVE_SECONDS / 6`) rather than every twenty: the idle
+  timeout is not the only thing that unloads a model, and a ping on one that
+  is already there costs 10-40 ms. Raise `OLLAMA_MAX_LOADED_MODELS` if
+  anything else on the machine starts evicting these.
+- **The warm ping's `num_ctx` must match the real request's.** Ollama keys a
+  loaded model by its runner options, so asking for a different context
+  unloads and reloads the model that was just warmed -- the exact cold start
+  the warmer exists to prevent. `warm_request` and `build_request` both read
+  `phrasing.CONTEXT`, and a test compares them.
+- The preload is `POST /api/generate` with no prompt; Ollama answers
+  `done_reason: "load"` and generates nothing.
 
 **Every uploaded photo is analysed in the background, and what is found is
 applied** (`analysis.py`; spec in `docs/superpowers/specs/2026-09-18-photo-analysis.md`).
@@ -485,8 +575,19 @@ word from the generated comment; they are escaped now.
   (`summarise.from_items`). The "From contents" button puts one in the field,
   which autosaves like any edit (Undo restores the old one) and so becomes the
   person's. Photo analysis *applies* one, but only to a summary that is empty
-  or already autogenerated. Plain assembly either way:
-  instant, identical every time, offline.
+  or already autogenerated.
+- **What is nested inside counts as contents** (`summarise.contents`, and
+  `from_contents` over it). A crate holding three bags is not an empty crate,
+  and said so on its label until this landed -- the print gate had counted
+  children since nesting, but the summary was built from the `items` table
+  alone. A child contributes its own `content_summary` when it has one
+  ("winter coats" beats the word "bag" on the outer label) and otherwise what
+  it *is*, in the list rows' words: "large box", "bag", "loose item". The size
+  is spelled in full where `rowStatus` abbreviates to "XL" -- that exists for
+  a narrow cell that cannot wrap. Mapping lives in `summarise` rather than at
+  each call site because there are three of those (the endpoint, the photo
+  worker, and the model prompt) and they must agree; feeding `_merge`
+  well-formed names is what makes three bags read as "3 bags".
 - **AI output is provenance-tagged**: items the model adds get `source='ai'`.
   Whether AI output is *applied* depends on the path -- see "Every uploaded
   photo is analysed" above. `ai.draft_for_box` proposes and writes nothing.
