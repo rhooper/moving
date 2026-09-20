@@ -43,9 +43,7 @@ def preview(
     image = (
         layout.render_stub(data)
         if stub
-        else layout.render(
-            data, height=height, orientation=orientation or config.label_orientation
-        )
+        else layout.render(data, height=height, orientation=orientation or config.label_orientation)
     )
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")

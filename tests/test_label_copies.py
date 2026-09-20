@@ -66,6 +66,7 @@ class TestTheDefault:
 
         assert [n for _, n, _ in spy.jobs] == [1, 3]
 
+
 class TestWhatAPrintMayAsk:
     @pytest.mark.parametrize("bad", [0, 11])
     def test_a_print_cannot_ask_for_nonsense_either(self, client, spy, bad):

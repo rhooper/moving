@@ -108,8 +108,9 @@ class TestQueueing:
 
         analysis.recover(conn)
 
-        row = conn.execute("SELECT status, started_at FROM ai_jobs WHERE photo_id = ?",
-                           (photo["id"],)).fetchone()
+        row = conn.execute(
+            "SELECT status, started_at FROM ai_jobs WHERE photo_id = ?", (photo["id"],)
+        ).fetchone()
         assert (row["status"], row["started_at"]) == ("pending", None)
 
     def test_asking_again_requeues_a_finished_photo(self, conn, config, box):
@@ -141,7 +142,11 @@ class TestWhatIsFoundIsKeptWithThePhoto:
         state = analysis.state_of(conn, photo["id"])
 
         assert (state["status"], state["remaining_ms"], state["items_found"], state["error"]) == (
-            "done", 0, 2, None)
+            "done",
+            0,
+            2,
+            None,
+        )
 
     def test_the_photo_can_say_what_was_seen_in_it(self, conn, config, box):
         # For the viewer: this photo's own findings, not the box's merged list.
@@ -339,7 +344,9 @@ class TestTheSummary:
         worker(config, Seen(described)).run_once()
 
         assert self.summary(conn, box["code"]) == (
-            "A plastic organiser with many labelled drawers", "auto")
+            "A plastic organiser with many labelled drawers",
+            "auto",
+        )
 
     def test_once_there_are_items_the_summary_is_made_from_them(self, conn, config, box):
         photographed(conn, config, box["code"], (1, 1, 1))

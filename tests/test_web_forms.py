@@ -44,6 +44,6 @@ def test_every_form_has_a_submit_listener():
         )
         if not (chained or via_variable):
             unhandled.append(form_id)
-    assert not unhandled, (
-        f"forms drawn but never handled (native submit reloads the page): {unhandled}"
-    )
+    assert (
+        not unhandled
+    ), f"forms drawn but never handled (native submit reloads the page): {unhandled}"

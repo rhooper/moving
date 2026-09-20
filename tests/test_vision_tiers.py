@@ -157,8 +157,9 @@ class TestTheQueue:
         # countdown longer, or the other way round.
         _, photo = photographed(conn, config)
         analysis.enqueue(conn, config, photo["id"])
-        conn.execute("UPDATE ai_jobs SET status='done', duration_ms=7000 WHERE photo_id=?",
-                     (photo["id"],))
+        conn.execute(
+            "UPDATE ai_jobs SET status='done', duration_ms=7000 WHERE photo_id=?", (photo["id"],)
+        )
         analysis.enqueue(conn, config, photo["id"], again=True, detail=True)
         conn.execute("UPDATE ai_jobs SET status='done', duration_ms=10000 WHERE detail=1")
 

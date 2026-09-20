@@ -42,8 +42,7 @@ UNASSIGNED = "Unassigned"
 
 
 def _boxes(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    rows = conn.execute(
-        """
+    rows = conn.execute("""
         SELECT b.*,
                dest.name AS destination_room,
                src.name  AS source_room,
@@ -54,8 +53,7 @@ def _boxes(conn: sqlite3.Connection) -> list[dict[str, Any]]:
           LEFT JOIN boxes outer_box ON outer_box.id = b.parent_id
          WHERE b.deleted_at IS NULL
          ORDER BY b.id
-        """
-    ).fetchall()
+        """).fetchall()
     return [dict(row) for row in rows]
 
 

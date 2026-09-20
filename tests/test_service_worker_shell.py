@@ -45,6 +45,6 @@ def test_the_walk_can_see_imports():
 def test_every_module_the_app_loads_is_precached():
     missing = sorted(needed_by("/app.js", set()) - shell())
 
-    assert missing == [], (
-        f"imported by the app but not in sw.js SHELL, so not available offline: {missing}"
-    )
+    assert (
+        missing == []
+    ), f"imported by the app but not in sw.js SHELL, so not available offline: {missing}"

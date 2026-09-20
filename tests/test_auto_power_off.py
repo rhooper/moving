@@ -174,9 +174,7 @@ class TestTheWatcher:
         assert len(attempts) == 3
 
     def test_it_gives_up_rather_than_polling_forever(self, real):
-        watcher = printer.AutoOffWatcher(
-            real, send=lambda _c: False, interval=0.01, attempts=3
-        )
+        watcher = printer.AutoOffWatcher(real, send=lambda _c: False, interval=0.01, attempts=3)
         watcher.start()
         watcher.join(timeout=2)
 
@@ -184,9 +182,7 @@ class TestTheWatcher:
 
     def test_it_can_be_stopped_early(self, real):
         # The service has to be able to shut down without waiting for it.
-        watcher = printer.AutoOffWatcher(
-            real, send=lambda _c: False, interval=5, attempts=100
-        )
+        watcher = printer.AutoOffWatcher(real, send=lambda _c: False, interval=5, attempts=100)
         watcher.start()
         watcher.stop()
         watcher.join(timeout=2)

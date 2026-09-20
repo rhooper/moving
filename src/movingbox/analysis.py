@@ -113,12 +113,10 @@ def enqueue(
 
 def recover(conn: sqlite3.Connection) -> int:
     """Put back jobs the last process died holding. Returns how many."""
-    cursor = conn.execute(
-        """
+    cursor = conn.execute("""
         UPDATE ai_jobs SET status = 'pending', started_at = NULL
          WHERE status = 'running' AND photo_id IS NOT NULL
-        """
-    )
+        """)
     return cursor.rowcount
 
 
@@ -212,15 +210,17 @@ def state_of(conn: sqlite3.Connection, photo_id: int) -> dict[str, Any] | None:
         """,
         (job["id"],),
     ).fetchone()
-    spent = _elapsed_ms(conn, job["started_at"] if job["status"] == "running"
-                        else ahead["running_since"])
+    spent = _elapsed_ms(
+        conn, job["started_at"] if job["status"] == "running" else ahead["running_since"]
+    )
     span = each * (ahead["n"] + 1)
 
     state["remaining_ms"] = max(0, span - spent)
     # Measured from when the job was queued, so the ring keeps its place across
     # a page reload rather than starting again from empty.
-    state["total_ms"] = max(state["remaining_ms"], _elapsed_ms(conn, job["created_at"])
-                            + state["remaining_ms"])
+    state["total_ms"] = max(
+        state["remaining_ms"], _elapsed_ms(conn, job["created_at"]) + state["remaining_ms"]
+    )
     return state
 
 
@@ -257,8 +257,9 @@ def merge_items(conn: sqlite3.Connection, code: str, found: list[base.DraftItem]
             continue
         match = existing.get(_key(name))
         if match is None:
-            added = store.add_item(conn, code, name=name, qty=item.qty,
-                                   category=item.category, source="ai")
+            added = store.add_item(
+                conn, code, name=name, qty=item.qty, category=item.category, source="ai"
+            )
             existing[_key(name)] = added
             changed = True
         elif match["source"] == "ai" and item.qty > (match["qty"] or 1):
@@ -370,15 +371,13 @@ class Analyst(threading.Thread):
     def _claim(self, conn: sqlite3.Connection) -> dict[str, Any] | None:
         # One statement, so two workers could never claim the same job -- there
         # is only one worker, but a restart overlapping a shutdown makes two.
-        row = conn.execute(
-            """
+        row = conn.execute("""
             UPDATE ai_jobs SET status = 'running', started_at = datetime('now')
              WHERE id = (SELECT id FROM ai_jobs
                           WHERE status = 'pending' AND photo_id IS NOT NULL
                           ORDER BY id LIMIT 1)
             RETURNING *
-            """
-        ).fetchone()
+            """).fetchone()
         return dict(row) if row else None
 
     def _run(self, conn: sqlite3.Connection, job: dict[str, Any]) -> None:

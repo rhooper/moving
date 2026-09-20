@@ -164,8 +164,13 @@ def _heavy_icon(size: int) -> Image.Image:
     unit = size / 16
 
     # Handle: narrower than the body, or the whole thing reads as a padlock.
-    draw.arc([5.5 * unit, 2 * unit, 10.5 * unit, 7.5 * unit], 180, 360,
-             fill=255, width=max(2, int(unit * 1.2)))
+    draw.arc(
+        [5.5 * unit, 2 * unit, 10.5 * unit, 7.5 * unit],
+        180,
+        360,
+        fill=255,
+        width=max(2, int(unit * 1.2)),
+    )
     # Body: a kettlebell-ish trapezoid, clearly wider at the base.
     draw.polygon(
         [
@@ -182,9 +187,7 @@ def _heavy_icon(size: int) -> Image.Image:
 ICONS = {"FRAGILE": _fragile_icon, "HEAVY": _heavy_icon}
 
 
-def _chips(
-    draw, x: int, y: int, max_width: int, flags: tuple[str, ...], size: int = 48
-) -> int:
+def _chips(draw, x: int, y: int, max_width: int, flags: tuple[str, ...], size: int = 48) -> int:
     """Draw flags as inverted chips, wrapping within ``max_width``.
 
     Knocked-out white on black rather than a bullet and plain text: FRAGILE is
@@ -371,10 +374,10 @@ def from_box(
 # Every label sets the same element at the same size, so a shelf of boxes
 # reads as one system. These are the 50%-larger sizes; what lets them be fixed
 # is the 3.3 inch length and chips that sit side by side instead of stacking.
-CODE_SIZE = 160      # fits B-0042, Z06-001 and CAM-001 beside the QR
-CHIP_SIZE = 72       # FRAGILE and HEAVY share one row at this size
-ROOM_SIZE = 108      # fits MAIN BEDROOM, the longest room in the house
-SUMMARY_SIZE = 59    # 51 + 2 pt (8 dots at 300 dpi); two lines always fit
+CODE_SIZE = 160  # fits B-0042, Z06-001 and CAM-001 beside the QR
+CHIP_SIZE = 72  # FRAGILE and HEAVY share one row at this size
+ROOM_SIZE = 108  # fits MAIN BEDROOM, the longest room in the house
+SUMMARY_SIZE = 59  # 51 + 2 pt (8 dots at 300 dpi); two lines always fit
 
 #: Pixels per QR module, and modules of quiet zone. The module size *is* the
 #: QR's size -- see _qr. 6 px is the next real step up from 5 (+20%).
@@ -473,8 +476,12 @@ def _render_landscape(data: LabelData) -> Image.Image:
         bars = None  # a character Code 128 set B cannot carry
     if bars is not None and BARCODE_LEFT + bars + quiet <= width - qr.width:
         code128.draw(
-            draw, BARCODE_LEFT, BARCODE_TOP, data.code,
-            module=BARCODE_MODULE, height=BARCODE_HEIGHT,
+            draw,
+            BARCODE_LEFT,
+            BARCODE_TOP,
+            data.code,
+            module=BARCODE_MODULE,
+            height=BARCODE_HEIGHT,
         )
     # The room band starts here on every label. The chips used to sit above it
     # and push it down, so a shelf of boxes had its bands at two heights; they
@@ -532,9 +539,9 @@ def _render_landscape(data: LabelData) -> Image.Image:
 # the tape -- a quarter turn from the main label -- because that is the only
 # way a big number and a scannable QR both fit in an inch. Being already the
 # tape's width, printer.to_raster passes it through unrotated.
-STUB_LENGTH = 300        # 1 inch at 300 dpi
-STUB_CODE_SIZE = 105     # fits B-0042 beside the QR; longer codes shrink
-STUB_QR_MODULE = 7       # the largest whole module size that fits in an inch
+STUB_LENGTH = 300  # 1 inch at 300 dpi
+STUB_CODE_SIZE = 105  # fits B-0042 beside the QR; longer codes shrink
+STUB_QR_MODULE = 7  # the largest whole module size that fits in an inch
 
 
 def render_stub(data: LabelData) -> Image.Image:
@@ -550,9 +557,7 @@ def render_stub(data: LabelData) -> Image.Image:
     qr = _qr(data.url, border=QR_QUIET, module=STUB_QR_MODULE)
     canvas.paste(qr, (width - qr.width, (height - qr.height) // 2))
 
-    font = _fit(
-        draw, data.code, width - qr.width - MARGIN - 12, start=STUB_CODE_SIZE, weight=800
-    )
+    font = _fit(draw, data.code, width - qr.width - MARGIN - 12, start=STUB_CODE_SIZE, weight=800)
     draw.text((MARGIN, height // 2), data.code, font=font, fill=0, anchor="lm")
 
     return canvas.point(lambda p: 255 if p > 128 else 0).convert("1")

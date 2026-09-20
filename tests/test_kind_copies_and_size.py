@@ -95,15 +95,18 @@ class TestCopiesPerKind:
 
         assert saved.json() == {"kind": "bag", "copies": 3}
         assert kinds_listed(client)["bag"]["copies"] == 3
-        assert kinds_listed(client)["box"]["copies"] == 2   # the others are untouched
+        assert kinds_listed(client)["box"]["copies"] == 2  # the others are untouched
         assert spy.jobs == [(code, 3)]
 
-    @pytest.mark.parametrize("body", [
-        {"kind": "bag", "copies": 0},
-        {"kind": "bag", "copies": 11},
-        {"kind": "suitcase", "copies": 2},
-        {"kind": "bag"},
-    ])
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"kind": "bag", "copies": 0},
+            {"kind": "bag", "copies": 11},
+            {"kind": "suitcase", "copies": 2},
+            {"kind": "bag"},
+        ],
+    )
     def test_nonsense_is_refused(self, client, body):
         assert client.put("/api/settings/kind-copies", json=body).status_code == 422
 
