@@ -163,12 +163,13 @@ try {
       await sleep(gap);
     }
   }
-  const KEYS = { Enter: [13, "\r"], Tab: [9, ""], Backspace: [8, ""] };
-  async function press(key, modifiers = 0) {
-    const [code, text] = KEYS[key];
+  // name -> [virtual key code, text it types, the `key` if it is not the name]
+  const KEYS = { Enter: [13, "\r"], Tab: [9, ""], Backspace: [8, ""], ArrowRight: [39, ""], Space: [32, " ", " "] };
+  async function press(name, modifiers = 0) {
+    const [vk, text, key = name] = KEYS[name];
     await send("Input.dispatchKeyEvent",
-      { type: text ? "keyDown" : "rawKeyDown", key, code: key, windowsVirtualKeyCode: code, text, modifiers });
-    await send("Input.dispatchKeyEvent", { type: "keyUp", key, code: key, windowsVirtualKeyCode: code, modifiers });
+      { type: text ? "keyDown" : "rawKeyDown", key, code: name, windowsVirtualKeyCode: vk, text, modifiers });
+    await send("Input.dispatchKeyEvent", { type: "keyUp", key, code: name, windowsVirtualKeyCode: vk, modifiers });
     await sleep(40);
   }
   // Click into a text field and put the caret at the end, as a thumb would.
@@ -176,18 +177,29 @@ try {
     await click(selector);
     await evaluate(`(() => { const f = ${q(selector)}; f.setSelectionRange(f.value.length, f.value.length); })()`);
   }
-  // A picker. Headless Chrome has no popup to click in, so the value is set
-  // and the events a real choice fires are fired: input, then change.
-  const choose = (selector, value) => evaluate(`(() => { const s = ${q(selector)};
-    s.focus(); s.value = ${JSON.stringify(String(value))};
-    s.dispatchEvent(new Event("input", { bubbles: true }));
-    s.dispatchEvent(new Event("change", { bubbles: true })); })()`);
+  // A picker is a row of pushbuttons, and unlike the <select> it replaced it
+  // can be pressed for real: a mouse press on the button's face, which is the
+  // <label> the hidden radio sits in.
+  const face = (name, value) => `.seg[data-name="${name}"] input[value="${value}"] + span`;
+  const tap = (name, value) => click(face(name, value));
+  // (The face eases to its new colour over 90 ms; look once it has arrived.)
+  const rowOf = async (name) => { await sleep(160); return lookAtRow(name); };
+  const lookAtRow = (name) => evaluate(`(() => { const g = ${q(`.seg[data-name="${name}"]`)}; if (!g) return null;
+    const radios = [...g.querySelectorAll("input[type=radio]")];
+    return { value: radios.find((r) => r.checked)?.value ?? "", hint: g.querySelector(".seg-said")?.textContent ?? null,
+             lit: radios.filter((r) => getComputedStyle(r.nextElementSibling).backgroundColor
+                                        === getComputedStyle(r.nextElementSibling).borderTopColor
+                                      && getComputedStyle(r.nextElementSibling).backgroundColor !== "rgba(0, 0, 0, 0)").map((r) => r.value),
+             pristine: radios.every((r) => r.dataset.initial === String(r.checked)),
+             hidden: g.hidden || g.disabled }; })()`);
   const lineOf = (form) => evaluate(`(() => { const l = ${q(`#${form} .autosave`)}; if (!l) return null;
     const u = l.querySelector(".undo");
     return { text: l.querySelector(".autosave-state").textContent, warn: l.classList.contains("warn"),
              undo: u.hidden ? null : u.textContent, height: l.getBoundingClientRect().height,
              undoRight: u.hidden ? null : Math.round(u.getBoundingClientRect().right) }; })()`);
-  const valueOf = (name) => evaluate(`${q(`[name=${name}]`)}.value`);
+  const valueOf = (name) => evaluate(`(() => { const all = [...document.querySelectorAll('[name="${name}"]')];
+    return all[0]?.type === "radio" ? (all.find((r) => r.checked)?.value ?? "") : all[0].value; })()`);
+  const kindIs = (kind) => `document.querySelector('[name="kind"]:checked')?.value === ${JSON.stringify(kind)}`;
   const dialogOpen = () => evaluate(`Boolean(document.querySelector("dialog[open]"))`);
   const MARKED = ["summary-form", "destination", "location", "shots", "print"];
   const markPage = () => evaluate(`${JSON.stringify(MARKED)}.forEach((id) => { document.getElementById(id).__mark = id; })`);
@@ -284,7 +296,7 @@ try {
 
   // === 3. a picker saves when it changes ===========================================
   mark = writes().length;
-  await choose("[name=destination_room_id]", going[0].id);
+  await tap("destination_room_id", going[0].id);
   await waitFor(`${q("#destination .autosave-state")}.textContent === "Saved"`, "the room to be saved");
   sent = writesSince(mark);
   check("choosing a room saves it, once, as a number",
@@ -365,7 +377,7 @@ try {
   await into("[name=source_location]");
   await type("shelf 3");
   await waitFor(`${q("#destination .autosave-state")}.textContent === "Saved"`, "where-in-that-room to save on a pause");
-  await choose("[name=source_room_id]", from[0].id);
+  await tap("source_room_id", from[0].id);
   await waitFor(`${q("#destination .undo")}.textContent === "Undo packed from"`, "packed-from to save");
   await click("#destination .undo");
   await waitFor(`${q("#destination .undo")}.textContent === "Undo where in that room"`, "the first undo");
@@ -522,23 +534,100 @@ try {
     check("the Dictate button is wired up where the browser can dictate", false, "button missing or hidden");
   }
 
+  // === 9b. rows of pushbuttons: a second tap clears, and Undo lights it again =======
+  await markPage();
+  let row = await rowOf("destination_room_id");
+  check("(setup) the destination row shows the room chosen earlier", row.value === String(going[0].id) && row.hint === "Tap it again to clear", JSON.stringify(row));
+  mark = writes().length;
+  await tap("destination_room_id", going[0].id);   // the selected one, again
+  await waitFor(`${q("#room-band")}.hidden`, "the room to be cleared");
+  await waitFor(`${q("#destination .autosave-state")}.textContent === "Saved"`, "the clearing to be saved");
+  sent = writesSince(mark);
+  check("a second tap on the selected button clears it, and saves null, once",
+        sent.length === 1 && JSON.stringify(patchOf(sent[0])) === JSON.stringify({ destination_room_id: null }), show(sent));
+  row = await rowOf("destination_room_id");
+  check("nothing in the row is lit, and the line under it says what that means",
+        row.value === "" && row.lit.length === 0 && row.hint === "Not decided yet", JSON.stringify(row));
+  check("the cleared row is pristine, and the page was not redrawn", row.pristine && (await pageSurvived()));
+  check("the server has no room", (await server(api)).destination_room_id === null);
+
+  mark = writes().length;
+  await click("#destination .undo");
+  await waitFor(`${q("#destination .autosave-state")}.textContent === "Undone"`, "the undo of the clearing");
+  row = await rowOf("destination_room_id");
+  check("Undo sends the room back", JSON.stringify(writesSince(mark).map(patchOf)) === JSON.stringify([{ destination_room_id: going[0].id }]), show(writesSince(mark)));
+  check("and the right button is lit again, visibly", row.value === String(going[0].id) && JSON.stringify(row.lit) === JSON.stringify([String(going[0].id)]), JSON.stringify(row));
+  check("with the band, the hint and the baseline to match",
+        (await evaluate(`${q("#room-band")}.textContent`)) === going[0].name && row.hint === "Tap it again to clear" && row.pristine, JSON.stringify(row));
+
+  // a row that must have a value
+  mark = writes().length;
+  await tap("kind", "box");
+  await sleep(500);
+  check("a second tap on the kind does nothing: a record is always something",
+        writesSince(mark).length === 0 && (await valueOf("kind")) === "box" && (await pageSurvived()), show(writesSince(mark)));
+
+  // size: a container has one to choose
+  row = await rowOf("size");
+  check("a box has a size row, with nothing chosen and saying so", row && row.value === "" && row.hint === "No size", JSON.stringify(row));
+  mark = writes().length;
+  await tap("size", "large");
+  await waitFor(`${q("#destination .undo")}.textContent === "Undo size"`, "the size to be saved");
+  check("choosing a size saves it, once", JSON.stringify(writesSince(mark).map(patchOf)) === JSON.stringify([{ size: "large" }]), show(writesSince(mark)));
+  // ...from the keyboard: an arrow moves the choice, Space on it clears
+  await evaluate(`document.querySelector('.seg[data-name="size"] input:checked').focus()`);
+  mark = writes().length;
+  await press("ArrowRight");
+  await waitFor(`document.querySelector('[name="size"]:checked')?.value === "extra large"`, "the arrow key to move the choice");
+  await sleep(300);
+  check("an arrow key moves the choice and saves it", JSON.stringify(writesSince(mark).map(patchOf)) === JSON.stringify([{ size: "extra large" }]), show(writesSince(mark)));
+  mark = writes().length;
+  await press("Space");
+  await waitFor(`!document.querySelector('[name="size"]:checked')`, "Space to clear the size");
+  await sleep(300);
+  check("Space on the chosen button clears it, and saves null", JSON.stringify(writesSince(mark).map(patchOf)) === JSON.stringify([{ size: null }]), show(writesSince(mark)));
+  check("the keyboard's way of clearing is said to a screen reader",
+        await evaluate(`(() => { const r = document.querySelector('[name="size"]'); const d = document.getElementById(r.getAttribute("aria-describedby"));
+          document.querySelector('[name="size"][value="small"]').click(); return /press Space/.test(d.textContent) && d.querySelector(".vh") !== null; })()`));
+  await waitFor(`${q("#destination .autosave-state")}.textContent === "Saved"`, "small to be saved");
+  await tap("size", "large");
+  await waitFor(`${q("#destination .autosave-state")}.textContent === "Saved" && document.querySelector('[name="size"]:checked')?.value === "large"`, "large to be saved");
+  check("the server has the size", (await server(api)).size === "large", (await server(api)).size);
+
+  // the list says it
+  await evaluate(`location.hash = "#/"`);
+  await waitFor(q(`#boxlist li[data-key="${code}"]`), "the list");
+  check("the list row says large box", (await evaluate(`${q(`#boxlist li[data-key="${code}"] .k`)}.textContent`)) === "large box",
+        await evaluate(`${q(`#boxlist li[data-key="${code}"] .w`)}.textContent`));
+  await evaluate(`location.hash = ${JSON.stringify(`#/b/${code}`)}`);
+  await waitFor(q('.seg[data-name="size"]'), "the record again");
+  await sleep(300);
+  check("a box's label count is its kind's", (await evaluate(`${q("#copies")}.value`)) === String(kinds.find((k) => k.kind === "box").copies));
+
   // === 10. kind: the one save that redraws, and its Undo ===========================
   const loose = kinds.find((k) => !k.contents) || kinds.find((k) => k.kind !== "box");
   mark = writes().length;
   await markPage();
-  await choose("[name=kind]", loose.kind);
-  await waitFor(`!${q("#summary-form")}.__mark && ${q("[name=kind]")}.value === ${JSON.stringify(loose.kind)}`, "the kind's redraw");
+  await tap("kind", loose.kind);
+  await waitFor(`!${q("#summary-form")}.__mark && ${kindIs(loose.kind)}`, "the kind's redraw");
   await sleep(200);
   sent = writesSince(mark);
   check("changing the kind saves it", sent.length === 1 && JSON.stringify(patchOf(sent[0])) === JSON.stringify({ kind: loose.kind }), show(sent));
   check("and redraws the page for the new kind", Boolean(await evaluate(`${q("#items")}`)) === Boolean(loose.contents));
-  check("the picker has the focus back after the redraw", (await evaluate(`document.activeElement?.name`)) === "kind");
+  check("the chosen button has the focus back after the redraw",
+        await evaluate(`document.activeElement?.name === "kind" && document.activeElement.checked`));
+  check("a single thing has no size row at all", (await rowOf("size")) === null);
+  check("and the server took its size away", (await server(api)).size === null, (await server(api)).size);
+  check("its label count follows the kind too", (await evaluate(`${q("#copies")}.value`)) === String(loose.copies), await evaluate(`${q("#copies")}.value`));
   line = await lineOf("destination");
   check("Undo kind is offered on the new page", line.undo === "Undo kind", JSON.stringify(line));
   await markPage();
   await click("#destination .undo");
-  await waitFor(`!${q("#summary-form")}.__mark && ${q("[name=kind]")}.value === "box"`, "the undo's redraw");
+  await waitFor(`!${q("#summary-form")}.__mark && ${kindIs("box")}`, "the undo's redraw");
   check("Undo restores the kind, redraws, and the server agrees", (await server(api)).kind === "box" && Boolean(await evaluate(`${q("#items")}`)));
+  row = await rowOf("size");
+  check("the size row is back, showing the server's truth: the size went with the kind",
+        row && row.value === "" && row.hint === "No size" && row.pristine, JSON.stringify(row));
 
   // === 11. the copies field is none of autosave's business ==========================
   mark = writes().length;
@@ -586,6 +675,41 @@ try {
         sent.length === 1 && patchOf(sent[0])?.source_location === "under the stairs, left" && sent[0].at - darkAt < 400,
         `${show(sent)} after ${sent[0]?.at - darkAt} ms`);
   await evaluate(`(() => { delete document.hidden; document.dispatchEvent(new Event("visibilitychange")); })()`);
+
+  // === 12b. the new-record form: the same rows, and what it sends ======================
+  const create = async (steps) => {
+    await evaluate(`location.hash = "#/new"`);
+    await waitFor(q('#new .seg[data-name="kind"]'), "the new-record form");
+    await sleep(200);
+    await steps();
+    const at = writes().length;
+    await click("#create");
+    await waitFor(`location.hash.startsWith("#/b/")`, "the record to be created");
+    return patchOf(writesSince(at).find((w) => w.method === "POST" && w.url === "/api/boxes"));
+  };
+  let made = await create(async () => {
+    await tap("kind", "crate");
+    check("new form: Create names the kind chosen", (await evaluate(`${q("#create")}.textContent`)) === "Create crate");
+    await tap("size", "medium");
+    await tap("destination_room_id", going[0].id);
+    await tap("source_room_id", from[0].id);
+    await into("#new [name=content_summary]");
+    await type("winter coats");
+  });
+  check("new form: it sends the kind, size and rooms chosen",
+        made && made.kind === "crate" && made.size === "medium" && made.destination_room_id === going[0].id
+          && made.source_room_id === from[0].id && made.content_summary === "winter coats", JSON.stringify(made));
+  made = await create(async () => {
+    await tap("size", "small");               // chosen while it is still a box...
+    await tap("destination_room_id", going[0].id);
+    await tap("destination_room_id", going[0].id);   // ...and a room chosen, then cleared
+    await tap("kind", "furniture");
+    row = await rowOf("size");
+    check("new form: a single thing has no size row", row.hidden, JSON.stringify(row));
+  });
+  check("new form: a hidden size is not sent, nor a cleared room",
+        made && made.kind === "furniture" && !("size" in made) && !("destination_room_id" in made), JSON.stringify(made));
+  check("new form: and the server made it", (await server(`/api/boxes/${(await evaluate("location.hash")).slice(4)}`)).kind === "furniture");
 
   // === 13. the server rewrites a pristine summary: not an edit to save back =========
   if (vision) {

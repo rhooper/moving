@@ -445,6 +445,54 @@ dialog .row > * { flex: 1; }
   white-space: nowrap;
 }
 
+/* A row of joined pushbuttons, [ Box | Tub | Crate ], in place of a dropdown
+   (segmented.js). Real radios underneath, each hidden inside the <label>
+   drawn as its button. Every button carries its own border and overlaps its
+   neighbour's by a pixel, so the row reads as one bar and, when it wraps,
+   as a grid -- no half-borders at the ends of a wrapped line. A button is as
+   wide as its words need, so a long room name is never cut short, and the
+   buttons on a full line share what is left over so the line ends flush. The
+   last line does not: an invisible item after the last button soaks up the
+   slack there. Without it a lone "Extra large" stretched into a bar the full
+   width of the phone, and looked like a different kind of control. The chosen
+   one is ink on paper inverted, like .step.now; the signal colour is for the
+   focus ring only. */
+.seg { border: 0; padding: 0; margin: 0.75rem 0 0; min-width: 0; }
+.seg legend { padding: 0; }
+.seg-row { display: flex; flex-wrap: wrap; padding: 0 1px 1px 0; }
+.seg-row::after { content: ""; flex: 1000 0 0; }
+.seg-row label { display: flex; flex: 1 1 auto; margin: 0 -1px -1px 0; position: relative; }
+.seg-row input {
+  position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none;
+}
+.seg-row span {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--tap);
+  padding: 0.35rem 0.9rem;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  font-size: 0.9375rem;
+  font-weight: 650;
+  text-align: center;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.seg-row input:checked + span { background: var(--ink); border-color: var(--ink); color: var(--paper); z-index: 1; }
+.seg-row input:focus-visible + span { outline: 3px solid var(--signal); outline-offset: -3px; z-index: 2; }
+.seg-hint { min-height: 1.1rem; margin: 0.3rem 0 0; font-size: 0.8125rem; line-height: 1.3; }
+
+/* Read by a screen reader, not seen. */
+.vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* Labels per kind, in Settings: a name and a small number, in a row. */
+ul.items.copies li label { flex: 1; }
+ul.items.copies li input { flex: 0 0 4.5rem; width: 4.5rem; min-height: 2.75rem; padding: 0.2rem; text-align: center; }
+
 /* Handling flags: on or off, and they print on the label. */
 .flags-set { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .chip {
@@ -573,7 +621,7 @@ button.working::before {
 label.btn { display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
 
 @media (prefers-reduced-motion: no-preference) {
-  .step, .btn { transition: background-color 90ms linear, color 90ms linear; }
+  .step, .btn, .seg-row span { transition: background-color 90ms linear, color 90ms linear; }
 }
 </style>
 </head>

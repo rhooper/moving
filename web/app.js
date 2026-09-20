@@ -13,6 +13,7 @@ import {
   partOf,
   reconcile,
 } from "/live.js";
+import { choose, chosen, segmented } from "/segmented.js";
 import { splitItems } from "/text.js";
 import { KeyBuffer, entered } from "/wedge.js";
 
@@ -90,10 +91,18 @@ function escape(value) {
 const forDestination = (rooms) => rooms.filter((r) => r.kind !== "source");
 const forSource = (rooms) => rooms.filter((r) => r.kind !== "destination");
 
-function roomOptions(rooms, selected) {
-  return rooms
-    .map((r) => `<option value="${escape(r.id)}"${r.id === selected ? " selected" : ""}>${escape(r.name)}</option>`)
-    .join("");
+// The room and kind pickers are rows of pushbuttons (segmented.js), built
+// after the page is drawn; these are what each row offers.
+const roomChoices = (rooms) => rooms.map((r) => ({ value: r.id, label: r.name }));
+const kindChoices = (allKinds) => allKinds.map((k) => ({ value: k.kind, label: k.label }));
+const sizeChoices = (sizes) => sizes.map((size) => ({ value: size, label: size[0].toUpperCase() + size.slice(1) }));
+
+// Put a built row where its placeholder is. The placeholder carries the row's
+// name so the markup says where each goes without the row being markup.
+function mount(row) {
+  const slot = app.querySelector(`[data-seg="${row.dataset.name}"]`);
+  slot.replaceWith(row);
+  return row;
 }
 
 function flagsOf(box) {
@@ -122,8 +131,10 @@ function markPristine(scope) {
   }
 }
 
+// A tick box or a radio (one button of a pushbutton row) is its checkedness:
+// its `.value` is the same string whether or not it is chosen.
 function fieldValue(field) {
-  return field.type === "checkbox" ? String(field.checked) : field.value;
+  return field.type === "checkbox" || field.type === "radio" ? String(field.checked) : field.value;
 }
 
 // For code that sets a field's value itself (dictation). A programmatic
@@ -294,6 +305,7 @@ function confirmed({ title, message, action }) {
 const AUTOSAVED = new Map([
   ["content_summary", "summary"],
   ["kind", "kind"],
+  ["size", "size"],
   ["destination_room_id", "destination room"],
   ["source_room_id", "packed from"],
   ["source_location", "where in that room"],
@@ -899,8 +911,11 @@ const scanKeys = new KeyBuffer();
 document.addEventListener("keydown", async (event) => {
   if (event.ctrlKey || event.metaKey || event.altKey) return;
   // A field takes its own keys, and a modal is a question being asked.
+  // A radio or a tick box is a button that happens to be an <input>: it takes
+  // no text, so a scan while one has the focus is a scan at the page.
   const typing = event.target instanceof Element
-    && event.target.closest("input, textarea, select, [contenteditable]");
+    && event.target.closest(
+      "input:not([type=radio]):not([type=checkbox]), textarea, select, [contenteditable]");
   if (typing || document.querySelector("dialog[open]")) return;
 
   const now = performance.now();
@@ -1144,21 +1159,10 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
     <div class="section">
       <h2>Where it is going</h2>
       <form id="destination">
-        <label class="dlabel" for="kind">This is a</label>
-        <select id="kind" name="kind">
-          ${allKinds.map((k) => `<option value="${escape(k.kind)}"
-            ${k.kind === box.kind ? "selected" : ""}>${escape(k.label)}</option>`).join("")}
-        </select>
-        <label class="dlabel" for="dest-room">Destination room</label>
-        <select id="dest-room" name="destination_room_id">
-          <option value="">Not decided yet</option>
-          ${roomOptions(forDestination(rooms), box.destination_room_id)}
-        </select>
-        <label class="dlabel" for="src-room">Packed from</label>
-        <select id="src-room" name="source_room_id">
-          <option value="">Not recorded</option>
-          ${roomOptions(forSource(rooms), box.source_room_id)}
-        </select>
+        <div data-seg="kind"></div>
+        ${shape.sizes?.length ? '<div data-seg="size"></div>' : ""}
+        <div data-seg="destination_room_id"></div>
+        <div data-seg="source_room_id"></div>
         <label class="dlabel" for="dest-from">Where in that room (optional)</label>
         <input id="dest-from" name="source_location" placeholder="shelf 3, under the desk"
                value="${escape(box.source_location || "")}">
@@ -1235,10 +1239,11 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
       <div class="row">
         <button class="btn quiet" id="print">Print label</button>
         <input id="copies" type="number" min="1" max="10" inputmode="numeric"
-               value="${escape(press?.label_copies ?? 2)}" aria-label="Copies"
+               value="${escape(shape.copies ?? 1)}" aria-label="Copies"
                style="flex:0 0 4.5rem;text-align:center">
       </div>
-      <p class="meta">Copies. The usual number is set in Settings.</p>
+      <p class="meta">Copies. A ${escape(shape.label.toLowerCase())} prints
+         ${escape(shape.copies ?? 1)} unless you say; that number is set in Settings.</p>
     </div>
 
     ${box.deleted_at ? "" : `
@@ -1289,6 +1294,21 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
   });
   strip.draw(photos);
 
+  // The pushbutton rows: the kind, its size (a container only), and the two
+  // rooms. Built after the draw, into the slots the markup left for them.
+  mount(segmented({ name: "kind", legend: "This is a", options: kindChoices(allKinds), value: box.kind }));
+  if (shape.sizes?.length) {
+    mount(segmented({
+      name: "size", legend: "How big", options: sizeChoices(shape.sizes),
+      value: box.size, optional: true, empty: "No size" }));
+  }
+  mount(segmented({
+    name: "destination_room_id", legend: "Destination room", options: roomChoices(forDestination(rooms)),
+    value: box.destination_room_id, optional: true, empty: "Not decided yet" }));
+  mount(segmented({
+    name: "source_room_id", legend: "Packed from", options: roomChoices(forSource(rooms)),
+    value: box.source_room_id, optional: true, empty: "Not recorded" }));
+
   // --- the three forms that save themselves ---
   //
   // What it is; where it is going and where it came from; where it is now.
@@ -1299,9 +1319,39 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
   const locationForm = document.getElementById("location");
   const summaryField = summaryForm.querySelector("[name=content_summary]");
   const savingForms = [summaryForm, destinationForm, locationForm];
+
+  // One autosaved key is one control: a text field, or a row of pushbuttons,
+  // which is several radios sharing the name. Everything below reads and
+  // writes a key through these rather than through `.value`, of which a row
+  // has one per button, none of them the answer.
+  const groupOf = (key) => app.querySelector(`.seg[data-name="${key}"]`);
   const fieldOf = (key) => app.querySelector(`[name="${key}"]`);
-  const fieldsOf = (form) =>
-    Array.from(form.querySelectorAll("input, textarea, select")).filter((f) => AUTOSAVED.has(f.name));
+  const keysOf = (form) => Array.from(AUTOSAVED.keys()).filter((key) => fieldOf(key)?.form === form);
+  const readKey = (key) => { const group = groupOf(key); return group ? chosen(group) : tidy(fieldOf(key)); };
+  const showKey = (key, value) => {
+    const group = groupOf(key);
+    if (group) choose(group, value);
+    else fieldOf(key).value = value;
+  };
+  // The key's control is pristine at `value`: what the live-refresh hold
+  // compares against. For a row that is every button's checkedness -- as it
+  // stands if the row still shows `value`, and as it would be if it has been
+  // pressed again since (then the press is the edit still owed).
+  const savedKey = (key, value) => {
+    const group = groupOf(key);
+    if (group) {
+      const asShown = chosen(group) === String(value ?? "");
+      for (const radio of group.querySelectorAll("input[type=radio]")) {
+        radio.dataset.initial = String(asShown ? radio.checked : radio.value === String(value));
+      }
+      return;
+    }
+    const field = fieldOf(key);
+    // If the field still holds what was sent (give or take the spaces that
+    // were not), it is pristine as it stands. If it has been typed in since,
+    // what was sent is the baseline and the rest is still an edit.
+    field.dataset.initial = tidy(field) === value ? field.value : value;
+  };
 
   const session = editSession(code);
   const auto = session.auto;
@@ -1312,10 +1362,10 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
   // `dataset.initial` stays the server's, so it reads as unsaved to the
   // live-refresh hold, which is the truth. Everything else starts from here.
   for (const form of savingForms) {
-    for (const field of fieldsOf(form)) {
-      const owed = auto.state(field.name);
-      if (owed && owed !== "clean") field.value = auto.value(field.name);
-      else auto.track(field.name, tidy(field));
+    for (const key of keysOf(form)) {
+      const owed = auto.state(key);
+      if (owed && owed !== "clean") showKey(key, auto.value(key));
+      else auto.track(key, readKey(key));
     }
   }
 
@@ -1332,10 +1382,10 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
   function drawLines() {
     const target = undoTarget();
     for (const form of savingForms) {
-      const states = fieldsOf(form).map((field) => ({
-        state: auto.state(field.name),
-        policy: policyFor(field),
-        refused: session.refused.get(field.name),
+      const states = keysOf(form).map((key) => ({
+        state: auto.state(key),
+        policy: policyFor(fieldOf(key)),
+        refused: session.refused.get(key),
       }));
       const { text, warn } = lineFor(states, session.last.get(form.id));
       const line = form.querySelector(".autosave");
@@ -1367,7 +1417,10 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
   // is this page's doing, not the person's.
   async function redrawForKind() {
     const active = document.activeElement;
+    // A pushbutton row is one tab stop, and it is the chosen button's: by name
+    // alone the first button would get the focus, whichever was pressed.
     const selector = active?.id ? `#${CSS.escape(active.id)}`
+      : active?.type === "radio" ? `[name="${CSS.escape(active.name)}"]:checked`
       : active?.name ? `[name="${CSS.escape(active.name)}"]` : null;
     let caret = null;
     try { caret = [active.selectionStart, active.selectionEnd]; } catch { /* not a text field */ }
@@ -1386,11 +1439,7 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
     // field is no longer half-edited.
     landed(key, value, fresh) {
       box = { ...box, [key]: fresh[key], summary_source: fresh.summary_source, updated_at: fresh.updated_at };
-      const field = fieldOf(key);
-      // If the field still holds what was sent (give or take the spaces that
-      // were not), it is pristine as it stands. If it has been typed in since,
-      // what was sent is the baseline and the rest is still an edit.
-      if (field) field.dataset.initial = tidy(field) === value ? field.value : value;
+      if (fieldOf(key)) savedKey(key, value);
       if (key === "destination_room_id") showRoom();
       // A refresh held back behind this edit may be able to go now.
       fieldClosed();
@@ -1409,7 +1458,7 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
   const onEdit = (event) => {
     const field = event.target;
     if (!AUTOSAVED.has(field.name)) return;
-    auto.edit(field.name, tidy(field), policyFor(field));
+    auto.edit(field.name, readKey(field.name), policyFor(field));
     session.undoAt = field.form.id;
     drawLines();
   };
@@ -1417,7 +1466,7 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
     const field = event.target;
     if (!AUTOSAVED.has(field.name)) return;
     // Out of the field, so its stray spaces can go without moving a caret.
-    if (field.tagName !== "SELECT" && field.value !== tidy(field)) {
+    if (field.tagName !== "SELECT" && field.type !== "radio" && field.value !== tidy(field)) {
       if (field.dataset.initial === field.value) field.dataset.initial = tidy(field);
       field.value = tidy(field);
     }
@@ -1428,7 +1477,7 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
   // ways it ever saves.
   const onReturn = (event) => {
     event.preventDefault();
-    for (const field of fieldsOf(event.currentTarget)) auto.commit(field.name);
+    for (const key of keysOf(event.currentTarget)) auto.commit(key);
     drawLines();
   };
   summaryForm.addEventListener("submit", onReturn);
@@ -1467,8 +1516,9 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
       session.refused.delete(step.key);
       const field = fieldOf(step.key);
       if (field) {
-        field.value = step.value;
-        field.dataset.initial = step.value;
+        // Shown as well as recorded: for a row, the right button lights again.
+        showKey(step.key, step.value);
+        savedKey(step.key, step.value);
       }
       if (field?.form) session.last.set(field.form.id, "undone");
       if (step.key === "kind") await redrawForKind();
@@ -1730,25 +1780,18 @@ async function viewNew() {
     <form id="new">
       <div class="section">
         <h2>What it is</h2>
-        <select name="kind" aria-label="Kind">
-          ${allKinds.map((k) => `<option value="${escape(k.kind)}">${escape(k.label)}</option>`).join("")}
-        </select>
+        <div data-seg="kind"></div>
+        <div data-seg="size"></div>
       </div>
       <div class="section">
         <h2>Where it is going</h2>
-        <select name="destination_room_id" aria-label="Destination room">
-          <option value="">Not decided yet</option>
-          ${rooms.map((r) => `<option value="${escape(r.id)}">${escape(r.name)}</option>`).join("")}
-        </select>
+        <div data-seg="destination_room_id"></div>
       </div>
       <div class="section">
         <h2>What is in it, or what it is</h2>
         <textarea name="content_summary" rows="3"
           placeholder="pots, baking pans, stand mixer &mdash; or Bicycle"></textarea>
-        <select name="source_room_id" aria-label="Packed from" style="margin-top:0.5rem">
-          <option value="">Packed from: not recorded</option>
-          ${roomOptions(forSource(rooms))}
-        </select>
+        <div data-seg="source_room_id"></div>
         <input name="source_location" placeholder="Where in that room (optional)"
                style="margin-top:0.5rem">
         <label style="display:flex;gap:0.6rem;align-items:center;margin-top:0.75rem">
@@ -1775,16 +1818,40 @@ async function viewNew() {
   document.getElementById("new").addEventListener("keydown", (event) => {
     if (event.key !== "Enter" || event.target.tagName !== "INPUT") return;
     event.preventDefault();
+    // Not from a pushbutton: Return there is nobody meaning "make it", and a
+    // barcode reader's Return with one focused would create an empty record.
+    if (event.target.type === "radio") return;
     event.currentTarget.requestSubmit(document.getElementById("create"));
   });
-  const kindPicker = document.querySelector("#new [name=kind]");
-  const nameCreate = () => {
-    const chosen = allKinds.find((k) => k.kind === kindPicker.value);
-    document.getElementById("create").textContent =
-      `Create ${(chosen?.label || "box").toLowerCase()}`;
+
+  // The kind first, since it decides whether there is a size to choose. All
+  // the sizes are one row; which kinds offer it comes from the server.
+  const first = allKinds[0];
+  mount(segmented({ name: "kind", legend: "Kind", options: kindChoices(allKinds), value: first.kind }));
+  const allSizes = allKinds.find((k) => k.sizes?.length)?.sizes || [];
+  const sizeRow = mount(segmented({
+    name: "size", legend: "How big", options: sizeChoices(allSizes), optional: true, empty: "No size" }));
+  mount(segmented({
+    name: "destination_room_id", legend: "Destination room", options: roomChoices(forDestination(rooms)),
+    optional: true, empty: "Not decided yet" }));
+  mount(segmented({
+    name: "source_room_id", legend: "Packed from", options: roomChoices(forSource(rooms)),
+    optional: true, empty: "Not recorded" }));
+
+  const form = document.getElementById("new");
+  const kindChosen = () => allKinds.find((k) => k.kind === new FormData(form).get("kind")) || first;
+  // The size row comes and goes with the kind. Disabled as well as hidden: a
+  // disabled fieldset's radios are left out of FormData, so a size chosen for
+  // a box is not sent along with the furniture it became.
+  const followKind = () => {
+    const shape = kindChosen();
+    document.getElementById("create").textContent = `Create ${shape.label.toLowerCase()}`;
+    const sized = Boolean(shape.sizes?.length);
+    sizeRow.hidden = !sized;
+    sizeRow.disabled = !sized;
   };
-  kindPicker.addEventListener("change", nameCreate);
-  nameCreate();
+  form.addEventListener("change", (event) => { if (event.target.name === "kind") followKind(); });
+  followKind();
 
   document.getElementById("new").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1799,6 +1866,10 @@ async function viewNew() {
     if (roomId) payload.destination_room_id = Number(roomId);
     const sourceId = form.get("source_room_id");
     if (sourceId) payload.source_room_id = Number(sourceId);
+    // Absent when nothing is chosen, and when the row is disabled for a kind
+    // that has no size.
+    const size = form.get("size");
+    if (size) payload.size = size;
 
     // Which button was pressed: data-print is "stub", "label", or absent.
     const pressed = event.submitter || document.getElementById("create");
@@ -2055,10 +2126,11 @@ const live = new LiveChannel({
 });
 
 async function viewSettings() {
-  const [shape, press, rooms] = await Promise.all([
+  const [shape, press, rooms, allKinds] = await Promise.all([
     api("/settings/code-format"),
     api("/printer").catch(() => null),
     api("/rooms"),
+    api("/settings/kinds"),
   ]);
 
   show(`
@@ -2098,16 +2170,21 @@ async function viewSettings() {
       ${printerLine(press)}
       <p class="meta">The printer is told not to power itself off each time
          this server starts, so it should stay awake on its own.</p>
-      <form id="printing" class="row" style="margin-top:0.75rem">
-        <label class="dlabel" for="label-copies" style="flex:1;align-self:center;margin:0">
-          Copies of each label</label>
-        <input id="label-copies" name="label_copies" type="number" min="1" max="10"
-               inputmode="numeric" value="${escape(press?.label_copies ?? 2)}"
-               style="flex:0 0 4.5rem;text-align:center">
-        <button class="btn quiet" type="submit">Save</button>
+      <h3 class="dlabel" style="margin-top:1rem">Labels for each kind of thing</h3>
+      <form id="kind-copies">
+        <ul class="items copies">${allKinds.map((k) => `
+          <li>
+            <label for="copies-${escape(k.kind)}">${escape(k.label)}</label>
+            <input id="copies-${escape(k.kind)}" name="${escape(k.kind)}" type="number" min="1" max="10"
+                   inputmode="numeric" value="${escape(k.copies)}">
+          </li>`).join("")}</ul>
+        <div class="row" style="margin-top:0.75rem">
+          <button class="btn quiet" type="submit">Save</button>
+        </div>
       </form>
-      <p class="meta">A box usually wants a label on more than one face. You can
-         still change the number for a single print. A stub always prints one.</p>
+      <p class="meta">How many print when nobody says: a box wants a label on
+         more than one face, a chair does not. You can still change the number
+         for a single print. A stub always prints one.</p>
     </div>
 
     <div class="section">
@@ -2173,18 +2250,27 @@ async function viewSettings() {
     } catch (error) { announce(error.message, { warn: true }); }
   });
 
-  document.getElementById("printing").addEventListener("submit", async (event) => {
+  // One Save for the block, one request per kind that changed. The numbers
+  // are read back from what the server kept, so a refused one shows as it was.
+  document.getElementById("kind-copies").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const labelCopies = Number(new FormData(event.target).get("label_copies"));
-    const button = event.target.querySelector("button");
+    const fields = Array.from(event.target.querySelectorAll("input[type=number]"));
+    const changed = fields.filter((field) => field.value !== field.dataset.initial);
+    if (!changed.length) { announce("Nothing changed."); return; }
+    const button = event.target.querySelector("button[type=submit]");
+    const said = [];
     try {
-      const saved = await busy(button, "Saving…", () =>
-        api("/settings/printing", {
-          method: "PUT", body: JSON.stringify({ label_copies: labelCopies }) }));
-      const field = event.target.querySelector("[name=label_copies]");
-      field.value = saved.label_copies;
-      field.dataset.initial = String(saved.label_copies);
-      announce(`Labels will print ${saved.label_copies} at a time.`);
+      await busy(button, "Saving…", async () => {
+        for (const field of changed) {
+          const saved = await api("/settings/kind-copies", {
+            method: "PUT", body: JSON.stringify({ kind: field.name, copies: Number(field.value) }) });
+          field.value = saved.copies;
+          field.dataset.initial = String(saved.copies);
+          const label = allKinds.find((k) => k.kind === saved.kind)?.label || saved.kind;
+          said.push(`${label.toLowerCase()} ${saved.copies}`);
+        }
+      });
+      announce(`Labels per print: ${said.join(", ")}.`);
     } catch (error) { announce(error.message, { warn: true }); }
   });
 

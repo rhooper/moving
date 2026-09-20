@@ -31,13 +31,15 @@ if (!A || !B) {
   [A, B] = [live[0].code, live[1].code];
 }
 const profile = mkdtempSync(join(tmpdir(), "wedge-check-"));
+// Overridable: this is not the only headless Chrome on the machine.
+const PORT = Number(process.env.CDP_PORT) || 9336;
 const chrome = spawn("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  ["--headless=new", "--disable-gpu", "--remote-debugging-port=9336", `--user-data-dir=${profile}`, "about:blank"],
+  ["--headless=new", "--disable-gpu", `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`, "about:blank"],
   { stdio: "ignore" });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let wsUrl;
 for (let i = 0; i < 150 && !wsUrl; i++) {
-  try { wsUrl = (await (await fetch("http://127.0.0.1:9336/json")).json()).find((p) => p.type === "page")?.webSocketDebuggerUrl; } catch {}
+  try { wsUrl = (await (await fetch(`http://127.0.0.1:${PORT}/json`)).json()).find((p) => p.type === "page")?.webSocketDebuggerUrl; } catch {}
   await sleep(100);
 }
 const ws = new WebSocket(wsUrl); await new Promise((r) => (ws.onopen = r));
@@ -121,6 +123,25 @@ check("Print focused: the scan opens the other box", (await hash()) === `#/b/${A
 check("Print focused: the reader's Return did NOT press Print",
       (await evaluate(`window.__writes.filter((w) => w.includes("/labels/print")).length`)) === 0,
       await evaluate(`JSON.stringify(window.__writes)`));
+
+// --- a pushbutton has the focus: it is a button, though it is an <input> ---
+// The kind, size and rooms are rows of radios. Whichever was tapped last keeps
+// the focus, exactly as Print does -- and an <input> used to mean "somebody is
+// typing here", which would have dropped the scan and let its Return submit
+// the form the radio is in.
+await goto(`#/b/${B}`);
+await waitFor('.seg[data-name="kind"] input:checked');
+await evaluate(`document.querySelector('.seg[data-name="kind"] input:checked').focus()`);
+check("(setup) a pushbutton really has the focus",
+      (await evaluate(`document.activeElement?.type`)) === "radio");
+await scan(A);
+check("pushbutton focused: the scan opens the other box", (await hash()) === `#/b/${A}`, await hash());
+await goto("#/new");
+await waitFor('#new .seg[data-name="kind"] input:checked');
+await evaluate(`document.querySelector('#new .seg[data-name="kind"] input:checked').focus()`);
+await scan(A);
+check("pushbutton focused on the new-record form: the scan opens the box, and creates nothing",
+      (await hash()) === `#/b/${A}`, await hash());
 
 // --- a modal is a question being asked ---
 await goto(`#/b/${B}`);

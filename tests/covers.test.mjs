@@ -241,6 +241,31 @@ test("a record from before kinds existed is a box, and a new one is open", async
   assert.deepEqual(rowStatus({ kind: null, status: null }), { kind: "box", status: "open" });
 });
 
+test("a container with a size says so, in front of what it is", async () => {
+  // "The large box for the kitchen" is how people look for one.
+  const { rowStatus } = await import("../web/covers.js");
+
+  assert.equal(rowStatus({ kind: "box", size: "large", status: "open" }).kind, "large box");
+  assert.equal(rowStatus({ kind: "tub", size: "small", status: "open" }).kind, "small tub");
+  assert.equal(rowStatus({ kind: "bag", size: "medium", status: "packed" }).kind, "medium bag");
+});
+
+test("extra large is XL in the list: the cell is narrow and does not wrap", async () => {
+  const { rowStatus } = await import("../web/covers.js");
+
+  assert.equal(rowStatus({ kind: "crate", size: "extra large", status: "open" }).kind, "XL crate");
+});
+
+test("no size means no change: what it is, and nothing in front of it", async () => {
+  const { rowStatus } = await import("../web/covers.js");
+
+  for (const none of [null, undefined, ""]) {
+    assert.deepEqual(rowStatus({ kind: "box", size: none, status: "packed" }), { kind: "box", status: "packed" });
+  }
+  // The status line is untouched by any of this.
+  assert.equal(rowStatus({ kind: "box", size: "large", status: "loaded" }).status, "loaded");
+});
+
 test("where it is right now is not what this cell is for", async () => {
   // The cell used to show the location when there was one, which hid the
   // status. The location lives on the record page.
