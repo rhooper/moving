@@ -20,6 +20,8 @@ Three things are worth pinning:
 import re
 from pathlib import Path
 
+import pytest
+
 from movingbox import kinds
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -146,3 +148,40 @@ def test_the_three_handling_flags_carry_the_label_s_own_glyphs():
     for flag, mark in FLAGS.items():
         assert mark in page, mark
         assert flag in source and f'"{mark}"' in source, flag
+
+
+# --- the 4 px radius, as a token -----------------------------------------
+
+#: Box-like surfaces. A rule (.section, .err) and a glyph (an icon, the home
+#: mark) are not surfaces and stay square.
+ROUNDED = [
+    "input, textarea, button, select",
+    ".seg-row span",
+    ".boxlist .t",
+    "dialog",
+    ".shots figure",
+    "#live",
+    ".say",
+    # These two mirror the printed label most directly, where the corners are
+    # square because a thermal printer puts square corners on tape. The owner
+    # asked for the radius on the UI all the same; it is called out so it can
+    # be taken off these two without unpicking the rest.
+    ".band",
+    ".flag",
+]
+
+
+def test_the_radius_is_a_token():
+    assert re.search(r":root\s*\{[^}]*--radius:\s*4px", stylesheet())
+
+
+@pytest.mark.parametrize("selector", ROUNDED)
+def test_the_box_like_surfaces_are_rounded(selector):
+    assert "border-radius: var(--radius)" in rule(selector), selector
+
+
+def test_no_site_hard_codes_the_number():
+    # One token, so "slightly rounded" stays one decision rather than twelve.
+    values = re.findall(r"border-radius:\s*([^;]+);", stylesheet())
+    stray = [v.strip() for v in values if v.strip() not in {"var(--radius)", "50%", "0"}]
+    assert not stray, stray

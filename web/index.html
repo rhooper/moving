@@ -30,6 +30,12 @@
   --bar: 56px;     /* the nav bar: a 24px mark stacked over its word */
   --thumb: 44px;   /* the cover square on a list row */
   --kind-icon: 26px;   /* the kind's mark in that square, while there is no photo */
+  /* Slightly rounded corners on the box-like surfaces, asked for on
+     2026-09-20. Only through this token, so "slightly rounded" stays one
+     decision rather than a dozen. It does not reach the printed label: that
+     is rendered in Python onto tape, and a thermal printer's corners are
+     square. Glyphs keep their hard edges -- an icon is type, not a box. */
+  --radius: 4px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -119,6 +125,7 @@ a { color: inherit; }
   text-transform: uppercase;
   padding: 0.6rem 0.9rem;
   margin: 0 -1rem 1rem;
+  border-radius: var(--radius);
 }
 
 .flags { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.75rem; }
@@ -135,6 +142,7 @@ a { color: inherit; }
   letter-spacing: 0.04em;
   text-transform: uppercase;
   padding: 0.25rem 0.55rem;
+  border-radius: var(--radius);
 }
 
 .meta { color: var(--muted); font-size: 0.9375rem; margin: 0 0 0.25rem; }
@@ -164,7 +172,7 @@ input, textarea, button, select {
   color: var(--ink);
   background: var(--paper);
   border: 1px solid var(--line);
-  border-radius: 0;
+  border-radius: var(--radius);
   padding: 0.65rem 0.75rem;
   min-height: var(--tap);
   width: 100%;
@@ -246,6 +254,7 @@ ul.items li.renaming .ai { display: none; }
   align-self: center;  /* the text spans keep the baseline; a 44px image cannot */
   background: var(--sunk);
   border: 1px solid var(--line);
+  border-radius: var(--radius);
   overflow: hidden;
   position: relative;
 }
@@ -397,6 +406,7 @@ ul.items li.renaming .ai { display: none; }
   color: #fff;
   font-weight: 650;
   font-size: 0.9375rem;
+  border-radius: var(--radius);
   cursor: pointer;
 }
 @media (min-width: 46rem) {
@@ -405,7 +415,7 @@ ul.items li.renaming .ai { display: none; }
 
 .err { border-left: 3px solid var(--signal); padding: 0.5rem 0.75rem; margin: 1rem 0; }
 
-.say { border-left: 3px solid var(--ink); padding: 0.5rem 0.75rem; margin: 0 0 1rem; background: var(--sunk); }
+.say { border-left: 3px solid var(--ink); padding: 0.5rem 0.75rem; margin: 0 0 1rem; background: var(--sunk); border-radius: var(--radius); }
 .say.warn { border-left-color: var(--signal); }
 
 /* The record page saves itself; this line under each of its forms says how
@@ -453,6 +463,7 @@ dialog {
   width: min(28rem, calc(100vw - 2rem));
   padding: 1.25rem;
   border: 2px solid var(--ink);
+  border-radius: var(--radius);
   background: var(--paper);
   color: var(--ink);
 }
@@ -475,6 +486,7 @@ dialog.viewer img {
   max-height: 60dvh;
   object-fit: contain;
   background: var(--sunk);
+  border-radius: var(--radius);
 }
 dialog.viewer .seen { padding: 0.75rem 0.25rem 0.25rem; }
 dialog.viewer .seen h2 { margin-bottom: 0.35rem; }
@@ -551,6 +563,9 @@ dialog .row > * { flex: 1; }
   min-height: var(--tap);
   padding: 0.35rem 0.9rem;
   border: 1px solid var(--line);
+  /* Every button, not just the ends of the row: the row wraps, and rounding
+     only the first and last would leave half-round corners mid-line. */
+  border-radius: var(--radius);
   background: transparent;
   color: var(--ink);
   font-size: 0.9375rem;
@@ -621,7 +636,11 @@ button.working::before {
 }
 
 .shots { display: flex; flex-wrap: wrap; gap: 0.5rem; }
-.shots figure { margin: 0; width: calc(50% - 0.25rem); }
+/* The photo and the strip of buttons welded under it are one card, so the
+   corners are the card's: the parts inside keep square ones and the card
+   clips them. */
+.shots figure { margin: 0; width: calc(50% - 0.25rem); border-radius: var(--radius); overflow: hidden; }
+.shots .acts > *, .shots .mark, .shots .analysis button { border-radius: 0; }
 .shots img { width: 100%; height: auto; display: block; background: var(--sunk); }
 /* Sized to their text, sharing what is left over, and never wrapping: at
    320px "Make cover" on two lines made one figure taller than the one beside
