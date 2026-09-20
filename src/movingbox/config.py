@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import dataclasses
 import os
+from collections.abc import Callable
 from pathlib import Path
+
+from . import secrets
 
 # Repo root: src/movingbox/config.py -> movingbox -> src -> root
 ROOT = Path(__file__).resolve().parents[2]
@@ -22,7 +25,9 @@ class Config:
     label_preview_dir: Path
     backup_dir: Path | None = None  # defaults to db_path's parent / "backups"
     base_url: str = DEFAULT_BASE_URL
-    api_key: str | None = None
+    # repr=False on both keys: a traceback that renders a Config, or one stray
+    # log line, would otherwise put a secret in var/log/moving.err.log for good.
+    api_key: str | None = dataclasses.field(default=None, repr=False)
     # `fake` writes a PNG preview instead of printing. Anything else needs the
     # QL-800 attached, so it is never the default.
     printer_backend: str = "fake"
@@ -43,8 +48,26 @@ class Config:
     #: The closer look, run only when asked for: ~10 s, and the best of those
     #: tried at handwriting and brand names.
     vision_detail_model: str = "qwen3-vl:8b-instruct"
-    #: "ollama", or "stub": a canned provider that sleeps and returns a fixed
-    #: draft, for building and checking the UI without a model.
+    #: The cloud tier, tried first when `vision_provider` is "claude". Chosen
+    #: on merit rather than price: the local 4b averages 19.6 s a photo here
+    #: with a 92 s worst case and 5 errors in 47 jobs, against roughly three
+    #: quarters of a cent a photo for Sonnet. See CLAUDE.md for the numbers.
+    vision_cloud_model: str = "claude-sonnet-5"
+    #: The closer look, run only when asked for.
+    vision_cloud_detail_model: str = "claude-opus-5"
+    #: Read once at startup from ANTHROPIC_API_KEY, else the login keychain
+    #: (see secrets.py). None is not an error: the hybrid reads locally.
+    anthropic_api_key: str | None = dataclasses.field(default=None, repr=False)
+    #: Dollars, cumulative over every cloud job ever run. Past it the cloud
+    #: tier is not offered and reading falls back to the local model, which is
+    #: what makes this a cap rather than a number on a screen. The move's
+    #: budget was set at $20-30; the default is the top of that.
+    vision_budget_usd: float = 30.0
+    #: "ollama", "claude" (cloud first, local behind it), or "stub": a canned
+    #: provider that sleeps and returns a fixed draft, for building and
+    #: checking the UI without a model. **The dataclass default is local**, so
+    #: a Config built directly -- which is what every test does -- can never
+    #: reach the API. from_env is what turns the cloud on.
     vision_provider: str = "ollama"
     vision_stub_seconds: float = 3.0
     #: Whether the app starts the background thread that analyses uploaded
@@ -56,9 +79,47 @@ class Config:
     def replace(self, **changes) -> Config:
         return dataclasses.replace(self, **changes)
 
+    def vision_model_for(self, *, detail: bool = False) -> str:
+        """Which model a job names when it is queued: the one tried first.
 
-def from_env(env: dict[str, str] | None = None) -> Config:
-    e = os.environ if env is None else env
+        Only the cloud provider names cloud models. The stub decides which
+        canned draft to return by comparing what it is given against
+        `vision_detail_model`, so naming a cloud model under "stub" would
+        silently stop the browser checks ever seeing a closer look.
+        """
+        if self.vision_provider == "claude":
+            return self.vision_cloud_detail_model if detail else self.vision_cloud_model
+        return self.vision_detail_model if detail else self.vision_model
+
+    def vision_fallbacks(self) -> dict[str, str]:
+        """Each cloud tier and the local model that stands in for it.
+
+        "claude-sonnet-5" means nothing to Ollama, so the pair that falls back
+        has to be told what to ask for instead.
+        """
+        return {
+            self.vision_cloud_model: self.vision_model,
+            self.vision_cloud_detail_model: self.vision_detail_model,
+        }
+
+
+def from_env(
+    env: dict[str, str] | None = None,
+    *,
+    api_key_lookup: Callable[[], str | None] | None = None,
+) -> Config:
+    """Configuration for a running process.
+
+    `from_env()` -- the real environment, the service or the CLI -- consults
+    the login keychain for the Anthropic key. `from_env({...})` -- a test, a
+    script building a throwaway config -- **never does**: a dict of variables
+    is not this machine, and a test that read the keychain would be a test that
+    could spend money. Pass `api_key_lookup` to say otherwise.
+    """
+    real = env is None
+    e = os.environ if real else env
+    if api_key_lookup is None:
+        api_key_lookup = secrets.from_keychain if real else (lambda: None)
     var = ROOT / "var"
     return Config(
         db_path=Path(e.get("MOVING_DB_PATH", var / "moving.db")),
@@ -75,7 +136,14 @@ def from_env(env: dict[str, str] | None = None) -> Config:
         ollama_url=e.get("MOVING_OLLAMA_URL", "http://localhost:11434").rstrip("/"),
         vision_model=e.get("MOVING_VISION_MODEL", "qwen3-vl:4b-instruct"),
         vision_detail_model=e.get("MOVING_VISION_DETAIL_MODEL", "qwen3-vl:8b-instruct"),
-        vision_provider=e.get("MOVING_VISION_PROVIDER", "ollama"),
+        vision_cloud_model=e.get("MOVING_VISION_CLOUD_MODEL", "claude-sonnet-5"),
+        vision_cloud_detail_model=e.get("MOVING_VISION_CLOUD_DETAIL_MODEL", "claude-opus-5"),
+        anthropic_api_key=secrets.anthropic_api_key(e, lookup=api_key_lookup),
+        vision_budget_usd=float(e.get("MOVING_VISION_BUDGET_USD", "30")),
+        # The hybrid is the default for a running service: cloud first, the
+        # local model whenever the cloud cannot answer. MOVING_VISION_PROVIDER
+        # pins it to "ollama" or "stub".
+        vision_provider=e.get("MOVING_VISION_PROVIDER", "claude"),
         vision_stub_seconds=float(e.get("MOVING_VISION_STUB_SECONDS", "3")),
         auto_analyse=e.get("MOVING_AUTO_ANALYSE", "1") not in ("0", "false", "no", "off"),
     )

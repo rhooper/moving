@@ -103,7 +103,9 @@ def enqueue(
             photo["box_id"],
             photo_id,
             config.vision_provider,
-            config.vision_detail_model if detail else config.vision_model,
+            # The model *tried first*. With a hybrid the one that answers may
+            # be the local stand-in, and the worker writes that back.
+            config.vision_model_for(detail=detail),
             base.PROMPT_VERSION,
             int(detail),
         ),

@@ -92,8 +92,12 @@ def get_conn(config: Config = Depends(get_config)) -> Iterator[sqlite3.Connectio
 def build_vision_provider(config: Config):
     """The configured vision provider. One place, for routes and the worker.
 
-    Built per use rather than at startup so Ollama coming back up does not
-    need a restart.
+    Built per use rather than at startup so Ollama coming back up -- or an
+    API that was unreachable a minute ago -- does not need a restart.
+
+    "claude" is a *pair*: the cloud tier with the local model behind it. With
+    no key it is still a pair, with nothing to try first, which is how an
+    unauthenticated service reads photos locally instead of failing.
     """
     if config.vision_provider == "stub":
         from ..vision.stub import StubProvider
@@ -102,7 +106,19 @@ def build_vision_provider(config: Config):
 
     from ..vision.ollama import OllamaProvider
 
-    return OllamaProvider(config.ollama_url)
+    local = OllamaProvider(config.ollama_url)
+    if config.vision_provider != "claude":
+        return local
+
+    from ..vision import claude, hybrid
+
+    return hybrid.Hybrid(
+        cloud=claude.provider_for(
+            config.anthropic_api_key, detail_model=config.vision_cloud_detail_model
+        ),
+        local=local,
+        fallbacks=config.vision_fallbacks(),
+    )
 
 
 def get_vision_provider(config: Config = Depends(get_config)):
