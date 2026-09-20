@@ -482,8 +482,23 @@ const IN_SETTINGS = async () => {
 
   check("Settings says what is reading photos",
         section.textContent.includes(spend.local_model), section.textContent.slice(0, 120));
-  check("the throwaway server is reading locally, so it says so",
-        section.dataset.reading === "local", section.dataset.reading);
+  // This check runs against a throwaway server (no key, so "local") and
+  // against the live service (a key that may be working or refused), so it
+  // pins the panel to what the server actually reports rather than to one
+  // deployment's state -- a panel that disagrees with /api/settings/spend is
+  // the bug worth catching, not a panel reporting an honest "failing".
+  // The rule itself is unit-tested; what this checks is that the panel renders
+  // the rule rather than a template's guess at it. It runs against a throwaway
+  // server (no key, so "local") and against the live service (a key that may
+  // be working or refused), so it must not pin one deployment's answer.
+  const { readingWith } = await import("/covers.js");
+  const expected = readingWith(spend).state;
+  check("the panel draws the state the rule derives from the server's numbers",
+        section.dataset.reading === expected,
+        `panel=${section.dataset.reading} rule=${expected}`);
+  check("and it is one of the states the app knows",
+        ["local", "cloud", "failing", "capped"].includes(section.dataset.reading),
+        section.dataset.reading);
   check("no part of a key is anywhere on the page",
         !document.body.textContent.includes("sk-ant"));
 
