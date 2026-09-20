@@ -43,8 +43,19 @@ class Config:
     #: The closer look, run only when asked for: ~10 s, and the best of those
     #: tried at handwriting and brand names.
     vision_detail_model: str = "qwen3-vl:8b-instruct"
+    #: Writes the "From contents" summary -- a generic line about the kind of
+    #: things in the box, then a few examples -- rather than the flat list the
+    #: assembler builds. Not a vision model and not the vision models'
+    #: checkpoints: measured on this machine on realistic contents lists
+    #: (2026-09-20), qwen2.5:7b was the only candidate that reliably wrote the
+    #: shape asked for. qwen3-vl:4b-instruct re-listed almost everything it was
+    #: given, qwen3-vl:8b-instruct dropped Chinese characters into an English
+    #: line, gemma3:4b varied run to run, and qwen3.5:2b is a *thinking*
+    #: checkpoint: 70-120 s and 8,000 tokens of reasoning per line.
+    summary_model: str = "qwen2.5:7b"
     #: "ollama", or "stub": a canned provider that sleeps and returns a fixed
-    #: draft, for building and checking the UI without a model.
+    #: draft, for building and checking the UI without a model. Selects the
+    #: summary phraser too, so one switch keeps both off a model.
     vision_provider: str = "ollama"
     vision_stub_seconds: float = 3.0
     #: Whether the app starts the background thread that analyses uploaded
@@ -52,6 +63,13 @@ class Config:
     #: what every test does -- never starts a thread that talks to a model.
     #: from_env turns it on: the running service is the one place it belongs.
     auto_analyse: bool = False
+    #: Whether "From contents" asks a model to phrase the summary, and whether
+    #: the app keeps that model warm. **Off unless asked for**, exactly like
+    #: auto_analyse and for the same reason: every test builds a Config
+    #: directly, so nothing in the suite can reach a model. from_env turns it
+    #: on. Off, the button still works -- it assembles the line, as it always
+    #: did -- which is also the switch to flip if the phrasing is not wanted.
+    phrase_summaries: bool = False
 
     def replace(self, **changes) -> Config:
         return dataclasses.replace(self, **changes)
@@ -75,7 +93,9 @@ def from_env(env: dict[str, str] | None = None) -> Config:
         ollama_url=e.get("MOVING_OLLAMA_URL", "http://localhost:11434").rstrip("/"),
         vision_model=e.get("MOVING_VISION_MODEL", "qwen3-vl:4b-instruct"),
         vision_detail_model=e.get("MOVING_VISION_DETAIL_MODEL", "qwen3-vl:8b-instruct"),
+        summary_model=e.get("MOVING_SUMMARY_MODEL", "qwen2.5:7b"),
         vision_provider=e.get("MOVING_VISION_PROVIDER", "ollama"),
         vision_stub_seconds=float(e.get("MOVING_VISION_STUB_SECONDS", "3")),
         auto_analyse=e.get("MOVING_AUTO_ANALYSE", "1") not in ("0", "false", "no", "off"),
+        phrase_summaries=e.get("MOVING_PHRASE_SUMMARIES", "1") not in ("0", "false", "no", "off"),
     )

@@ -6,10 +6,10 @@ import sqlite3
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
-from .. import store, summarise
+from .. import phrasing, store, summarise
 from ..config import Config
 from . import events
-from .app import get_config, get_conn, get_events
+from .app import get_config, get_conn, get_events, get_phraser
 from .schemas import BoxWrite, ItemCreate, ItemUpdate, LocationChange, StatusChange
 
 router = APIRouter(prefix="/api", tags=["boxes"])
@@ -289,7 +289,12 @@ def delete_item(
 
 
 @router.get("/boxes/{code}/summary-suggestion")
-def suggest_summary(code: str, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+def suggest_summary(
+    code: str,
+    conn: sqlite3.Connection = Depends(get_conn),
+    config: Config = Depends(get_config),
+    phraser: phrasing.Phraser | None = Depends(get_phraser),
+) -> dict:
     """A summary of the box's items and of whatever is nested inside it.
 
     Proposed, never applied -- the same rule as a photo draft. The caller puts
@@ -297,10 +302,16 @@ def suggest_summary(code: str, conn: sqlite3.Connection = Depends(get_conn)) -> 
 
     What is inside counts as contents: a crate holding three bags is not empty,
     and the print gate has said so since nesting landed.
+
+    `source` says whether a model phrased the line ("model") or it was
+    assembled from the list ("assembled"). Assembled is not a failure state --
+    it is what happens with no model configured, with too little to generalise
+    from, and every time Ollama cannot answer. See phrasing.py.
     """
     _require_readable(conn, code)
     contents = summarise.contents(store.list_items(conn, code), store.children_of(conn, code))
-    return {"summary": summarise.from_items(contents)}
+    summary, source = phrasing.summary_for(contents, phraser, model=config.summary_model)
+    return {"summary": summary, "source": source}
 
 
 @router.get("/boxes/{code}/events")

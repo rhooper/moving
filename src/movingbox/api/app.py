@@ -17,7 +17,7 @@ from starlette.websockets import WebSocketDisconnect
 
 import movingbox
 
-from .. import analysis, db, store
+from .. import analysis, db, phrasing, store
 from ..config import ROOT, Config, from_env
 from ..labels import printer as printing
 from ..labels.layout import FONT_PATH
@@ -110,6 +110,31 @@ def get_vision_provider(config: Config = Depends(get_config)):
     return build_vision_provider(config)
 
 
+def build_phraser(config: Config):
+    """The thing that writes the "From contents" line, or None to assemble it.
+
+    None is not a failure: the endpoint assembles the line exactly as it always
+    did. It is what a Config built directly gives -- which is every test, so
+    nothing in the suite can reach a model -- and what the owner gets by
+    setting MOVING_PHRASE_SUMMARIES=0.
+    """
+    if not config.phrase_summaries:
+        return None
+    if config.vision_provider == "stub":
+        from ..phrasing import StubPhraser
+
+        return StubPhraser()
+
+    from ..phrasing import OllamaPhraser
+
+    return OllamaPhraser(config.ollama_url)
+
+
+def get_phraser(config: Config = Depends(get_config)):
+    """The summary phraser. Overridden in tests that want one."""
+    return build_phraser(config)
+
+
 def get_analyst(request: Request):
     """The background photo worker, or None where it is not running (tests)."""
     return request.app.state.analyst
@@ -160,6 +185,17 @@ def create_app(config: Config | None = None) -> FastAPI:
         app.state.printer_watcher = watcher
         watcher.start()
 
+        # "From contents" is a button someone is standing over, so the model
+        # behind it has to be in memory already: a cold load is several
+        # seconds against a warm answer's third of one. Ollama unloads after
+        # half an hour, and boxes are packed further apart than that, so this
+        # pings it back awake for as long as the app is up. It does nothing
+        # unless the config asks (a Config built directly never does), and
+        # nothing it does can fail startup.
+        warmer = phrasing.Warmer(settings)
+        app.state.summary_warmer = warmer
+        warmer.start()
+
         # Photo analysis runs here rather than in the request that uploaded the
         # photo: a vision model takes seconds to tens of seconds, and nobody
         # should hold a phone still for that. Off unless the config asks -- a
@@ -175,6 +211,7 @@ def create_app(config: Config | None = None) -> FastAPI:
             yield
         finally:
             watcher.stop()
+            warmer.stop()
             if app.state.analyst is not None:
                 app.state.analyst.stop()
 
