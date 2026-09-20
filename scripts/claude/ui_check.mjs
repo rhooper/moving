@@ -417,6 +417,43 @@ const IN_NESTED = async () => {
 };
 
 // The new-record form. Looks, never submits: creating would write a real row.
+// Settings, for the one section on it that is arithmetic and wording rather
+// than a form: what reading photos has cost, against the cap. Read-only, like
+// everything else in this file.
+const IN_SETTINGS = async () => {
+  const wait = async (test, what) => {
+    for (let i = 0; i < 100; i++) {
+      if (test()) return;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    throw new Error(`timed out waiting for ${what}`);
+  };
+  const results = [];
+  const check = (name, passed, detail = "") => results.push([name, Boolean(passed), String(detail)]);
+
+  await wait(() => document.querySelector("[data-reading]"), "the Reading photos section");
+  const section = document.querySelector("[data-reading]");
+  const spend = await fetch("/api/settings/spend").then((r) => r.json());
+
+  check("Settings says what is reading photos",
+        section.textContent.includes(spend.local_model), section.textContent.slice(0, 120));
+  check("the throwaway server is reading locally, so it says so",
+        section.dataset.reading === "local", section.dataset.reading);
+  check("no part of a key is anywhere on the page",
+        !document.body.textContent.includes("sk-ant"));
+
+  // The gauge is a width, so a NaN or an overflow shows up as a bar that is
+  // the wrong size rather than as an error.
+  const filled = section.querySelector(".gauge span");
+  const width = Number.parseFloat(filled?.style.width);
+  check("the spend gauge has a real width between none and full",
+        Number.isFinite(width) && width >= 0 && width <= 100, filled?.style.width);
+  check("the gauge is not as wide as the page",
+        filled.getBoundingClientRect().width <= section.getBoundingClientRect().width);
+
+  return results;
+};
+
 const IN_NEW = async () => {
   const wait = async (test, what) => {
     for (let i = 0; i < 100; i++) {
@@ -580,6 +617,16 @@ try {
     throw new Error(third.result.exceptionDetails.exception?.description || "nesting script failed");
   }
   results.push(...third.result.result.value);
+  await send("Page.navigate", { url: `${base}/#/settings` });
+  await sleep(400);
+  const fourth = await send("Runtime.evaluate", {
+    expression: `(${IN_SETTINGS.toString()})()`, awaitPromise: true, returnByValue: true,
+  });
+  if (fourth.result?.exceptionDetails) {
+    throw new Error(fourth.result.exceptionDetails.exception?.description || "settings script failed");
+  }
+  results.push(...fourth.result.result.value);
+
   results.push(["nothing threw in the page while all that happened",
                 thrown.length === 0, thrown.join(" | ")]);
   failures = 0;
