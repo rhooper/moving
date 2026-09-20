@@ -468,6 +468,37 @@ not set) but don't undo on clear". Each step of `path` carries the container's
   leaves the record standing and the dialog open saying so, its buttons turned
   into "Try the photo again" / "Open it" -- neither a half-made thing nor a
   photo silently dropped. `#/new/in/CODE` still exists for the full form.
+  - **The camera is live in the dialog** (asked for as "can we use javascript
+    to have a live camera immediately during adding a subitem?"). It was
+    `capture="environment"` on a file input, which hands off to the system
+    camera app: a context switch, a shutter, a confirm screen and back. Now
+    `getUserMedia` runs when the dialog opens -- not at page load, nobody
+    wants a camera prompt for browsing a list -- the shutter draws the frame
+    to a canvas at `frameSize()` (2048 on the long edge, what the server keeps
+    anyway; never upscaled) and keeps it as a JPEG, and that blob is what Add
+    uploads. Same facts as `web/scan.js`, which it follows rather than
+    inventing a second camera: `isSecureContext` is checked **before** asking,
+    because on a plain LAN address `getUserMedia` rejects with nothing that
+    explains itself; `facingMode: environment`, since somebody photographing a
+    box wants the back camera.
+    - **Releasing it is one path**: the dialog's `close` event fires for
+      Cancel, Escape, the backdrop and a finished Add alike, so that is the
+      only place tracks are stopped, plus `pagehide` for the tab going away.
+      A track left running keeps the camera light on and drains a phone
+      carried round a house all day.
+    - Every failure is ordinary -- refused, none there, one already in use, an
+      insecure address -- so none is an error state (`cameraTrouble()`): a
+      line says which happened, the viewfinder is *put away* rather than left
+      as a dead grey rectangle, and the file picker underneath still works.
+      It lost its `capture` attribute on purpose: the live camera is the
+      camera now, and the picker's job is choosing a photo already taken.
+    - `nesting_check.mjs` runs it on a synthetic webcam
+      (`--use-fake-device-for-media-stream`) and reads the track back after
+      the dialog closes, which must be `ended`. Granting and refusing in one
+      run took finding out: `Browser.setPermission` wants the web-standard
+      descriptor names and refuses `videoCapture`, `Browser.grantPermissions`
+      takes CDP's own enum, and with nothing granted headless Chrome refuses
+      -- so `Browser.resetPermissions` *is* the refusal path.
 - **Tapping something inside opens its editor as a modal over the container**
   (`editSubitem` in `app.js`), asked for as "pop open the subitem editor as a
   modal, rather than changing page". A real editor -- summary, kind, size,
