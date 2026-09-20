@@ -7,14 +7,40 @@
 //          container), clearing it touches nothing, putting a fragile thing
 //          inside something offers again, and so does creating one inside with
 //          Fragile ticked. Uses the page's own dialog, clicked, not stubbed.
+//          And adding something inside from the container's page: the dialog
+//          asks for a kind, a photo and a source, Add makes it and the row
+//          appears without leaving the page, Add and open lands on it, Cancel
+//          makes nothing, and a photo that fails to upload (failed at the
+//          network) leaves the record standing with a visible message.
 // Date:    2026-09-20
 // Usage:   node scripts/claude/nesting_check.mjs <base-url>
 //          WRITES: creates records and marks them. Refuses the live service.
 //          scripts/claude/browser_checks.sh runs it on a throwaway.
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { crc32, deflateSync } from "node:zlib";
+
+// A real PNG, made here so the check needs no image file and no Pillow.
+function png(size, [r, g, b]) {
+  const chunk = (type, data) => {
+    const body = Buffer.concat([Buffer.from(type), data]);
+    const out = Buffer.alloc(body.length + 8);
+    out.writeUInt32BE(data.length, 0);
+    body.copy(out, 4);
+    out.writeUInt32BE(crc32(body), body.length + 4);
+    return out;
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(size, 0); header.writeUInt32BE(size, 4);
+  header[8] = 8; header[9] = 2;
+  const row = Buffer.concat([Buffer.from([0]), Buffer.alloc(size * 3).map((_, i) => [r, g, b][i % 3])]);
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", header), chunk("IDAT", deflateSync(Buffer.concat(Array(size).fill(row)))), chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
 
 const NAME = "nesting_check";
 // This check creates records and marks them fragile. Never against the live
@@ -43,9 +69,16 @@ for (let i = 0; i < 150 && !wsUrl; i++) {
 }
 const ws = new WebSocket(wsUrl); await new Promise((r) => (ws.onopen = r));
 let id = 0; const pending = new Map(); const thrown = [];
+let failing = null;   // { matches(request), left }: requests to fail at the network
 ws.onmessage = (m) => {
   const msg = JSON.parse(m.data);
   if (msg.method === "Runtime.exceptionThrown") thrown.push(msg.params.exceptionDetails.exception?.description || "?");
+  if (msg.method === "Fetch.requestPaused") {
+    const doomed = failing && failing.left > 0 && failing.matches(msg.params.request);
+    if (doomed) failing.left -= 1;
+    send(doomed ? "Fetch.failRequest" : "Fetch.continueRequest",
+         doomed ? { requestId: msg.params.requestId, errorReason: "ConnectionRefused" } : { requestId: msg.params.requestId });
+  }
   pending.get(msg.id)?.(msg); pending.delete(msg.id);
 };
 const send = (method, params = {}) => new Promise((res) => { pending.set(++id, res); ws.send(JSON.stringify({ id, method, params })); });
@@ -174,6 +207,88 @@ try {
   const made = (await evaluate("location.hash")).slice(4);
   check("saying yes marks the container, and then you are on the new record", (await fragileOf(tub)) === 1 && (await fragileOf(made)) === 1 && made !== tub,
         `${made}: ${await fragileOf(made)}, tub ${await fragileOf(tub)}`);
+
+  // --- adding something inside, from the container's page ---
+  const photo = join(profile, "shot.png");
+  writeFileSync(photo, png(96, [180, 150, 110]));
+  const source = rooms.find((r) => r.kind !== "destination");
+  await goto(`#/b/${crate}`, `Boolean(${q("#add-inside")})`);
+  const insideBefore = (await api(`/boxes/${crate}`)).children.length;
+  await evaluate(`${q("#summary-form [name=content_summary]")}.__mark = "stayed"`);
+  await click("#add-inside");
+  await waitFor(`Boolean(document.querySelector("dialog.adder[open]"))`, "the add-inside dialog");
+  check("Add something inside opens a dialog, not another page",
+        (await evaluate("location.hash")) === `#/b/${crate}` && (await evaluate(`document.activeElement?.value`)) === "no");
+  check("it asks for a kind, a photo and a source, and nothing else",
+        await evaluate(`(() => { const d = document.querySelector("dialog.adder");
+          return d.querySelector('.seg[data-name="kind"]') && d.querySelector('#adder-shot[type=file][capture]')
+            && d.querySelector('.seg[data-name="source_room_id"]') && !d.querySelector("textarea")
+            && !d.querySelector('.seg[data-name="destination_room_id"]') && !d.querySelector('.seg[data-name="size"]'); })()`));
+  check("every kind is offered, single things included",
+        (await evaluate(`[...document.querySelectorAll('dialog.adder .seg[data-name="kind"] input')].map((r) => r.value).join()`)) === "box,tub,crate,bag,item,furniture");
+  await click(`dialog.adder .seg[data-name="kind"] input[value="bag"] + span`);
+  await click(`dialog.adder .seg[data-name="source_room_id"] input[value="${source.id}"] + span`);
+  const doc = await send("DOM.getDocument");
+  const shotNode = await send("DOM.querySelector", { nodeId: doc.result.root.nodeId, selector: "dialog.adder #adder-shot" });
+  await send("DOM.setFileInputFiles", { nodeId: shotNode.result.nodeId, files: [photo] });
+  check("choosing a photo is acknowledged", /Photo: /.test(await evaluate(`${q("#adder-photo")}.textContent`)));
+  await click("#adder-add");
+  await waitFor(`!document.querySelector("dialog.adder")`, "Add to close the dialog", 150);
+  const added = (await api(`/boxes/${crate}`)).children.at(-1);
+  check("Add makes it inside, with the source, and stays on the container",
+        (await api(`/boxes/${crate}`)).children.length === insideBefore + 1 && added.kind === "bag" && added.source_room_id === source.id
+          && (await evaluate("location.hash")) === `#/b/${crate}`, JSON.stringify(added));
+  // The row arrives by the in-place refetch, which waits out the click first.
+  await waitFor(q(`#inside li[data-key="${added.code}"]`), "the new row to appear inside");
+  check("the new row appears in place, the page not redrawn",
+        (await evaluate(`${q("#summary-form [name=content_summary]")}.__mark`)) === "stayed");
+  check("the line says what was added, with a link to open it",
+        (await evaluate(`${q("#inside-said")}.textContent`)) === `Added ${added.code} (bag). Open it`
+          && (await evaluate(`${q("#inside-said a")}.getAttribute("href")`)) === `#/b/${added.code}`, await evaluate(`${q("#inside-said")}.textContent`));
+  const photos = await api(`/boxes/${added.code}/photos`);
+  check("the photo went to the new record and is being read", photos.length === 1 && Boolean(photos[0].analysis), JSON.stringify(photos.map((p) => p.analysis?.status)));
+
+  // Cancel makes nothing.
+  await click("#add-inside");
+  await waitFor(`Boolean(document.querySelector("dialog.adder[open]"))`, "the dialog again");
+  await click("dialog.adder [value=no]");
+  await waitFor(`!document.querySelector("dialog.adder")`, "Cancel");
+  check("Cancel makes nothing", (await api(`/boxes/${crate}`)).children.length === insideBefore + 1);
+
+  // Add and open lands on the new record.
+  await click("#add-inside");
+  await waitFor(`Boolean(document.querySelector("dialog.adder[open]"))`, "the dialog a third time");
+  await click(`dialog.adder .seg[data-name="kind"] input[value="item"] + span`);
+  await click("#adder-open");
+  await waitFor(`location.hash !== ${JSON.stringify(`#/b/${crate}`)} && Boolean(${q("#trail")}) && !${q("#trail")}.hidden`, "landing on the new record");
+  const opened = (await evaluate("location.hash")).slice(4);
+  check("Add and open lands on the new record, inside the container", (await api(`/boxes/${opened}`)).parent?.code === crate && (await api(`/boxes/${opened}`)).kind === "item");
+
+  // A photo that fails to upload: the record stands, and the dialog says so.
+  await goto(`#/b/${crate}`, `Boolean(${q("#add-inside")})`);
+  await send("Fetch.enable", { patterns: [{ urlPattern: `${base}/api/boxes/*/photos`, requestStage: "Request" }] });
+  failing = { matches: (request) => request.method === "POST", left: 1 };
+  const before = (await api(`/boxes/${crate}`)).children.length;
+  await click("#add-inside");
+  await waitFor(`Boolean(document.querySelector("dialog.adder[open]"))`, "the dialog a fourth time");
+  const doc2 = await send("DOM.getDocument");
+  const shot2 = await send("DOM.querySelector", { nodeId: doc2.result.root.nodeId, selector: "dialog.adder #adder-shot" });
+  await send("DOM.setFileInputFiles", { nodeId: shot2.result.nodeId, files: [photo] });
+  await click("#adder-add");
+  await waitFor(`!${q("#adder-said")}.hidden`, "the dialog to say the photo failed");
+  const complaint = await evaluate(`${q("#adder-said")}.textContent`);
+  const stood = (await api(`/boxes/${crate}`)).children.at(-1);
+  check("a failed photo upload leaves the record standing and the dialog open, saying so",
+        (await api(`/boxes/${crate}`)).children.length === before + 1 && /did not upload/.test(complaint) && complaint.includes(stood.code)
+          && (await evaluate(`Boolean(document.querySelector("dialog.adder[open]"))`)), complaint);
+  check("the buttons now offer the photo again, or to open it",
+        (await evaluate(`${q("#adder-add")}.textContent`)) === "Try the photo again" && (await evaluate(`${q("#adder-open")}.textContent`)) === "Open it");
+  check("and the line under the section says so too", /did not upload/.test(await evaluate(`${q("#inside-said")}.textContent`)));
+  await click("#adder-add");   // the network is back: the photo goes this time
+  await waitFor(`!document.querySelector("dialog.adder")`, "the retried photo to land and the dialog to close");
+  check("trying the photo again uploads it to the same record, no second record",
+        (await api(`/boxes/${stood.code}/photos`)).length === 1 && (await api(`/boxes/${crate}`)).children.length === before + 1);
+  await send("Fetch.disable");
   check("nothing threw in the page", thrown.length === 0, thrown.join(" | "));
 } catch (error) { check(`harness: ${error.message}`, false); }
 

@@ -745,13 +745,13 @@ try {
   await press("Backspace");
   await press("Tab");
 
-  // Create inside, from the button on the container.
+  // The full new-record form, pre-set inside. (The button on the container
+  // opens the quick dialog instead now -- nesting_check.mjs presses that.)
   mark = writes().length;
-  await click("#add-inside");
+  await evaluate(`location.hash = ${JSON.stringify(`#/new/in/${code}`)}`);
   await waitFor(`${q("#inside-note")} && ${q("#new #create")}`, "the new-record form, pre-set inside");
-  check("Add something inside opens the form pre-set inside this container",
-        (await evaluate(`${q("#inside-note")}.textContent`)).includes(code) && (await evaluate("location.hash")) === `#/new/in/${code}`,
-        await evaluate(`${q("#inside-note")}.textContent`));
+  check("#/new/in/CODE is the form pre-set inside this container",
+        (await evaluate(`${q("#inside-note")}.textContent`)).includes(code), await evaluate(`${q("#inside-note")}.textContent`));
   check("with plain Create first and filled in, the stub and the label after it",
         await evaluate(`(() => { const b = [...document.querySelectorAll("#new button[type=submit]")];
           return b[0].id === "create" && b[0].classList.contains("btn") && !b[0].classList.contains("quiet") && b.length === 3; })()`));

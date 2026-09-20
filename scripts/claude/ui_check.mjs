@@ -306,9 +306,9 @@ const IN_PAGE = async () => {
           insideSection.querySelectorAll("#inside li").length === kids.length
             && kids.every((k) => insideSection.querySelector(`#inside li[data-key="${k.code}"] a[href="#/b/${k.code}"]`)),
           `${insideSection.querySelectorAll("#inside li").length} rows for ${kids.length}`);
-    check("with nothing inside it says so, and offers to add something",
+    check("with nothing inside it says so, and offers to add something -- a button, not a page",
           (kids.length > 0) !== !$("#inside-empty").hidden
-            && $("#add-inside")?.getAttribute("href") === `#/new/in/${encodeURIComponent(location.hash.split("/").pop())}`);
+            && $("#add-inside")?.tagName === "BUTTON" && !$("#add-inside").hasAttribute("href"));
     check("a container's rows do not each say they are in it", !insideSection.querySelector("#inside .at:not([hidden])"));
   }
   check("the way in: a code field, a Look up, and a line saying what it is inside",
