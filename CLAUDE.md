@@ -16,7 +16,8 @@ uv run moving reindex            # rebuild the FTS index
 uv run moving backup             # verified backup + prune
 uv run moving export --format csv -o out.csv
 uv run moving manifest           # box counts per room
-scripts/claude/try_vision.py     # call the real model (slow, non-deterministic)
+scripts/claude/try_vision.py     # call the local model directly (slow, non-deterministic)
+scripts/claude/try_cloud_vision.py  # prove the cloud tier through a running app (spends money)
 uv run pytest                    # printer forced to `fake` in conftest
 scripts/claude/install-service.sh          # launchd + tailscale serve (persistent https)
 scripts/claude/install-service.sh --uninstall
@@ -196,9 +197,121 @@ ctypes reads it at call time whereas dyld caches its own at exec.
 **Fonts are bundled** (`labels/fonts/Inter.ttf`, OFL). Golden-image tests
 compare rendered bytes, so a system font update would break them spuriously.
 
-**Vision is local-only by deliberate choice**, through Ollama. A cloud provider
-would slot in behind `vision.base.VisionProvider`; none is built, because local
-was the choice.
+**Vision is a hybrid: Claude first, Ollama behind it** (2026-09-20). It was
+local-only, and the README recorded "no cloud vision provider" as a closed
+decision; that was reversed on measurement. From the live database,
+`qwen3-vl:4b-instruct` averaged **19.6 s** a photo with a **92 s** worst case
+and **5 of 47 jobs errored**. Against that, a stored 1536x2048 photo costs
+about 2,460 image tokens plus a ~300-token prompt and ~200 out: **$0.0075 a
+photo on Sonnet 5 ($0.75 per 100), $0.019 on Opus 5 ($1.88 per 100)**, against
+a move likely to make 300-1,000 photos. The budget was set at $20-30 explicitly
+so models could be chosen on merit.
+
+- **`claude-sonnet-5` reads every uploaded photo** (`MOVING_VISION_CLOUD_MODEL`).
+- **`claude-opus-5` is the closer look** (`MOVING_VISION_CLOUD_DETAIL_MODEL`),
+  the same **Look closer** button.
+- **`qwen3-vl:4b-instruct` / `:8b-instruct` stay, as the automatic fallback.**
+  This is the point of a hybrid, not a nicety: during the move the Mac gets
+  unplugged and carried to a van, and the tailnet survives things the internet
+  does not. Unreachable, unauthorised, rate limited, refused, over budget or no
+  key at all all land in the same place -- `vision/hybrid.py` -- and the read
+  gets *worse* rather than stopping. **No key is a supported configuration,**
+  not an error path.
+
+Details that are decisions, not gaps:
+
+- **`vision/claude.py` asks the API for the shape** (`output_config.format`
+  with `strict()` applied to `base.SCHEMA`) rather than mining JSON out of
+  prose. `read_response` still goes through `base.parse`, for the half that
+  matters: a reply with no usable draft raises instead of reading as "the model
+  saw an empty box".
+- **No thinking on the quick tier** (`thinking: {"type": "disabled"}`). Naming
+  what is in a photograph is perception, and thinking would add seconds and
+  output tokens to every one of a thousand photos. The closer look keeps it,
+  adaptive at `effort: "medium"` -- explicitly disabling thinking on that model
+  tier is documented to leak stray tags into the reply, and `high` (the
+  default) spends more than reading a photograph is worth. **Whether adaptive
+  thinking actually reads better there is untested**: the key has never
+  authenticated, so no closer look has run in the cloud.
+- **Photos are shrunk to 1568 px on the long edge before sending**, because the
+  API resizes anything larger anyway -- so the reading is unchanged and both
+  the upload and the token count become predictable. What is *stored* stays at
+  2048 px; 1024 was measured and was a bad trade.
+- **`base.Reading` says who answered and what it cost**, written back onto the
+  job by the worker: with a fallback in play, the model a job names when it is
+  *queued* is only the one tried first. The photo viewer shows "Read by X".
+- **A paid call that could not be read still charged.** The pair carries that
+  cost onto whatever answers next, so `ai_jobs.cost_usd` is what the *job*
+  cost. A breakdown by model books such a call against the model that rescued
+  it -- rare, small, and better than losing the number.
+- **The cap is enforced, per job, in the worker** (`spend.over_cap`), not when
+  the provider was built: a queue of photos can cross it halfway down. Past it
+  the cloud tier is withdrawn and the local model reads the photo.
+- **Prices are a table in `vision/claude.py`**, matched by longest prefix so a
+  dated snapshot is priced as its family. An unknown *Claude* model is priced
+  at the dearest rate known: a budget that under-counts is a budget that gets
+  quietly exceeded.
+
+**The Anthropic API key lives in `.env` in the project root, and nowhere
+else.** `ANTHROPIC_API_KEY` in the environment wins; then `.env`; then nothing,
+which is a working configuration. Three earlier shapes were tried and dropped
+-- the login keychain, a launchd plist variable, and `op run` against 1Password
+-- and the reasons are worth keeping: `launchctl print` renders a service's
+environment, so a plist variable is readable by anything that can run
+launchctl; and three ways to supply one secret is three things to get wrong.
+`.env` is already off this project's whole hazard list: `.gitignore` lists it
+under "Local secrets", backups use SQLite's online backup API against the
+database alone and never sweep the working tree, and `export.py` writes
+database contents rather than files.
+
+```bash
+cp .env.example .env      # then put the key in it
+chmod 600 .env            # it warns, and keeps working, if you do not
+```
+
+- **Parsed by `secrets.py`, not by python-dotenv.** `KEY=VALUE`, `#` comments,
+  blank lines, an `export ` prefix, surrounding quotes stripped, and an
+  unquoted value ending at a trailing ` #` -- a key with " # mine" on the end
+  is sent verbatim and comes back as a 401 that reads as a bad key.
+- **`MOVING_ENV_FILE` names a file**, which is how a test or a throwaway server
+  points at a fixture. The default is *this checkout's* `.env`: a worktree has
+  its own, and should.
+- **`from_env({...})` reads no file unless it names one.** A dict of variables
+  is not this machine, and that is what keeps the suite from ever finding a
+  real key -- the same spirit as `auto_analyse` being off by the dataclass
+  default. The dataclass default for `vision_provider` is `"ollama"` and for
+  `anthropic_api_key` is `None`; `from_env` is what turns the cloud on.
+- **The value never leaves the process.** `repr=False` on both key fields, so
+  a traceback rendering a `Config` cannot spill one into `var/log`;
+  `claude.redact()` strips any `sk-ant-` run from every message before it can
+  reach `ai_jobs.error`, an event or a phone; a 401 reports the API's own error
+  *type* and never a prefix of the value; `/api/settings/spend` carries
+  `key: true|false` and never a value.
+- **Never run the key yourself.** It is the owner's billed credential, funded
+  for one narrow purpose. Verify by *starting the app* and using it --
+  `scripts/claude/try_cloud_vision.py` drives the app's own endpoints -- never
+  with curl, the SDK, a REPL or a benchmark script.
+
+**What the budget looks like** (`spend.py`, migration 0010, Settings ->
+Reading photos): `ai_jobs` carries `input_tokens`, `output_tokens` and
+`cost_usd`, and the running total is summed from them rather than kept in a
+counter -- the jobs are the record and they survive every restart. The cap is
+`MOVING_VISION_BUDGET_USD` (default 30), in config rather than in the panel: a
+budget you could raise by brushing a field would not be much of a budget.
+Settings answers the one question anyone has of it -- is the good model reading
+my photos right now -- and when it is not, says why. **A refused key looks
+exactly like a working one until you compare the items**, so if the last ten
+photos were all read locally while the cloud tier is configured with a key, the
+panel says so and points at the log.
+
+**Live state (2026-09-20): the key in `.env` returns HTTP 401
+`authentication_error`.** Every other part of the path is proven: the file is
+read, the key is found, the request is built, the API is reached, the 401 is
+recognised, the local model reads the photo, the items are applied and the
+spend (zero -- a 401 is not billed) is recorded. `authentication_error` is the
+API's own type, so it is the credential, not the request shape; a bad request
+would be a 400 `invalid_request_error`. **Nothing has been spent, and no cloud
+read has ever succeeded.**
 
 **A quick model reads every photo; a careful one looks closer when asked.**
 `qwen3-vl:4b-instruct` by default (`MOVING_VISION_MODEL`), `qwen3-vl:8b-instruct`
@@ -796,7 +909,9 @@ behind `tailscale serve`.
 
 **Closed decisions — do not re-propose these as gaps** (rationale in README
 § Decided against): no pre-printed blank label batches, no offline write sync,
-no DK-2251 two-colour printing, no cloud vision provider.
+no DK-2251 two-colour printing. *"No cloud vision provider" was on this list
+and was reversed on 2026-09-20* — see "Vision is a hybrid" above for the
+measurements that reversed it.
 
 Live updates were added after that: `/api/events` broadcasts which box changed,
 and `web/live.js` reconnects with jittered backoff, falls back to polling, and
