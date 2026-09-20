@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import sqlite3
 from collections.abc import Iterator
@@ -14,11 +15,13 @@ from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnect
 
+import movingbox
+
 from .. import analysis, db, store
 from ..config import ROOT, Config, from_env
 from ..labels import printer as printing
 from ..labels.layout import FONT_PATH
-from . import events
+from . import assets, events
 
 WEB_ROOT = ROOT / "web"
 
@@ -38,6 +41,13 @@ def deployed_revision() -> str:
     revision is proof that this process is running that code -- which is what
     the deploy script checks before calling a deploy successful.
     """
+    # The environment wins, for one purpose: the browser checks run a
+    # throwaway server, which has no deploy behind it, and they must load the
+    # app the way production serves it -- every asset URL versioned -- or the
+    # rewriting in assets.py is only ever exercised on the live site.
+    named = os.environ.get("MOVING_REVISION", "").strip()
+    if named:
+        return named
     try:
         return REVISION_FILE.read_text().strip() or "unknown"
     except OSError:
@@ -168,7 +178,7 @@ def create_app(config: Config | None = None) -> FastAPI:
             if app.state.analyst is not None:
                 app.state.analyst.stop()
 
-    app = FastAPI(title="Moving Box Tracker", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Moving Box Tracker", version=movingbox.__version__, lifespan=lifespan)
     app.state.config = settings
     app.state.revision = deployed_revision()
     app.state.events = events.Hub()
@@ -186,7 +196,13 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     @app.get("/health")
     def health() -> dict[str, str]:
-        return {"status": "ok", "revision": app.state.revision}
+        # revision says which commit is running; version is for a human
+        # reading a bug report ("saw it on 0.4.2").
+        return {
+            "status": "ok",
+            "revision": app.state.revision,
+            "version": movingbox.__version__,
+        }
 
     @app.websocket("/api/events")
     async def changes(socket: WebSocket) -> None:
@@ -246,8 +262,12 @@ def create_app(config: Config | None = None) -> FastAPI:
     # The label's typeface, served from the package rather than duplicated into
     # web/ so there is one copy of the file in the repo.
     @app.get("/Inter.ttf", include_in_schema=False)
-    def font() -> FileResponse:
-        return FileResponse(FONT_PATH, media_type="font/ttf")
+    def font(v: str | None = None) -> FileResponse:
+        return FileResponse(
+            FONT_PATH,
+            media_type="font/ttf",
+            headers={"Cache-Control": assets.cache_header(v, app.state.revision)},
+        )
 
     # Mounted last: every route above wins, so /api and /b are not shadowed.
     # html=True serves index.html at / so the hash router can take over.
@@ -273,12 +293,35 @@ def create_app(config: Config | None = None) -> FastAPI:
                     body,
                     count=1,
                 )
+            # Its shell list names the files to pre-cache; they have to be the
+            # same versioned URLs the page asks for, or every one is a miss.
+            body = assets.versioned(body, app.state.revision)
             return Response(
                 body,
                 media_type="application/javascript",
                 # An HTTP-cached sw.js would defeat the whole point.
                 headers={"Cache-Control": "no-cache"},
             )
+
+        # The page and the files it is made of, with the deployed revision in
+        # every asset URL (see assets.py). Ahead of the mount below, which is
+        # left to serve anything these do not claim.
+        @app.get("/", include_in_schema=False)
+        @app.get("/index.html", include_in_schema=False)
+        def page() -> Response:
+            # Never cached: it is what *names* the versioned files.
+            return assets.respond(
+                WEB_ROOT / "index.html", asked_for=None, revision=app.state.revision
+            )
+
+        @app.get("/{name}", include_in_schema=False)
+        def asset(name: str, v: str | None = None) -> Response:
+            # One path segment, by construction of the route -- so no
+            # traversal -- and only a file that is really in the web root.
+            path = WEB_ROOT / name
+            if name.startswith(".") or not path.is_file():
+                raise HTTPException(status_code=404, detail="Not found")
+            return assets.respond(path, asked_for=v, revision=app.state.revision)
 
         app.mount("/", StaticFiles(directory=WEB_ROOT, html=True), name="web")
 

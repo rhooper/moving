@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Purpose: label copies and the thin-label question, pressed for real. Settings
-//          stores the default; the record page shows it and can override it for
-//          one print; a complete label prints without asking; one with no
+//          stores a number for each kind of thing (a box 2, a chair 1); the
+//          record page shows its own kind's and can override it for one print;
+//          a complete label prints without asking; one with no
 //          contents or no destination room asks first (Cancel focused, "no"
 //          prints nothing, "yes" sends allow_empty); the new-record form asks
 //          *before* creating anything; the stub never asks and prints one.
@@ -27,14 +28,16 @@ const NAME = "copies_check";
 }
 
 const base = process.argv[2];
+// Overridable: this is not the only headless Chrome on the machine.
+const PORT = Number(process.env.CDP_PORT) || 9337;
 const profile = mkdtempSync(join(tmpdir(), "copies-check-"));
 const chrome = spawn("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  ["--headless=new", "--disable-gpu", "--remote-debugging-port=9337", `--user-data-dir=${profile}`, "about:blank"],
+  ["--headless=new", "--disable-gpu", `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`, "about:blank"],
   { stdio: "ignore" });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let wsUrl;
 for (let i = 0; i < 150 && !wsUrl; i++) {
-  try { wsUrl = (await (await fetch("http://127.0.0.1:9337/json")).json()).find((p) => p.type === "page")?.webSocketDebuggerUrl; } catch {}
+  try { wsUrl = (await (await fetch(`http://127.0.0.1:${PORT}/json`)).json()).find((p) => p.type === "page")?.webSocketDebuggerUrl; } catch {}
   await sleep(100);
 }
 const ws = new WebSocket(wsUrl); await new Promise((r) => (ws.onopen = r));
@@ -55,7 +58,11 @@ const waitFor = async (selector, gone = false) => {
 };
 const goto = async (hash, selector) => { await evaluate(`location.hash = ${JSON.stringify(hash)}`); await sleep(300); await waitFor(selector); };
 const api = async (path, method = "GET", body) =>
-  (await fetch(`${base}/api${path}`, { method, headers: { "content-type": "application/json" }, body: body && JSON.stringify(body) })).json();
+  (await fetch(`${base}/api${path}`, {
+    method,
+    headers: { "content-type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),  // a GET carries no body
+  })).json();
 
 const results = [];
 const check = (name, ok, detail = "") => results.push([name, Boolean(ok), String(detail)]);
@@ -68,24 +75,55 @@ try {
   const full = (await api("/boxes", "POST", { content_summary: "pots and pans", destination_room_id: room })).code;
   const noRoom = (await api("/boxes", "POST", { content_summary: "pots and pans" })).code;
   const bare = (await api("/boxes", "POST", {})).code;
+  const chair = (await api("/boxes", "POST", { kind: "furniture", content_summary: "armchair", destination_room_id: room })).code;
+  const copiesOf = async (kind) => (await api("/settings/kinds")).find((k) => k.kind === kind).copies;
+  // Start from the numbers as shipped, so this can be run twice against one
+  // throwaway: it changes a box's number below, and would find it changed.
+  const SHIPPED = { box: 2, tub: 2, crate: 2, bag: 1, item: 1, furniture: 1 };
+  for (const [kind, copies] of Object.entries(SHIPPED)) await api("/settings/kind-copies", "PUT", { kind, copies });
 
   await send("Page.enable");
   await send("Page.navigate", { url: `${base}/#/settings` });
-  await waitFor("#printing");
+  await waitFor("#kind-copies");
   await evaluate(`(() => { window.__prints = []; const f = window.fetch;
     window.fetch = (u, o = {}) => { if (String(u).includes("/labels/print")) window.__prints.push(JSON.parse(o.body)); return f(u, o); }; })()`);
 
-  // --- settings ---
-  check("settings: the default shown is two", (await evaluate(`document.getElementById("label-copies").value`)) === "2");
-  await evaluate(`(() => { const f = document.getElementById("label-copies"); f.value = "3";
-    f.dispatchEvent(new Event("input", { bubbles: true })); document.querySelector("#printing button").click(); })()`);
+  // --- settings: a number for each kind of thing ---
+  const shown = JSON.parse(await evaluate(`JSON.stringify(Object.fromEntries(
+    [...document.querySelectorAll("#kind-copies input[type=number]")].map((f) => [f.name, f.value])))`));
+  check("settings: each kind shows the number asked for",
+        JSON.stringify(shown) === JSON.stringify({ box: "2", tub: "2", crate: "2", bag: "1", item: "1", furniture: "1" }),
+        JSON.stringify(shown));
+  check("settings: every number has a label naming its kind",
+        await evaluate(`[...document.querySelectorAll("#kind-copies input[type=number]")].every((f) => f.labels?.length === 1 && f.labels[0].textContent.trim() !== "")`));
+  check("settings: the single number for everything is gone", !(await evaluate(`Boolean(document.getElementById("printing") || document.getElementById("label-copies"))`)));
+  await evaluate(`(() => { window.__puts = []; const f = window.fetch;
+    window.fetch = (u, o = {}) => { if (String(u).includes("/settings/kind-copies")) window.__puts.push(JSON.parse(o.body)); return f(u, o); }; })()`);
+  await evaluate(`(() => { const f = document.getElementById("copies-box"); f.value = "3";
+    f.dispatchEvent(new Event("input", { bubbles: true })); document.querySelector("#kind-copies button[type=submit]").click(); })()`);
   await sleep(600);
-  check("settings: saving three is stored", (await api("/settings/printing")).label_copies === 3);
-  check("settings: and says so", /3 at a time/.test(await evaluate(`document.getElementById("say").textContent`)));
+  check("settings: saving three for a box is stored", (await copiesOf("box")) === 3);
+  check("settings: only the kind that changed was sent",
+        (await evaluate(`JSON.stringify(window.__puts)`)) === JSON.stringify([{ kind: "box", copies: 3 }]),
+        await evaluate(`JSON.stringify(window.__puts)`));
+  check("settings: the others are untouched", (await copiesOf("furniture")) === 1 && (await copiesOf("tub")) === 2);
+  check("settings: and says so", /box 3/.test(await evaluate(`document.getElementById("say").textContent`)),
+        await evaluate(`document.getElementById("say").textContent`));
+  check("settings: the saved number is the form's new baseline",
+        await evaluate(`(() => { const f = document.getElementById("copies-box"); return f.dataset.initial === "3" && f.value === "3"; })()`));
+  // Nonsense never leaves the page: the field's own min and max stop the form
+  // being submitted at all (the server would refuse it too; its tests say so).
+  await evaluate(`(() => { const f = document.getElementById("copies-bag"); f.value = "99";
+    f.dispatchEvent(new Event("input", { bubbles: true })); document.getElementById("kind-copies").requestSubmit(); })()`);
+  await sleep(500);
+  check("settings: a number out of range is stopped by the form, and nothing is sent or stored",
+        (await copiesOf("bag")) === 1 && (await evaluate(`window.__puts.length`)) === 1
+          && (await evaluate(`document.getElementById("copies-bag").validity.rangeOverflow`)),
+        await evaluate(`JSON.stringify(window.__puts)`));
 
   // --- a complete label: no question asked ---
   await goto(`#/b/${full}`, "#print");
-  check("record page: copies starts at the stored default", (await evaluate(`document.getElementById("copies").value`)) === "3");
+  check("record page: a box's copies starts at the number stored for boxes", (await evaluate(`document.getElementById("copies").value`)) === "3");
   await evaluate(`document.getElementById("print").click()`);
   await sleep(800);
   check("complete label: prints without asking", (await dialogText()) === null && (await prints()).length === 1);
@@ -102,7 +140,16 @@ try {
   await evaluate(`document.getElementById("print").click()`);
   await sleep(800);
   check("copies: one print can ask for one", (await prints()).at(-1).copies === 1);
-  check("copies: the stored default is untouched", (await api("/settings/printing")).label_copies === 3);
+  check("copies: the stored number is untouched", (await copiesOf("box")) === 3);
+
+  // --- a single thing has its own number ---
+  await goto(`#/b/${chair}`, "#print");
+  check("record page: a chair's copies starts at the number stored for furniture",
+        (await evaluate(`document.getElementById("copies").value`)) === "1");
+  await evaluate(`document.getElementById("print").click()`);
+  await sleep(800);
+  check("a chair prints one, without being told", (await prints()).at(-1).copies === 1 && (await api(`/boxes/${chair}`)).label_print_count === 1,
+        JSON.stringify((await prints()).at(-1)));
 
   // --- no room ---
   await goto(`#/b/${noRoom}`, "#print");

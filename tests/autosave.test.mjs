@@ -70,6 +70,14 @@ test("a picker saves the moment it changes", () => {
   assert.equal(policyFor({ tagName: "INPUT", type: "checkbox" }), "change");
 });
 
+test("so does a row of pushbuttons, which is a picker you can see all of", () => {
+  // The kind, the size and the two rooms are radio groups now. Left to the
+  // default they would be "text": a tap would wait 1.2 s before it saved, and
+  // a second tap to clear inside that pause would send nothing at all.
+  assert.equal(policyFor({ tagName: "INPUT", type: "radio" }), "change");
+  assert.equal(policyFor({ tagName: "INPUT", type: "radio", dataset: {} }), "change");
+});
+
 test("text saves after a pause in typing", () => {
   assert.equal(policyFor({ tagName: "TEXTAREA" }), "pause");
   assert.equal(policyFor({ tagName: "INPUT", type: "text" }), "pause");

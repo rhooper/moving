@@ -1,6 +1,6 @@
 [project]
 name = "movingbox"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Packing tracker for a house move: box inventory, QR labels on a Brother QL-800, and a scanning PWA."
 requires-python = ">=3.13"
 dependencies = [
@@ -21,6 +21,7 @@ moving = "movingbox.cli:main"
 
 [dependency-groups]
 dev = [
+    "black>=26.5.1",
     "httpx2>=2.13.0",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
@@ -31,6 +32,9 @@ dev = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/movingbox/version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/movingbox"]
@@ -46,6 +50,10 @@ filterwarnings = [
 ]
 # The printer is forced to `fake` in tests/conftest.py, not here: pytest ignores
 # an `env` key unless pytest-env is installed, and does so silently.
+
+[tool.black]
+line-length = 100
+target-version = ["py313"]
 
 [tool.ruff]
 line-length = 100

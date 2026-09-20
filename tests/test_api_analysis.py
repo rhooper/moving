@@ -16,7 +16,14 @@ from movingbox.api.app import create_app
 from movingbox.vision import base
 
 ANALYSIS_KEYS = {
-    "status", "remaining_ms", "total_ms", "items_found", "error", "items", "summary", "detail",
+    "status",
+    "remaining_ms",
+    "total_ms",
+    "items_found",
+    "error",
+    "items",
+    "summary",
+    "detail",
 }
 
 
@@ -110,7 +117,9 @@ class TestWhatTheWorkerDoesShowsUp:
 
         items = client.get(f"/api/boxes/{code}/items").json()
         assert [(i["name"], i["qty"], i["source"]) for i in items] == [
-            ("kettle", 1, "ai"), ("mug", 3, "ai")]
+            ("kettle", 1, "ai"),
+            ("mug", 3, "ai"),
+        ]
 
     def test_the_photo_says_what_was_found(self, client, config):
         code = client.post("/api/boxes", json={}).json()["code"]
@@ -152,7 +161,7 @@ class TestWhatTheWorkerDoesShowsUp:
 
         told = run_queue(config, ("kettle", 1))
 
-        assert ("photos.changed", code) in told   # started, and finished
+        assert ("photos.changed", code) in told  # started, and finished
         assert ("items.changed", code) in told
         assert ("box.updated", code) in told
 

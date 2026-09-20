@@ -8,28 +8,37 @@ from __future__ import annotations
 
 import sqlite3
 
-#: A box usually wants a label on more than one face.
-DEFAULT_LABEL_COPIES = 2
+from . import kinds
+
 #: Matches what a print request may ask for. Ten is already a lot of tape.
 MAX_LABEL_COPIES = 10
 
 
-def label_copies(conn: sqlite3.Connection) -> int:
-    """How many copies of a full label print when the request does not say."""
-    row = conn.execute("SELECT value FROM settings WHERE key = 'label_copies'").fetchone()
+def label_copies(conn: sqlite3.Connection, kind: str) -> int:
+    """How many copies of a full label print for this kind, when nobody says.
+
+    Per kind, because one number cannot be right for a crate and a lamp: the
+    things that get stacked want a label on more than one face, the rest want
+    one. kinds.py holds the defaults; a row here overrides one. (There was a
+    single global number for two days. Nobody ever set it.)
+    """
+    row = conn.execute(
+        "SELECT value FROM settings WHERE key = ?", (f"label_copies:{kind}",)
+    ).fetchone()
     try:
-        copies = int(row["value"]) if row is not None else DEFAULT_LABEL_COPIES
+        copies = int(row["value"]) if row is not None else kinds.default_copies(kind)
     except ValueError:
-        return DEFAULT_LABEL_COPIES
+        return kinds.default_copies(kind)
     return min(max(copies, 1), MAX_LABEL_COPIES)
 
 
-def set_label_copies(conn: sqlite3.Connection, copies: int) -> int:
+def set_label_copies(conn: sqlite3.Connection, kind: str, copies: int) -> int:
+    kinds.check(kind)
     if not 1 <= copies <= MAX_LABEL_COPIES:
         raise ValueError(f"copies must be between 1 and {MAX_LABEL_COPIES}")
     conn.execute(
-        "INSERT INTO settings (key, value) VALUES ('label_copies', ?) "
+        "INSERT INTO settings (key, value) VALUES (?, ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        (str(copies),),
+        (f"label_copies:{kind}", str(copies)),
     )
     return copies

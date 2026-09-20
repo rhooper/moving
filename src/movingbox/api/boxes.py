@@ -76,8 +76,18 @@ def create_box(
 ) -> dict:
     # Every publish below happens after the store call returns, so a request
     # that failed announces nothing and no client refetches for no reason.
-    box = store.create_box(conn, **body.set_fields())
+    try:
+        box = store.create_box(conn, **body.set_fields())
+    except ValueError as bad:
+        # The schema checks each value; only the store knows whether they make
+        # sense together -- a size on something that is not a container, a
+        # parent that is not one either.
+        raise HTTPException(status_code=422, detail=str(bad)) from bad
     changes.publish(events.BOX_CREATED, box["code"])
+    box = _with_nesting(conn, box)
+    if box["parent"]:
+        # The container it was made inside has one more thing in it.
+        changes.publish(events.BOX_UPDATED, box["parent"]["code"])
     return box
 
 
@@ -92,7 +102,27 @@ def get_box(code: str, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
     box = store.get_box(conn, code, include_deleted=True)
     if box is None:
         raise HTTPException(status_code=404, detail=f"No box {code}")
-    return box
+    return _with_nesting(conn, box)
+
+
+def _with_nesting(conn: sqlite3.Connection, box: dict) -> dict:
+    """The record, plus what it is inside and what is inside it.
+
+    On the record rather than behind further endpoints: the page that draws a
+    record already makes five requests, and these are what it draws first.
+    `path` is outermost first, for a breadcrumb; `parent` is its last step.
+    """
+    path = [_brief(step) for step in store.path_to(conn, box["code"])]
+    return {
+        **box,
+        "path": path,
+        "parent": path[-1] if path else None,
+        "children": store.children_of(conn, box["code"]),
+    }
+
+
+def _brief(box: dict) -> dict:
+    return {key: box[key] for key in ("code", "kind", "content_summary")}
 
 
 @router.patch("/boxes/{code}")
@@ -103,9 +133,23 @@ def update_box(
     changes: events.Publisher = Depends(get_events),
 ) -> dict:
     _require(conn, code)
-    box = store.update_box(conn, code, **body.set_fields())
+    fields = body.set_fields()
+    moving = "parent_code" in fields
+    parent_code = fields.pop("parent_code", None)
+    was_inside = store.path_to(conn, code)[-1:] if moving else []
+    try:
+        if moving:
+            # Checked first, so a refused move changes nothing else either.
+            store.set_parent(conn, code, parent_code)
+        box = store.update_box(conn, code, **fields)
+    except ValueError as bad:
+        raise HTTPException(status_code=422, detail=str(bad)) from bad
     changes.publish(events.BOX_UPDATED, code)
-    return box
+    if moving:
+        # Both ends of the move: one container lost something, one gained it.
+        for end in {step["code"] for step in was_inside} | ({parent_code} - {None}):
+            changes.publish(events.BOX_UPDATED, end)
+    return _with_nesting(conn, box)
 
 
 @router.delete("/boxes/{code}", status_code=204)
@@ -115,9 +159,17 @@ def delete_box(
     config: Config = Depends(get_config),
     changes: events.Publisher = Depends(get_events),
 ) -> Response:
-    if not store.delete_box(conn, config, code):
+    was_inside = store.path_to(conn, code)[-1:]
+    try:
+        deleted = store.delete_box(conn, config, code)
+    except store.NotEmpty as full:
+        # 409: the request is fine; the container is not empty.
+        raise HTTPException(status_code=409, detail=str(full)) from full
+    if not deleted:
         raise HTTPException(status_code=404, detail=f"No box {code}")
     changes.publish(events.BOX_DELETED, code)
+    for parent in was_inside:
+        changes.publish(events.BOX_UPDATED, parent["code"])
     return Response(status_code=204)
 
 

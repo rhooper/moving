@@ -112,8 +112,17 @@ def test_build_instructions_accepts_a_landscape_design(conn):
 # one system. What made that possible is the 3.3 inch length and chips that
 # sit side by side instead of stacking.
 
-ROOMS = ["Living Room", "Dining Room", "Kitchen", "Bathroom", "Basement",
-         "Office", "Guest Room", "Main Bedroom", "Garage"]
+ROOMS = [
+    "Living Room",
+    "Dining Room",
+    "Kitchen",
+    "Bathroom",
+    "Basement",
+    "Office",
+    "Guest Room",
+    "Main Bedroom",
+    "Garage",
+]
 CODES = ["B-0042", "D001", "Z06-001", "CAM-001"]
 
 
@@ -170,7 +179,8 @@ def test_fragile_and_heavy_share_one_row(conn):
 def test_open_first_is_a_border_not_a_chip(conn):
     plain = layout.render(a_label(flags=("FRAGILE",)), orientation="landscape").convert("L")
     first = layout.render(
-        a_label(flags=("FRAGILE", "OPEN FIRST")), orientation="landscape").convert("L")
+        a_label(flags=("FRAGILE", "OPEN FIRST")), orientation="landscape"
+    ).convert("L")
 
     # Low on the left edge: clear of the code, the chips and the room band.
     y = plain.height - 60
@@ -196,8 +206,9 @@ def test_nothing_runs_off_the_bottom_of_the_tape(conn):
     assert bottom.getextrema() == (255, 255), "ink in the bottom margin: something overflowed"
 
 
-@pytest.mark.parametrize("flags", [(), ("FRAGILE",), ("FRAGILE", "HEAVY"),
-                                   ("FRAGILE", "OPEN FIRST", "HEAVY")])
+@pytest.mark.parametrize(
+    "flags", [(), ("FRAGILE",), ("FRAGILE", "HEAVY"), ("FRAGILE", "OPEN FIRST", "HEAVY")]
+)
 def test_the_summary_always_has_room(conn, flags):
     with_summary = layout.render(a_label(flags=flags), orientation="landscape")
     without = layout.render(a_label(flags=flags, summary=None), orientation="landscape")
@@ -236,11 +247,16 @@ def test_the_room_band_does_not_move_when_a_box_is_flagged(conn, flags):
 def test_the_chips_sit_at_the_bottom_of_the_label(conn):
     plain = layout.render(a_label(flags=(), summary=None), orientation="landscape").convert("L")
     flagged = layout.render(
-        a_label(flags=("FRAGILE",), summary=None), orientation="landscape").convert("L")
+        a_label(flags=("FRAGILE",), summary=None), orientation="landscape"
+    ).convert("L")
 
     # The strip just above the bottom margin: empty without a flag, inked with.
-    strip = (layout.MARGIN, plain.height - layout.MARGIN - 20,
-             layout.MARGIN + 200, plain.height - layout.MARGIN - 10)
+    strip = (
+        layout.MARGIN,
+        plain.height - layout.MARGIN - 20,
+        layout.MARGIN + 200,
+        plain.height - layout.MARGIN - 10,
+    )
     assert plain.crop(strip).getextrema() == (255, 255)
     assert flagged.crop(strip).getextrema()[0] == 0
 

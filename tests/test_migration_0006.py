@@ -18,12 +18,10 @@ def old(config):
     roll_back_to(conn, 5)
     conn.execute("INSERT INTO boxes (code, content_summary) VALUES ('B-0001', 'pots and pans')")
     conn.execute("INSERT INTO boxes (code) VALUES ('B-0002')")
-    conn.execute(
-        """
+    conn.execute("""
         INSERT INTO ai_jobs (box_id, provider, model, prompt_version, status, raw_response)
         VALUES (1, 'ollama', 'qwen3-vl:30b', 'old', 'done', '{"items": []}')
-        """
-    )
+        """)
     conn.close()
     return config
 
@@ -78,8 +76,9 @@ def test_an_old_running_draft_is_not_requeued_as_a_photo(old):
     try:
         conn.execute("UPDATE ai_jobs SET status = 'running'")
         assert analysis.recover(conn) == 0
-        assert analysis.Analyst(
-            old, provider_factory=lambda: None, publish=lambda *a: None
-        ).run_once() is False
+        assert (
+            analysis.Analyst(old, provider_factory=lambda: None, publish=lambda *a: None).run_once()
+            is False
+        )
     finally:
         conn.close()

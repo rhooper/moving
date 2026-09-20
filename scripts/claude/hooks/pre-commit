@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Purpose: bump the patch version on every commit, so the number moves by
+#          itself ("auto-update version number on commit"). A commit that
+#          stages src/movingbox/version.py itself -- `make version-minor`,
+#          a merge carrying someone else's bump -- is left alone.
+# Date:    2026-09-20
+# Installed as a shim by scripts/claude/install-hooks.sh; the shim runs this
+# copy from whichever checkout is committing, so a worktree bumps its own file.
+set -euo pipefail
+CDPATH=""   # see deploy.sh: with CDPATH set, a relative cd prints its target
+
+FILE="src/movingbox/version.py"
+[ -f "$FILE" ] || exit 0
+
+# Already being bumped by hand? Then this commit's author chose the number.
+if git diff --cached --name-only | grep -qx "$FILE"; then
+  exit 0
+fi
+
+current="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' "$FILE")"
+case "$current" in
+  *.*.*) ;;
+  *) echo "pre-commit: cannot read a version from $FILE; leaving it alone" >&2; exit 0 ;;
+esac
+
+major="${current%%.*}"
+rest="${current#*.}"
+minor="${rest%%.*}"
+patch="${rest#*.}"
+next="$major.$minor.$((patch + 1))"
+
+# Edit only the one line, and stage only the one file: the rest of the index
+# is the committer's, half-staged files included.
+sed -i '' "s/^__version__ = \"$current\"$/__version__ = \"$next\"/" "$FILE"
+git add "$FILE"

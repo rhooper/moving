@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from .. import codes, kinds, prefs
 from .app import get_conn
-from .schemas import CodeFormat, KindPrefix, NextNumber, Printing
+from .schemas import CodeFormat, KindCopies, KindPrefix, NextNumber
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -33,6 +33,11 @@ def list_kinds(conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
             "label": kinds.label_for(key),
             "contents": kinds.holds_contents(key),
             "prefix": overrides.get(key),
+            # How many labels print for one of these when nobody says.
+            "copies": prefs.label_copies(conn, key),
+            # The sizes it can be: all four for a container, none for a thing.
+            # The record page shows the size picker exactly when this is not empty.
+            "sizes": list(kinds.sizes_for(key)),
         }
         for key in kinds.KINDS
     ]
@@ -47,14 +52,9 @@ def set_kind_prefix(body: KindPrefix, conn: sqlite3.Connection = Depends(get_con
     return {"kind": body.kind, "prefix": codes.kind_prefix(conn, body.kind)}
 
 
-@router.get("/printing")
-def get_printing(conn: sqlite3.Connection = Depends(get_conn)) -> dict:
-    return {"label_copies": prefs.label_copies(conn)}
-
-
-@router.put("/printing")
-def set_printing(body: Printing, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
-    return {"label_copies": prefs.set_label_copies(conn, body.label_copies)}
+@router.put("/kind-copies")
+def set_kind_copies(body: KindCopies, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    return {"kind": body.kind, "copies": prefs.set_label_copies(conn, body.kind, body.copies)}
 
 
 @router.get("/code-format")

@@ -19,7 +19,9 @@
 export function policyFor(field) {
   const asked = field.dataset?.autosave;
   if (asked) return asked;
-  if (field.tagName === "SELECT" || field.type === "checkbox") return "change";
+  // A radio is one button of a pushbutton row (segmented.js): a picker with
+  // every option showing. Pressing one is a whole choice, as with a <select>.
+  if (field.tagName === "SELECT" || field.type === "checkbox" || field.type === "radio") return "change";
   return "pause";
 }
 
