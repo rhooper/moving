@@ -22,6 +22,10 @@ T=$(mktemp -d)
 export MOVING_DB_PATH=$T/t.db MOVING_PHOTO_DIR=$T/photos MOVING_LABEL_PREVIEW_DIR=$T/prev
 export MOVING_BACKUP_DIR=$T/bk MOVING_PRINTER_BACKEND=fake
 export MOVING_VISION_PROVIDER=stub MOVING_VISION_STUB_SECONDS=3
+# A throwaway server has no deploy behind it, so it would serve every asset
+# unversioned -- and the checks would never load the app the way production
+# does (see src/movingbox/api/assets.py). Name a revision so they do.
+export MOVING_REVISION="check-$$"
 
 # A brand-new database must be migrated before a browser touches it: a page
 # load fires requests in parallel and they would race to create the schema.

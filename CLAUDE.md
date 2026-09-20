@@ -477,7 +477,7 @@ word from the generated comment; they are escaped now.
   `tests/test_web_forms.py` enforces it. A form without one still submits --
   natively: page reload, fields in the query string, nothing saved. The box
   page's summary and destination forms shipped that way and never saved once.
-  That is the third half-landed patch in `app.js` (after `splitItems`); there
+  That is the third half-landed patch in `app.js` (after `splitItems`);
   there was no JS linter then. There is now (oxlint, `make lint`), and the
   module-mode syntax test; these static guards remain because they check
   things a linter does not (a drawn form with no listener).
