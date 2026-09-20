@@ -13,7 +13,10 @@ import {
   partOf,
   reconcile,
 } from "/live.js";
-import { blockedDelete, describe, inheritedRoom, mayHold, notYetFragile, trail } from "/nesting.js";
+import {
+  addedInside, addInsideRequest, blockedDelete, describe, inheritedRoom, kindsToAddInside, mayHold,
+  notYetFragile, trail,
+} from "/nesting.js";
 import { choose, chosen, restrict, segmented } from "/segmented.js";
 import { splitItems } from "/text.js";
 import { KeyBuffer, entered } from "/wedge.js";
@@ -444,6 +447,129 @@ async function offerFragileClimb(record) {
     step.fragile = 1;
   }
   return steps;
+}
+
+// --- adding something inside a container ----------------------------------------
+//
+// Resolves when the dialog closes. Creating is POST /api/boxes with the kind,
+// the container and the source room, then the photo to the new code, which
+// queues its reading. A photo that does not upload leaves the record standing
+// and the dialog open saying so, with a way to try the photo again: neither a
+// half-made thing nor a photo silently dropped.
+function addInside({ parent, kinds, rooms, shape }) {
+  const dialog = document.createElement("dialog");
+  dialog.className = "ask adder";
+  // The paragraphs are single lines on purpose: a dialog's text keeps its
+  // line breaks (a confirmation may run to two paragraphs), so a newline in
+  // this markup would be a break mid-sentence on the screen.
+  const what = escape(shape.label.toLowerCase());
+  dialog.innerHTML = `
+    <h2>Add something inside <span class="nb">${escape(parent.code)}</span></h2>
+    <p class="meta">It goes where the ${what} goes. Everything else can be done from its own page.</p>
+    <div data-seg="kind"></div>
+    <p class="dlabel">A photo of it, if there is something to see</p>
+    <div class="row">
+      <label class="btn" for="adder-shot">Take a photo
+        <input id="adder-shot" type="file" accept="image/*" capture="environment" hidden>
+      </label>
+    </div>
+    <p class="meta" id="adder-photo">No photo yet, and none is needed. A photo is read in the background and names what is inside.</p>
+    <div data-seg="source_room_id"></div>
+    <p class="meta warn" id="adder-said" hidden></p>
+    <form method="dialog" class="row adder-acts">
+      <button class="btn quiet" value="no" autofocus>Cancel</button>
+      <button class="btn" value="add" id="adder-add">Add</button>
+      <button class="btn quiet" value="open" id="adder-open">Add and open</button>
+    </form>`;
+  const slot = (name) => dialog.querySelector(`[data-seg="${name}"]`);
+  const first = kindsToAddInside(kinds)[0];
+  slot("kind").replaceWith(segmented({
+    name: "kind", legend: "What it is", options: kindChoices(kindsToAddInside(kinds)), value: first?.kind }));
+  slot("source_room_id").replaceWith(segmented({
+    name: "source_room_id", legend: "Packed from", options: roomChoices(forSource(rooms)),
+    optional: true, empty: "Not recorded" }));
+
+  const shot = dialog.querySelector("#adder-shot");
+  const photoLine = dialog.querySelector("#adder-photo");
+  shot.addEventListener("change", () => {
+    const file = shot.files[0];
+    setText(photoLine, file ? `Photo: ${file.name || "taken"}. It will be read once the record exists.`
+                            : "No photo yet, and none is needed.");
+  });
+
+  // Once the record exists the two Add buttons change meaning: the photo can
+  // be tried again, or the record opened to add one there.
+  let made = null;
+  const said = dialog.querySelector("#adder-said");
+  const acts = dialog.querySelector(".adder-acts");
+  acts.addEventListener("submit", async (event) => {
+    const pressed = event.submitter?.value || "no";
+    if (pressed === "no") return;   // the form closes the dialog by itself
+    event.preventDefault();
+    const button = event.submitter;
+    const source = chosen(dialog.querySelector('.seg[data-name="source_room_id"]'));
+    const kind = chosen(dialog.querySelector('.seg[data-name="kind"]'));
+    let photoError = null;
+    try {
+      await busy(button, made ? "Uploading…" : "Adding…", async () => {
+        if (!made) {
+          made = await api("/boxes", {
+            method: "POST",
+            body: JSON.stringify(addInsideRequest({ kind, parentCode: parent.code, sourceRoom: source })),
+          });
+        }
+        const file = shot.files[0];
+        if (file) {
+          const body = new FormData();
+          body.append("file", file, file.name || "photo.jpg");
+          try {
+            await api(`/boxes/${encodeURIComponent(made.code)}/photos`, { method: "POST", body });
+          } catch (error) { photoError = error; }
+        }
+      });
+    } catch (error) {
+      // Nothing was made: say so here and leave everything as it was.
+      setText(said, error.message);
+      said.hidden = false;
+      return;
+    }
+    // The container's page (this one, or whichever is now on screen) hears
+    // about it the way it hears about anything: the record's own copy is
+    // refetched. The page's own write is dropped by the socket as an echo,
+    // so it is asked for here.
+    tell(addedInside(made, photoError), made.code);
+    requestPart("summary");
+    if (photoError) {
+      // The record stands. The photo can be tried again, or added from its page.
+      setText(said, `${made.code} was added, but its photo did not upload: ${photoError.message}. `
+        + "Try the photo again, add one from its page, or Cancel to leave it as it is.");
+      said.hidden = false;
+      setText(dialog.querySelector("#adder-add"), "Try the photo again");
+      setText(dialog.querySelector("#adder-open"), "Open it");
+      for (const radio of dialog.querySelectorAll("input[type=radio]")) radio.disabled = true;
+      return;
+    }
+    dialog.close(pressed);
+    if (pressed === "open") location.hash = `#/b/${made.code}`;
+  });
+
+  dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close("no"); });
+  dialog.addEventListener("close", () => dialog.remove());
+  document.body.append(dialog);
+  dialog.showModal();
+}
+
+// The line under "Inside this crate", on whichever draw of the page is up,
+// with a link to what was just added.
+function tell({ text, warn }, code) {
+  const line = document.getElementById("inside-said");
+  if (!line) return;
+  const link = document.createElement("a");
+  link.setAttribute("href", `#/b/${encodeURIComponent(code)}`);
+  link.textContent = "Open it";
+  line.replaceChildren(text, " ", link);
+  line.classList.toggle("warn", warn);
+  line.hidden = false;
 }
 
 // --- looking at one photo ------------------------------------------------------
@@ -1289,8 +1415,9 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
       <p class="meta" id="inside-empty" hidden>Nothing inside yet.</p>
       <ul class="boxlist" id="inside"></ul>
       <div class="row" style="margin-top:0.75rem">
-        <a class="btn quiet" id="add-inside" href="#/new/in/${escape(encodeURIComponent(code))}">Add something inside</a>
+        <button class="btn quiet" type="button" id="add-inside">Add something inside</button>
       </div>
+      <p class="meta" id="inside-said" role="status" hidden></p>
     </div>
 
     <div class="section">
@@ -1603,7 +1730,17 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
   showInside();
   drawChildren();
 
-  // Putting this record inside a container. A code is typed or scanned in
+  // Adding something inside, without leaving this page: somebody standing at
+  // an open crate dropping bags into it. A dialog asks for the kind, a photo
+  // and where it came from, and nothing else -- the photo is read in the
+  // background and names the contents, and the rest can be done from the new
+  // record's page. On document.body, like every dialog here, so a live
+  // refresh of the page underneath does not take it away; outside `app`, so
+  // the autosaver's hold never counts its fields.
+  document.getElementById("add-inside")?.addEventListener("click", () => {
+    addInside({ parent: box, kinds: allKinds, rooms, shape });
+  });
+
   // (the barcode reader types and presses Return, which submits), looked up,
   // and shown -- what it is, and whether it may hold this -- before anything
   // is saved. Saving is the autosaver's, with Undo, like every other field:
