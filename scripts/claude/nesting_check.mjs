@@ -16,7 +16,11 @@
 //          the container as a modal, folds away the sections it has nothing
 //          in, saves itself, keeps its own undo stack while the page behind
 //          keeps the container's, commits what is pending when it closes, and
-//          takes a change from elsewhere in place.
+//          takes a change from elsewhere in place. And the live viewfinder in
+//          the add dialog: it comes up by itself, the shutter keeps a frame
+//          that really uploads, every track is stopped when the dialog closes,
+//          and a refused camera leaves an honest line and a working file
+//          picker.
 // Date:    2026-09-20
 // Usage:   node scripts/claude/nesting_check.mjs <base-url>
 //          WRITES: creates records and marks them. Refuses the live service.
@@ -64,7 +68,11 @@ const base = process.argv[2];
 const PORT = Number(process.env.CDP_PORT) || 9353;
 const profile = mkdtempSync(join(tmpdir(), "nesting-check-"));
 const chrome = spawn("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  ["--headless=new", "--disable-gpu", `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`, "about:blank"],
+  // A synthetic webcam, so the viewfinder in the add dialog can be looked at
+  // and its shutter pressed. Permission is granted and denied through CDP
+  // below rather than by a flag, so both paths can be checked in one run.
+  ["--headless=new", "--disable-gpu", "--use-fake-device-for-media-stream",
+   `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`, "about:blank"],
   { stdio: "ignore" });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let wsUrl;
@@ -267,9 +275,12 @@ try {
         (await evaluate("location.hash")) === `#/b/${crate}` && (await evaluate(`document.activeElement?.value`)) === "no");
   check("it asks for a kind, a photo and a source, and nothing else",
         await evaluate(`(() => { const d = document.querySelector("dialog.adder");
-          return d.querySelector('.seg[data-name="kind"]') && d.querySelector('#adder-shot[type=file][capture]')
-            && d.querySelector('.seg[data-name="source_room_id"]') && !d.querySelector("textarea")
-            && !d.querySelector('.seg[data-name="destination_room_id"]') && !d.querySelector('.seg[data-name="size"]'); })()`));
+          return d.querySelector('.seg[data-name="kind"]') && d.querySelector("#adder-cam")
+            && d.querySelector('#adder-shot[type=file]') && d.querySelector('.seg[data-name="source_room_id"]')
+            && !d.querySelector("textarea") && !d.querySelector('.seg[data-name="destination_room_id"]')
+            && !d.querySelector('.seg[data-name="size"]'); })()`));
+  check("the picker no longer forces the camera app: the live one is the camera now",
+        !(await evaluate(`document.querySelector("#adder-shot").hasAttribute("capture")`)));
   check("every kind is offered, single things included",
         (await evaluate(`[...document.querySelectorAll('dialog.adder .seg[data-name="kind"] input')].map((r) => r.value).join()`)) === "box,tub,crate,bag,item,furniture");
   await click(`dialog.adder .seg[data-name="kind"] input[value="bag"] + span`);
@@ -370,7 +381,8 @@ try {
   let shown = await editor();
   check("tapping something inside opens its editor over the container, not another page",
         shown.open && shown.code === bare && (await evaluate("location.hash")) === onContainer, JSON.stringify(shown));
-  check("it says what the record is and where it is going", /^A bag inside/.test(shown.where) && /going where/.test(shown.where), shown.where);
+  check("it says what the record is and where it is going",
+        shown.where.startsWith("A bag inside") && shown.where.includes("going where"), shown.where);
   check("an empty record folds every section away but the one it always has",
         JSON.stringify(shown.folds) === JSON.stringify({ summary: false, kind: true, size: false, source: false, handling: false, items: false }),
         JSON.stringify(shown.folds));
@@ -481,6 +493,81 @@ try {
                 "the link to the whole page");
   check("the link inside opens the record's own page, and the modal gets out of the way",
         (await evaluate(`Boolean(${q("#summary-form")}) && ${q("h1.code")}.textContent === ${JSON.stringify(full)}`)));
+
+  // --- the live viewfinder in the add dialog ---
+  // Granting takes CDP's own permission enum; Browser.setPermission wants the
+  // web-standard descriptor names and refuses "videoCapture" outright. With
+  // nothing granted, headless Chrome refuses the camera -- which is the
+  // refusal path, so resetting is how it is asked for.
+  const camera = (allowed) => (allowed
+    ? send("Browser.grantPermissions", { origin: base, permissions: ["videoCapture"] })
+    : send("Browser.resetPermissions"));
+  const viewfinder = () => evaluate(`(() => { const d = document.querySelector("dialog.adder"); if (!d) return null;
+    const video = d.querySelector("#adder-cam");
+    const track = video.srcObject?.getVideoTracks?.()[0];
+    return { box: !d.querySelector("#adder-box").hidden, live: !video.hidden,
+             frames: video.videoWidth, track: track ? track.readyState : null,
+             shutter: !d.querySelector("#adder-shutter").hidden,
+             retake: !d.querySelector("#adder-retake").hidden,
+             still: !d.querySelector("#adder-still").hidden,
+             stillWidth: d.querySelector("#adder-still").naturalWidth,
+             picker: Boolean(d.querySelector("#adder-shot")),
+             said: d.querySelector("#adder-photo").textContent }; })()`);
+
+  await camera(true);
+  await goto(`#/b/${crate}`, `Boolean(${q("#add-inside")})`);
+  const insideNow = (await api(`/boxes/${crate}`)).children.length;
+  await click("#add-inside");
+  await waitFor(`Boolean(document.querySelector("dialog.adder[open]"))`, "the add dialog");
+  await waitFor(`${q("#adder-cam")}.videoWidth > 0`, "the viewfinder to come up by itself", 200);
+  let seen = await viewfinder();
+  check("the camera comes up live in the dialog the moment it opens, with a shutter",
+        seen.live && seen.box && seen.track === "live" && seen.frames > 0 && seen.shutter && !seen.still,
+        JSON.stringify(seen));
+  check("and the file picker is still there, as the other way to do it", seen.picker);
+
+  await click("#adder-shutter");
+  await waitFor(`!${q("#adder-still")}.hidden`, "the still it took");
+  seen = await viewfinder();
+  check("the shutter keeps a still and offers another go",
+        seen.still && !seen.live && seen.retake && !seen.shutter, JSON.stringify(seen));
+  check("the frame kept is no bigger than the server would keep anyway",
+        seen.stillWidth > 0 && seen.stillWidth <= 2048, String(seen.stillWidth));
+  check("and the line says what it is for", /read in the background/.test(seen.said), seen.said);
+
+  await click("#adder-retake");
+  seen = await viewfinder();
+  check("another go puts the viewfinder back", seen.live && !seen.still && seen.shutter, JSON.stringify(seen));
+  await click("#adder-shutter");
+  await waitFor(`!${q("#adder-still")}.hidden`, "the second still");
+
+  // The frame is what gets uploaded, and the camera is let go on the way out.
+  await evaluate(`window.__track = document.querySelector("#adder-cam").srcObject.getVideoTracks()[0]`);
+  await click("#adder-add");
+  await waitFor(`!document.querySelector("dialog.adder")`, "Add to close the dialog", 200);
+  check("the camera is released when the dialog closes: every track stopped",
+        (await evaluate(`window.__track.readyState`)) === "ended", await evaluate(`window.__track.readyState`));
+  const withPhoto = (await api(`/boxes/${crate}`)).children.at(-1);
+  check("it made the record", (await api(`/boxes/${crate}`)).children.length === insideNow + 1);
+  const taken = await api(`/boxes/${withPhoto.code}/photos`);
+  check("and the photo taken in the dialog is on it, being read",
+        taken.length === 1 && taken[0].bytes > 0 && Boolean(taken[0].analysis),
+        JSON.stringify(taken.map((t) => [t.bytes, t.analysis?.status])));
+
+  // Refused: an ordinary outcome, not an error state.
+  await camera(false);
+  await click("#add-inside");
+  await waitFor(`Boolean(document.querySelector("dialog.adder[open]"))`, "the dialog again");
+  await waitFor(`/declined/.test(${q("#adder-photo")}.textContent)`, "the refusal to be said", 200);
+  seen = await viewfinder();
+  check("a refused camera says so in a line, with no dead grey box",
+        !seen.box && !seen.live && seen.track === null, JSON.stringify(seen));
+  check("and points at the way that still works, which is still there",
+        /[Cc]hoose a photo/.test(seen.said) && seen.picker, seen.said);
+  check("nothing about it reads as an error", !/error|failed/i.test(seen.said), seen.said);
+  await click("dialog.adder [value=no]");
+  await waitFor(`!document.querySelector("dialog.adder")`, "the refusal dialog to close");
+  await camera(true);
 
   check("nothing threw in the page", thrown.length === 0, thrown.join(" | "));
 } catch (error) { check(`harness: ${error.message}`, false); }
