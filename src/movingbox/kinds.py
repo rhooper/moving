@@ -17,6 +17,7 @@ from __future__ import annotations
 #: stacked like one. Each can be changed in Settings (prefs.label_copies).
 KINDS: dict[str, dict[str, object]] = {
     "box": {"label": "Box", "contents": True, "copies": 2},
+    "parts": {"label": "Parts", "contents": True, "copies": 1},
     "tub": {"label": "Tub", "contents": True, "copies": 2},
     "crate": {"label": "Crate", "contents": True, "copies": 2},
     "bag": {"label": "Bag", "contents": True, "copies": 1},
