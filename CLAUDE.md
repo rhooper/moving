@@ -331,6 +331,54 @@ is why that rule moved from the `<a>` to the `<li>`. The record carries `parent`
 (a step) but no `parent_code` field; the page keeps a hidden `parent_code` input
 for the autosaver and reads `fresh.parent` on landing.
 
+Two more, asked for as "subitems should hide the destination input" and
+"fragile should percolate up to the parent and set that (prompt to set if it's
+not set) but don't undo on clear". Each step of `path` carries the container's
+`destination_room_id`, `fragile` and `size` for these:
+
+- **A nested record goes where its container goes.** The nearest container with
+  a room decides (`inheritedRoom()` in `nesting.js`; `store.going_to()` for the
+  label), *over* a room of the record's own -- a box for the garage put in a
+  crate for the kitchen is going to the kitchen. Its own room stays in the
+  database and its row comes back when it is taken out. On the page the
+  destination row is always built and hidden *and disabled* (a disabled
+  fieldset's radios stay out of FormData) whenever the record is nested, from
+  `showRoom()`, which `showInside()` drives -- so it comes and goes in place on
+  a move, never by a redraw. The band and "Goes where B-0002 goes: Kitchen"
+  say whose room it is; the thin-label question counts it; `#/new/in/CODE` has
+  no destination row at all.
+- **Fragile climbs, never descends, and clearing never climbs.** Marking a
+  nested record fragile, putting a fragile one inside something, or creating
+  one inside with Fragile ticked (from the `path` in the 201) offers, through
+  `confirmed()` ("Mark them fragile" / "Not now"), to mark the containers that
+  are not yet (`notYetFragile()`): one PATCH each from the page, then the
+  page's own copy of `path` is marked so the same containers are not asked
+  about twice. "Not now" is not nagged about until the next trigger. Turning
+  Fragile off touches nothing else, and the containers' marks are their own
+  writes, outside the record's Undo. The server changes nothing by itself: the
+  climb is the prompted choice that was asked for. `nesting_check.mjs` presses
+  all of it, the dialog included.
+- **"Add something inside" is a dialog, not a page** (`addInside()` in
+  `app.js`; the decisions in `nesting.js`: `kindsToAddInside`,
+  `addInsideRequest`, `addedInside`). Asked for as "optimize workflow for
+  sub-items: Adding a subitem should pop up a dialog that asks for type and a
+  photo and an optional source. The rest of the activities can be done from
+  the ui." Somebody at an open crate drops bags in without leaving the crate's
+  page: a native `<dialog>` on `document.body` (so a live refresh underneath
+  cannot take it away, and the autosaver's hold never counts its fields) asks
+  for the kind (every kind -- a crate holds a bag or a lamp), a photo (the
+  same camera input as `#shot`, the filled button; optional, and said to be)
+  and a source room, and nothing else: no summary (the photo is read in the
+  background and names the contents), no destination (it goes where the
+  container goes), no size, no flags. Add creates and stays, the row arriving
+  through the same `box.updated` refetch as any other (asked for explicitly,
+  since the page's own write comes back as an echo the socket drops) and a
+  line under the section naming it with a link; Add and open goes to it;
+  Cancel, Escape and the backdrop make nothing. A photo that fails to upload
+  leaves the record standing and the dialog open saying so, its buttons turned
+  into "Try the photo again" / "Open it" -- neither a half-made thing nor a
+  photo silently dropped. `#/new/in/CODE` still exists for the full form.
+
 **FastAPI's `include_router` does not flatten into `app.routes`** in this
 version: each included router is one `_IncludedRouter` wrapper whose real
 routes hang off `original_router`. Its `routes` attribute is a *string* — walk

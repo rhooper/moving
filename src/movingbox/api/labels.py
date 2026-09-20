@@ -25,7 +25,8 @@ def _label_for(conn: sqlite3.Connection, code: str, config: Config) -> layout.La
     return layout.from_box(
         box,
         base_url=config.base_url,
-        room_name=store.room_name(conn, box["destination_room_id"]),
+        # A nested record goes where its container goes.
+        room_name=store.room_name(conn, store.going_to(conn, box)),
         source_name=store.room_name(conn, box["source_room_id"]),
     )
 

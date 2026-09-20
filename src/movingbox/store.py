@@ -445,6 +445,19 @@ def has_contents(conn: sqlite3.Connection, code: str) -> bool:
     return named or bool(list_items(conn, code)) or bool(children_of(conn, code))
 
 
+def going_to(conn: sqlite3.Connection, box: dict[str, Any]) -> int | None:
+    """The room a record is going to, as a label should say it.
+
+    A nested record goes where its container goes: the nearest container with a
+    room decides, then the record's own room. Its own is left in the database
+    -- it is what it goes back to when it is taken out again.
+    """
+    for step in reversed(path_to(conn, box["code"])):
+        if step["destination_room_id"] is not None:
+            return step["destination_room_id"]
+    return box["destination_room_id"]
+
+
 def room_name(conn: sqlite3.Connection, room_id: int | None) -> str | None:
     if room_id is None:
         return None

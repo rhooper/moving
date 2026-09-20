@@ -513,6 +513,19 @@ dialog.viewer .reads .meta { flex: 1 1 100%; margin: 0; }
 }
 
 dialog .row > * { flex: 1; }
+
+/* Adding something inside a container, without leaving its page: the kind, a
+   photo, where it came from. The photo is the point, so its button is the
+   filled one; Cancel keeps the safe focus as every question here does. */
+dialog.adder { width: min(30rem, calc(100vw - 2rem)); }
+dialog.adder .nb { white-space: nowrap; }
+#goes-with { margin-top: 0.5rem; }
+dialog.adder .seg { margin-top: 0.5rem; }
+dialog.adder .dlabel { margin-top: 0.75rem; }
+dialog.adder .adder-acts { margin-top: 1rem; flex-wrap: wrap; }
+dialog.adder .adder-acts > * { flex: 1 1 8rem; }
+dialog.adder .meta.warn { color: var(--ink); border-left: 3px solid var(--signal); padding-left: 0.5rem; }
+#inside-said.warn { color: var(--ink); border-left: 3px solid var(--signal); padding-left: 0.5rem; }
 .btn.danger { background: var(--signal); border-color: var(--signal); color: #fff; }
 
 /* The running version. On a phone it sits just above the bar, at the right,

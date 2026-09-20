@@ -73,6 +73,7 @@ run wedge_check    node scripts/claude/wedge_check.mjs "$B" "$ONE" "$TWO"
 run viewer_check   node scripts/claude/viewer_check.mjs "$B" "$VIEW" "$T/p.jpg" "$T"
 run copies_check   node scripts/claude/copies_check.mjs "$B"
 run autosave_check node scripts/claude/autosave_check.mjs "$B"
+run nesting_check  node scripts/claude/nesting_check.mjs "$B"
 
 TRACEBACKS=$(grep -a -c Traceback "$T/server.log")
 echo "server tracebacks: $TRACEBACKS"

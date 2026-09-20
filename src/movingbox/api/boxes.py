@@ -122,7 +122,13 @@ def _with_nesting(conn: sqlite3.Connection, box: dict) -> dict:
 
 
 def _brief(box: dict) -> dict:
-    return {key: box[key] for key in ("code", "kind", "content_summary")}
+    # What the page needs from a container it is inside: its name, where it is
+    # going (a nested record goes where its container goes) and whether it is
+    # fragile (a fragile thing makes its containers fragile).
+    return {
+        key: box[key]
+        for key in ("code", "kind", "content_summary", "destination_room_id", "fragile", "size")
+    }
 
 
 @router.patch("/boxes/{code}")

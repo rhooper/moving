@@ -5,7 +5,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { blockedDelete, describe, mayHold, trail } from "../web/nesting.js";
+import {
+  addedInside, addInsideRequest, blockedDelete, describe, inheritedRoom, kindsToAddInside, mayHold,
+  notYetFragile, trail,
+} from "../web/nesting.js";
 
 // --- naming a container ----------------------------------------------------------
 
@@ -93,4 +96,101 @@ test("delete is explained, not offered, while things are inside", () => {
                "Move the 3 things inside it out first.");
   assert.equal(blockedDelete([{ code: "B-0013" }]), "Move the thing inside it out first.");
   assert.equal(blockedDelete([]), "");
+});
+
+// --- a nested record goes where its container goes ---------------------------------------
+//
+// "subitems should hide the destination input": a thing inside a crate goes
+// wherever the crate goes, so it has no room of its own to choose. The room is
+// the nearest container's -- path is outermost first, so the search runs from
+// the end -- and a container with no room of its own defers to the one it is in.
+
+test("the room is the nearest container's", () => {
+  const path = [
+    { code: "B-0001", kind: "crate", destination_room_id: 3 },
+    { code: "B-0002", kind: "box", destination_room_id: 5 },
+  ];
+  assert.deepEqual(inheritedRoom(path), { code: "B-0002", room: 5 });
+});
+
+test("a container with no room of its own passes the question outwards", () => {
+  const path = [
+    { code: "B-0001", kind: "crate", destination_room_id: 3 },
+    { code: "B-0002", kind: "box", destination_room_id: null },
+  ];
+  assert.deepEqual(inheritedRoom(path), { code: "B-0001", room: 3 });
+});
+
+test("no container has a room: the nearest one is named, with no room", () => {
+  // The page still says whose room it will be, so "no room chosen" is about
+  // the container, not this record.
+  const path = [
+    { code: "B-0001", kind: "crate", destination_room_id: null },
+    { code: "B-0002", kind: "box", destination_room_id: null },
+  ];
+  assert.deepEqual(inheritedRoom(path), { code: "B-0002", room: null });
+});
+
+test("a top-level record inherits nothing", () => {
+  assert.equal(inheritedRoom([]), null);
+  assert.equal(inheritedRoom(null), null);
+});
+
+// --- fragile climbs --------------------------------------------------------------------------
+//
+// "fragile should percolate up to the parent and set that (prompt to set if
+// it's not set) but don't undo on clear." The page asks about the containers
+// that are not yet fragile; which those are is decided here.
+
+test("the containers not yet marked fragile, outermost first", () => {
+  const path = [
+    { code: "B-0001", kind: "crate", fragile: 0 },
+    { code: "B-0002", kind: "box", fragile: 1 },
+    { code: "B-0003", kind: "bag", fragile: null },
+  ];
+  assert.deepEqual(notYetFragile(path).map((s) => s.code), ["B-0001", "B-0003"]);
+});
+
+test("every container already fragile means nothing to ask", () => {
+  assert.deepEqual(notYetFragile([{ code: "B-0001", fragile: 1 }, { code: "B-0002", fragile: true }]), []);
+  assert.deepEqual(notYetFragile([]), []);
+  assert.deepEqual(notYetFragile(null), []);
+});
+
+// --- adding something inside, from the container's page ---------------------------------
+//
+// "Adding a subitem should pop up a dialog that asks for type and a photo and
+// an optional source. The rest of the activities can be done from the ui."
+// What the dialog offers and what it sends are decided here; the dialog is
+// only the asking.
+
+const everyKind = [
+  { kind: "box", label: "Box", contents: true }, { kind: "bag", label: "Bag", contents: true },
+  { kind: "item", label: "Loose item", contents: false }, { kind: "furniture", label: "Furniture", contents: false },
+];
+
+test("a container can hold a container or a single thing: every kind is offered, in order", () => {
+  assert.deepEqual(kindsToAddInside(everyKind).map((k) => k.kind), ["box", "bag", "item", "furniture"]);
+  assert.deepEqual(kindsToAddInside([]), []);
+});
+
+test("the dialog sends the kind, where it is, and where it came from -- nothing else", () => {
+  assert.deepEqual(addInsideRequest({ kind: "bag", parentCode: "B-0001", sourceRoom: "3" }),
+                   { kind: "bag", parent_code: "B-0001", source_room_id: 3 });
+});
+
+test("no source room is null, not an empty string", () => {
+  assert.deepEqual(addInsideRequest({ kind: "bag", parentCode: "B-0001", sourceRoom: "" }),
+                   { kind: "bag", parent_code: "B-0001", source_room_id: null });
+  assert.deepEqual(addInsideRequest({ kind: "bag", parentCode: "B-0001" }),
+                   { kind: "bag", parent_code: "B-0001", source_room_id: null });
+});
+
+test("what was added is named, and a photo that did not upload is said, not dropped", () => {
+  const made = { code: "B-0009", kind: "bag" };
+  assert.deepEqual(addedInside(made, null), { text: "Added B-0009 (bag).", warn: false });
+  assert.deepEqual(addedInside(made, new Error("the server is unreachable")), {
+    text: "Added B-0009 (bag), but its photo did not upload: the server is unreachable. Add one from its page.",
+    warn: true,
+  });
 });

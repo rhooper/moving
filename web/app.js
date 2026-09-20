@@ -13,7 +13,10 @@ import {
   partOf,
   reconcile,
 } from "/live.js";
-import { blockedDelete, describe, mayHold, trail } from "/nesting.js";
+import {
+  addedInside, addInsideRequest, blockedDelete, describe, inheritedRoom, kindsToAddInside, mayHold,
+  notYetFragile, trail,
+} from "/nesting.js";
 import { choose, chosen, restrict, segmented } from "/segmented.js";
 import { splitItems } from "/text.js";
 import { KeyBuffer, entered } from "/wedge.js";
@@ -301,7 +304,7 @@ function failed(message, title = "That did not work") {
 // A native <dialog> rather than confirm(): confirm() cannot be styled, names
 // its buttons "OK" and "Cancel" whatever is at stake, and some mobile browsers
 // suppress it outright after the first one.
-function confirmed({ title, message, action }) {
+function confirmed({ title, message, action, dismiss = "Cancel" }) {
   return new Promise((resolve) => {
     const dialog = document.createElement("dialog");
     dialog.className = "ask";
@@ -313,6 +316,7 @@ function confirmed({ title, message, action }) {
     dialog.querySelector("h2").textContent = title;
     dialog.querySelector("p").textContent = message;
     dialog.querySelector("[value=yes]").textContent = action;
+    dialog.querySelector("[value=no]").textContent = dismiss;
     dialog.addEventListener("close", () => {
       resolve(dialog.returnValue === "yes");
       dialog.remove();
@@ -441,6 +445,163 @@ document.addEventListener("visibilitychange", () => {
 });
 addEventListener("pagehide", () => editing?.auto.commitAll());
 addEventListener("online", () => editing?.auto.retryFailed());
+
+// --- fragile climbs ------------------------------------------------------------
+//
+// "fragile should percolate up to the parent and set that (prompt to set if
+// it's not set) but don't undo on clear." A fragile thing makes whatever it is
+// inside fragile, so when a record is marked fragile, or a fragile one is put
+// inside something, the page offers to mark the containers that are not yet.
+// A prompted choice, on the page: the server changes nothing by itself.
+// Clearing Fragile on the record touches nothing else; the containers' marks
+// are their own writes, outside the record's own Undo.
+//
+// `record` is the record with its `path`. Resolves to the steps that were
+// marked, so the caller can bring its own copy of the path into line and not
+// ask again for the same containers.
+async function offerFragileClimb(record) {
+  const steps = notYetFragile(record.path);
+  if (!steps.length) return [];
+  const named = steps.map((step) => `${step.code} (${describe(step)})`);
+  const list = named.length > 1 ? `${named.slice(0, -1).join(", ")} and ${named.at(-1)}` : named[0];
+  const sure = await confirmed({
+    title: "Mark what it is inside fragile too?",
+    message: `${record.code} is inside ${list}, which ${steps.length === 1 ? "is" : "are"} not marked fragile. `
+      + "Something fragile inside makes the whole thing fragile.",
+    action: steps.length === 1 ? "Mark it fragile" : "Mark them fragile",
+    dismiss: "Not now",
+  });
+  if (!sure) return [];
+  for (const step of steps) {
+    await api(`/boxes/${encodeURIComponent(step.code)}`, {
+      method: "PATCH", body: JSON.stringify({ fragile: true }) });
+    step.fragile = 1;
+  }
+  return steps;
+}
+
+// --- adding something inside a container ----------------------------------------
+//
+// Resolves when the dialog closes. Creating is POST /api/boxes with the kind,
+// the container and the source room, then the photo to the new code, which
+// queues its reading. A photo that does not upload leaves the record standing
+// and the dialog open saying so, with a way to try the photo again: neither a
+// half-made thing nor a photo silently dropped.
+function addInside({ parent, kinds, rooms, shape }) {
+  const dialog = document.createElement("dialog");
+  dialog.className = "ask adder";
+  // The paragraphs are single lines on purpose: a dialog's text keeps its
+  // line breaks (a confirmation may run to two paragraphs), so a newline in
+  // this markup would be a break mid-sentence on the screen.
+  const what = escape(shape.label.toLowerCase());
+  dialog.innerHTML = `
+    <h2>Add something inside <span class="nb">${escape(parent.code)}</span></h2>
+    <p class="meta">It goes where the ${what} goes. Everything else can be done from its own page.</p>
+    <div data-seg="kind"></div>
+    <p class="dlabel">A photo of it, if there is something to see</p>
+    <div class="row">
+      <label class="btn" for="adder-shot">Take a photo
+        <input id="adder-shot" type="file" accept="image/*" capture="environment" hidden>
+      </label>
+    </div>
+    <p class="meta" id="adder-photo">No photo yet, and none is needed. A photo is read in the background and names what is inside.</p>
+    <div data-seg="source_room_id"></div>
+    <p class="meta warn" id="adder-said" hidden></p>
+    <form method="dialog" class="row adder-acts">
+      <button class="btn quiet" value="no" autofocus>Cancel</button>
+      <button class="btn" value="add" id="adder-add">Add</button>
+      <button class="btn quiet" value="open" id="adder-open">Add and open</button>
+    </form>`;
+  const slot = (name) => dialog.querySelector(`[data-seg="${name}"]`);
+  const first = kindsToAddInside(kinds)[0];
+  slot("kind").replaceWith(segmented({
+    name: "kind", legend: "What it is", options: kindChoices(kindsToAddInside(kinds)), value: first?.kind }));
+  slot("source_room_id").replaceWith(segmented({
+    name: "source_room_id", legend: "Packed from", options: roomChoices(forSource(rooms)),
+    optional: true, empty: "Not recorded" }));
+
+  const shot = dialog.querySelector("#adder-shot");
+  const photoLine = dialog.querySelector("#adder-photo");
+  shot.addEventListener("change", () => {
+    const file = shot.files[0];
+    setText(photoLine, file ? `Photo: ${file.name || "taken"}. It will be read once the record exists.`
+                            : "No photo yet, and none is needed.");
+  });
+
+  // Once the record exists the two Add buttons change meaning: the photo can
+  // be tried again, or the record opened to add one there.
+  let made = null;
+  const said = dialog.querySelector("#adder-said");
+  const acts = dialog.querySelector(".adder-acts");
+  acts.addEventListener("submit", async (event) => {
+    const pressed = event.submitter?.value || "no";
+    if (pressed === "no") return;   // the form closes the dialog by itself
+    event.preventDefault();
+    const button = event.submitter;
+    const source = chosen(dialog.querySelector('.seg[data-name="source_room_id"]'));
+    const kind = chosen(dialog.querySelector('.seg[data-name="kind"]'));
+    let photoError = null;
+    try {
+      await busy(button, made ? "Uploading…" : "Adding…", async () => {
+        if (!made) {
+          made = await api("/boxes", {
+            method: "POST",
+            body: JSON.stringify(addInsideRequest({ kind, parentCode: parent.code, sourceRoom: source })),
+          });
+        }
+        const file = shot.files[0];
+        if (file) {
+          const body = new FormData();
+          body.append("file", file, file.name || "photo.jpg");
+          try {
+            await api(`/boxes/${encodeURIComponent(made.code)}/photos`, { method: "POST", body });
+          } catch (error) { photoError = error; }
+        }
+      });
+    } catch (error) {
+      // Nothing was made: say so here and leave everything as it was.
+      setText(said, error.message);
+      said.hidden = false;
+      return;
+    }
+    // The container's page (this one, or whichever is now on screen) hears
+    // about it the way it hears about anything: the record's own copy is
+    // refetched. The page's own write is dropped by the socket as an echo,
+    // so it is asked for here.
+    tell(addedInside(made, photoError), made.code);
+    requestPart("summary");
+    if (photoError) {
+      // The record stands. The photo can be tried again, or added from its page.
+      setText(said, `${made.code} was added, but its photo did not upload: ${photoError.message}. `
+        + "Try the photo again, add one from its page, or Cancel to leave it as it is.");
+      said.hidden = false;
+      setText(dialog.querySelector("#adder-add"), "Try the photo again");
+      setText(dialog.querySelector("#adder-open"), "Open it");
+      for (const radio of dialog.querySelectorAll("input[type=radio]")) radio.disabled = true;
+      return;
+    }
+    dialog.close(pressed);
+    if (pressed === "open") location.hash = `#/b/${made.code}`;
+  });
+
+  dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close("no"); });
+  dialog.addEventListener("close", () => dialog.remove());
+  document.body.append(dialog);
+  dialog.showModal();
+}
+
+// The line under "Inside this crate", on whichever draw of the page is up,
+// with a link to what was just added.
+function tell({ text, warn }, code) {
+  const line = document.getElementById("inside-said");
+  if (!line) return;
+  const link = document.createElement("a");
+  link.setAttribute("href", `#/b/${encodeURIComponent(code)}`);
+  link.textContent = "Open it";
+  line.replaceChildren(text, " ", link);
+  line.classList.toggle("warn", warn);
+  line.hidden = false;
+}
 
 // --- looking at one photo ------------------------------------------------------
 //
@@ -1223,6 +1384,7 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
         <div data-seg="kind"></div>
         ${shape.sizes?.length ? '<div data-seg="size"></div>' : ""}
         <div data-seg="destination_room_id"></div>
+        <p class="meta" id="goes-with" hidden></p>
         <div data-seg="source_room_id"></div>
         <label class="dlabel" for="dest-from">Where in that room (optional)</label>
         <input id="dest-from" name="source_location" placeholder="shelf 3, under the desk"
@@ -1288,8 +1450,9 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
       <p class="meta" id="inside-empty" hidden>Nothing inside yet.</p>
       <ul class="boxlist" id="inside"></ul>
       <div class="row" style="margin-top:0.75rem">
-        <a class="btn quiet" id="add-inside" href="#/new/in/${escape(encodeURIComponent(code))}">Add something inside</a>
+        <button class="btn quiet" type="button" id="add-inside">Add something inside</button>
       </div>
+      <p class="meta" id="inside-said" role="status" hidden></p>
     </div>
 
     <div class="section">
@@ -1351,7 +1514,12 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
   for (const button of app.querySelectorAll("[data-flag]")) {
     button.addEventListener("click", () => {
       const key = button.dataset.flag;
-      act(() => api(path, { method: "PATCH", body: JSON.stringify({ [key]: !box[key] }) }));
+      act(async () => {
+        const fresh = await api(path, { method: "PATCH", body: JSON.stringify({ [key]: !box[key] }) });
+        // Turned on, on something inside something: offer to mark the
+        // containers too. Turned off: nothing else moves.
+        if (key === "fragile" && fresh.fragile) await offerFragileClimb(fresh);
+      });
     });
   }
 
@@ -1395,7 +1563,9 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
       name: "size", legend: "How big", options: sizeChoices(shape.sizes),
       value: box.size, optional: true, empty: "No size" }));
   }
-  mount(segmented({
+  // Always built, even for a nested record that hides it: it comes and goes
+  // in place as the record is put inside something and taken out again.
+  const roomRow = mount(segmented({
     name: "destination_room_id", legend: "Destination room", options: roomChoices(forDestination(rooms)),
     value: box.destination_room_id, optional: true, empty: "Not decided yet" }));
   mount(segmented({
@@ -1499,11 +1669,31 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
     }
   }
 
+  // Where this record is going. Inside a container it goes where the container
+  // goes -- the nearest one with a room -- and its own row is put away; the
+  // room it had stays in the database and comes back if it is taken out.
+  const goingTo = () => {
+    const from = inheritedRoom(box.path);
+    return from ? from.room : box.destination_room_id;
+  };
+
   function showRoom() {
-    const now = rooms.find((r) => r.id === box.destination_room_id);
+    const now = rooms.find((r) => r.id === goingTo());
     const band = document.getElementById("room-band");
     setText(band, now?.name || "");
     band.hidden = !now;
+
+    const from = inheritedRoom(box.path);
+    roomRow.hidden = Boolean(from);
+    // A disabled fieldset's radios stay out of FormData and fire nothing.
+    roomRow.disabled = Boolean(from);
+    const line = document.getElementById("goes-with");
+    line.hidden = !from;
+    if (!from) return;
+    const link = document.createElement("a");
+    link.setAttribute("href", `#/b/${encodeURIComponent(from.code)}`);
+    link.textContent = from.code;
+    line.replaceChildren("Goes where ", link, now ? ` goes: ${now.name}.` : " goes; no room chosen for it yet.");
   }
 
   // --- things inside things ---
@@ -1549,6 +1739,7 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
       line.textContent = "Not inside anything.";
     }
     document.getElementById("container-out").hidden = !parent;
+    showRoom();
   }
 
   function drawChildren() {
@@ -1574,7 +1765,17 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
   showInside();
   drawChildren();
 
-  // Putting this record inside a container. A code is typed or scanned in
+  // Adding something inside, without leaving this page: somebody standing at
+  // an open crate dropping bags into it. A dialog asks for the kind, a photo
+  // and where it came from, and nothing else -- the photo is read in the
+  // background and names the contents, and the rest can be done from the new
+  // record's page. On document.body, like every dialog here, so a live
+  // refresh of the page underneath does not take it away; outside `app`, so
+  // the autosaver's hold never counts its fields.
+  document.getElementById("add-inside")?.addEventListener("click", () => {
+    addInside({ parent: box, kinds: allKinds, rooms, shape });
+  });
+
   // (the barcode reader types and presses Return, which submits), looked up,
   // and shown -- what it is, and whether it may hold this -- before anything
   // is saved. Saving is the autosaver's, with Undo, like every other field:
@@ -1659,7 +1860,13 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
       };
       if (fieldOf(key)) savedKey(key, value);
       if (key === "destination_room_id") showRoom();
-      if (key === "parent_code") showInside();
+      if (key === "parent_code") {
+        showInside();
+        // A fragile thing put inside something: offer to mark that fragile.
+        // The steps marked are the page's own copy of the path, so the same
+        // containers are not asked about again.
+        if (box.fragile && box.parent) offerFragileClimb(box).catch((error) => failed(error.message));
+      }
       // A refresh held back behind this edit may be able to go now.
       fieldClosed();
     },
@@ -1926,7 +2133,7 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
 
   printButton.addEventListener("click", async () => {
     const contents = hasContents(box, items);
-    const sure = await confirmThinLabel(code, { contents, room: Boolean(box.destination_room_id) });
+    const sure = await confirmThinLabel(code, { contents, room: Boolean(goingTo()) });
     if (!sure) return;
 
     const copies = Math.min(10, Math.max(1, Number(copiesField.value) || 1));
@@ -2080,9 +2287,14 @@ async function viewNew(parentCode = null) {
   const allSizes = allKinds.find((k) => k.sizes?.length)?.sizes || [];
   const sizeRow = mount(segmented({
     name: "size", legend: "How big", options: sizeChoices(allSizes), optional: true, empty: "No size" }));
-  mount(segmented({
-    name: "destination_room_id", legend: "Destination room", options: roomChoices(forDestination(rooms)),
-    optional: true, empty: "Not decided yet" }));
+  // Inside a container there is no room to choose: it goes where that goes.
+  const roomSlot = app.querySelector('[data-seg="destination_room_id"]');
+  if (parent) roomSlot.closest(".section").remove();
+  else {
+    mount(segmented({
+      name: "destination_room_id", legend: "Destination room", options: roomChoices(forDestination(rooms)),
+      optional: true, empty: "Not decided yet" }));
+  }
   mount(segmented({
     name: "source_room_id", legend: "Packed from", options: roomChoices(forSource(rooms)),
     optional: true, empty: "Not recorded" }));
@@ -2132,7 +2344,7 @@ async function viewNew(parentCode = null) {
     if (printing === "label") {
       const sure = await confirmThinLabel("its label", {
         contents: Boolean(payload.content_summary),
-        room: Boolean(payload.destination_room_id),
+        room: Boolean(payload.destination_room_id || inheritedRoom([...(parent?.path || []), parent].filter(Boolean))?.room),
       });
       if (!sure) return;
     }
@@ -2154,6 +2366,9 @@ async function viewNew(parentCode = null) {
         }
         return made;
       });
+      // Made fragile, inside something: offer to mark the containers too,
+      // from the path the server sent back with it, before going to it.
+      if (payload.fragile && box.path?.length) await offerFragileClimb(box);
       location.hash = `#/b/${box.code}`;
       if (unprinted) {
         failed(`${box.code} was created, but its ${printing} did not print: ${unprinted}`,
