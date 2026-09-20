@@ -836,6 +836,29 @@ word from the generated comment; they are escaped now.
 - Ruff's `B008` is disabled for FastAPI's `Depends`/`Query`/`Header` defaults
   via `extend-immutable-calls` — it is a false positive for that idiom.
 
+## The API key is the app's, not the assistant's
+
+**Mandatory restriction, stated by the owner on 2026-09-20:** "you are not
+allowed to use this api key directly... you may not use this api key for
+anything but the specifically designed operations for classifying images and
+summarizing text to do with the user interactions in the UI."
+
+The Anthropic key lives in `.env` (gitignored, mode 600) and belongs to the
+running application. Its only sanctioned uses are the two the app was built
+for, and only when a person's action in the UI triggers them: classifying an
+uploaded photo, and phrasing a contents list into a record's summary.
+
+No Claude session or subagent may call the API with it -- not from `curl`, the
+SDK, a REPL or a script, and not to check that the key works, benchmark a
+model, compare providers or try a prompt. There is no verification exception:
+write the script, hand the owner the command, and let them run it.
+
+Being unable to *read* the key is not the restriction; the restriction is on
+*using* it, and it holds wherever a key is reachable. `.claude/settings.json`
+denies reading `.env`, `security find-generic-password` and `op read`, which
+says how the owner wants this handled. Build and prove everything against fakes
+and `MOVING_VISION_PROVIDER=stub`; no test may make a network call.
+
 ## Domain model gotcha
 
 `destination_room_id` and `current_location` are **different things** and both
