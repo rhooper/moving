@@ -22,7 +22,8 @@ scripts/claude/install-service.sh          # launchd + tailscale serve (persiste
 scripts/claude/install-service.sh --uninstall
 scripts/claude/deploy.sh         # backup, test, restart, verify — normally automatic
 scripts/claude/install-hooks.sh  # wire up the post-merge hook (install-service.sh calls it)
-uv run ruff check src tests scripts
+make lint                        # ruff + black + oxlint + stylelint; `make fmt` reformats Python
+make version                     # semver; the patch bumps on every commit, `make version-minor` by hand
 scripts/claude/smoke.sh          # end-to-end against a running server
 make browser-check               # EVERY browser check, writing ones too, on a throwaway server (~2 min)
 make run & make ui-check         # the read-only ones, against a server you started; saves nothing
@@ -581,6 +582,31 @@ word from the generated comment; they are escaped now.
   mode; a headless page fires no blur events without focus emulation.
 - **`el.hidden` only works because of the `[hidden] { display: none !important }`
   rule** in `index.html`: the UA's own rule loses to any author `display`.
+- **The version is semver and bumps itself.** `src/movingbox/version.py` is the
+  only place the number lives: pyproject reads it (hatchling dynamic version),
+  the API serves it (`/health` has `version` beside `revision`: the revision
+  says which commit is running, the version is for a person describing a bug).
+  The **pre-commit hook bumps the patch on every commit**, staging only that
+  one file. A commit that stages `version.py` itself is left alone -- which is
+  what `make version-minor` / `version-major` rely on to land exactly on
+  `x.Y+1.0`. Hooks live in the common git dir, so worktrees bump too, each its
+  own file; two branches bumping the same line will conflict on merge, and the
+  resolution is always "take the higher, then let the merge commit bump it".
+  `make setup` installs the hooks; a fresh clone without them simply stops
+  bumping, silently -- run `make setup`.
+- **`make lint` is four linters**: ruff and **black** (Python; black at ruff's
+  line length of 100 -- `make fmt` reformats), **oxlint** (JS, via npm; it
+  covers `web/` and the check scripts, skipping vendored jsQR), and
+  **stylelint** on the `<style>` block of `web/index.html` (there is no
+  separate stylesheet; `postcss-html` reads it in place). `package.json` exists
+  for these two linters only -- the app still has no JS build step and ships
+  nothing from `node_modules`. The stylelint config switches *off* the
+  whitespace and notation rules that fight this stylesheet's deliberate
+  one-line-rule idiom, and keeps the ones that find mistakes: its first run
+  found a duplicated `dialog p` rule. Two vendor prefixes are inline-disabled
+  with the reason (Safari has no unprefixed `mask` or `text-size-adjust`).
+  Beware `currentColor`: stylelint wants it lower-cased *in CSS*, but the same
+  word in the home mark's SVG `fill` attribute is markup and must stay as is.
 - Scripts live in `scripts/claude/` with a purpose header.
 - Ruff's `B008` is disabled for FastAPI's `Depends`/`Query`/`Header` defaults
   via `extend-immutable-calls` — it is a false positive for that idiom.

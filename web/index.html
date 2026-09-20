@@ -21,7 +21,7 @@
 
 :root {
   --paper: #fafaf8;
-  --ink: #000000;
+  --ink: #000;
   --muted: #6b6b66;
   --line: #d8d8d2;
   --sunk: #efefe9;
@@ -33,7 +33,7 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --paper: #0a0a0a;
-    --ink: #ffffff;
+    --ink: #fff;
     --muted: #8f8f88;
     --line: #2a2a28;
     --sunk: #161614;
@@ -54,6 +54,7 @@ body {
   background: var(--paper);
   color: var(--ink);
   font: 400 17px/1.5 Inter, ui-sans-serif, system-ui, sans-serif;
+  /* stylelint-disable-next-line property-no-vendor-prefix -- Safari has no unprefixed form */
   -webkit-text-size-adjust: 100%;
   padding-bottom: env(safe-area-inset-bottom);
 }
@@ -233,6 +234,7 @@ ul.items li.renaming .ai { display: none; }
   inset: 0;
   background-color: var(--muted);
   opacity: 0.45;
+  /* stylelint-disable-next-line property-no-vendor-prefix -- Safari has no unprefixed form */
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linejoin='round' stroke-linecap='round'%3E%3Cpath d='M5 11h14v8H5z'/%3E%3Cpath d='M5 11 2.2 6.8'/%3E%3Cpath d='M19 11 21.8 6.8'/%3E%3Cpath d='M5 11 7.6 7.2'/%3E%3Cpath d='M19 11 16.4 7.2'/%3E%3C/svg%3E") center / 26px 26px no-repeat;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linejoin='round' stroke-linecap='round'%3E%3Cpath d='M5 11h14v8H5z'/%3E%3Cpath d='M5 11 2.2 6.8'/%3E%3Cpath d='M19 11 21.8 6.8'/%3E%3Cpath d='M5 11 7.6 7.2'/%3E%3Cpath d='M19 11 16.4 7.2'/%3E%3C/svg%3E") center / 26px 26px no-repeat;
 }
@@ -393,7 +395,8 @@ dialog {
 }
 dialog::backdrop { background: rgb(0 0 0 / 0.55); }
 dialog h2 { margin: 0 0 0.5rem; font-size: 1.125rem; font-weight: 800; letter-spacing: -0.02em; }
-dialog p { margin: 0 0 1rem; overflow-wrap: anywhere; }
+/* pre-line: a confirmation may run to two paragraphs. */
+dialog p { margin: 0 0 1rem; overflow-wrap: anywhere; white-space: pre-line; }
 dialog form { margin: 0; }
 /* One photo, large, with what the model saw in it. Wider than the question
    dialogs, and it scrolls as a whole on a phone rather than clipping the list. */
@@ -426,7 +429,6 @@ dialog.viewer .reads .meta { flex: 1 1 100%; margin: 0; }
   dialog.viewer .seen { padding-top: 0; overflow: auto; }
 }
 
-dialog p { white-space: pre-line; }  /* a confirmation may run to two paragraphs */
 dialog .row > * { flex: 1; }
 .btn.danger { background: var(--signal); border-color: var(--signal); color: #fff; }
 
@@ -470,7 +472,7 @@ button.working::before {
   width: 0.7em; height: 0.7em;
   margin-right: 0.5em;
   vertical-align: -0.05em;
-  border: 2px solid currentColor;
+  border: 2px solid currentcolor;
   border-top-color: transparent;
   border-radius: 50%;
   animation: spin 0.7s linear infinite;

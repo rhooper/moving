@@ -1,0 +1,15 @@
+{
+  "name": "movingbox-tooling",
+  "private": true,
+  "description": "Linters only. The app has no JS build step and ships nothing from here.",
+  "scripts": {
+    "lint:js": "oxlint web scripts/claude --ignore-pattern jsQR.js",
+    "lint:css": "stylelint web/index.html"
+  },
+  "devDependencies": {
+    "oxlint": "1.83.0",
+    "postcss-html": "1.8.1",
+    "stylelint": "17.15.0",
+    "stylelint-config-standard": "40.0.0"
+  }
+}

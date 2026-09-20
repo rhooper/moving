@@ -23,3 +23,4 @@ __pycache__/
 
 # Local secrets
 .env
+node_modules/

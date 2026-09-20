@@ -37,7 +37,7 @@ const keyStore = {
 };
 
 async function request(url, options = {}) {
-  const headers = { ...(options.headers || {}) };
+  const headers = { ...options.headers };
   // Only declare JSON for a string body. Setting it for FormData would
   // override the multipart content-type and strip the boundary the browser
   // generates, and the upload would arrive unparseable.
