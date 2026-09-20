@@ -104,6 +104,48 @@ export function addedInside(made, photoError) {
   };
 }
 
+// --- the viewfinder in the add dialog ----------------------------------------------
+//
+// "can we use javascript to have a live camera immediately during adding a
+// subitem?" The camera is asked for when the dialog opens, and it can fail in
+// half a dozen ordinary ways. None of them is an error state: the file picker
+// is still there, and the line says which of them happened. (The insecure case
+// is checked *before* asking, because over a plain LAN address getUserMedia
+// rejects with nothing useful -- see the HTTPS note in CLAUDE.md.)
+export function cameraTrouble(error, { secure = true } = {}) {
+  const instead = "Choose a photo instead.";
+  if (!secure) {
+    return `The camera needs a secure connection, so there is no viewfinder here. ${instead}`;
+  }
+  switch (error?.name) {
+    case "NotAllowedError":
+    case "SecurityError":
+      return `Camera access was declined. ${instead} You can allow it in this site's settings.`;
+    case "NotFoundError":
+    case "OverconstrainedError":
+      return `No camera was found. ${instead}`;
+    case "NotReadableError":
+      return `The camera is already in use somewhere else. ${instead}`;
+    default:
+      return `The camera would not start${error?.name ? ` (${error.name})` : ""}. ${instead}`;
+  }
+}
+
+/**
+ * What a captured frame is drawn at: its own size, down to `limit` on the long
+ * edge. The server downscales to 2048 and strips the metadata anyway, so
+ * anything larger is a phone pushing a 4K frame through a house's wifi for
+ * nothing -- and a frame is never blown up to meet it. null when the video has
+ * no dimensions yet, which is how it is before it has data.
+ */
+export function frameSize(width, height, limit = 2048) {
+  const w = Number(width);
+  const h = Number(height);
+  if (!(w > 0) || !(h > 0)) return null;
+  const scale = Math.min(1, limit / Math.max(w, h));
+  return { width: Math.round(w * scale), height: Math.round(h * scale) };
+}
+
 // --- the sub-item editor's sections -----------------------------------------------
 //
 // "pop open the subitem editor as a modal, rather than changing page. collapse
