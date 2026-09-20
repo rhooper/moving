@@ -149,8 +149,15 @@ function countdown(status, remainingMs, closer = false) {
 //
 // Deliberately not the current location, which this cell used to show when
 // there was one: it hid the status, and it has the whole record page.
+//
+// A container's size goes in front of what it is -- "large box" is how people
+// look for one. The cell is narrow and does not wrap, so "extra large" is XL.
+const SHORT_SIZE = { "extra large": "XL" };
+
 export function rowStatus(box) {
-  return { kind: box.kind || "box", status: box.status || "open" };
+  const kind = box.kind || "box";
+  const size = box.size ? (SHORT_SIZE[box.size] || box.size) : "";
+  return { kind: size ? `${size} ${kind}` : kind, status: box.status || "open" };
 }
 
 // What the photo viewer says beside a picture: what the model saw in *this*
