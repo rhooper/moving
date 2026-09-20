@@ -607,7 +607,13 @@ dialog.adder .meta.warn { color: var(--ink); border-left: 3px solid var(--signal
    focus ring only. */
 .seg { border: 0; padding: 0; margin: 0.75rem 0 0; min-width: 0; }
 .seg legend { padding: 0; }
-.seg-row { display: flex; flex-wrap: wrap; padding: 0 1px 1px 0; }
+/* One control, so the rounding belongs to the row and not to its buttons: the
+   seams where they meet stay square. It is on the row rather than on the first
+   and last button because the row wraps on a phone -- a six-kind row is two or
+   three lines at 320px -- and those two buttons are mid-line as often as not.
+   `overflow: hidden` is what squares the inside and rounds the outside in one
+   go; the focus ring is inset (outline-offset: -3px) so clipping cannot eat it. */
+.seg-row { display: flex; flex-wrap: wrap; padding: 0 1px 1px 0; border-radius: var(--radius); overflow: hidden; }
 .seg-row::after { content: ""; flex: 1000 0 0; }
 .seg-row label { display: flex; flex: 1 1 auto; margin: 0 -1px -1px 0; position: relative; }
 .seg-row input {
@@ -621,9 +627,7 @@ dialog.adder .meta.warn { color: var(--ink); border-left: 3px solid var(--signal
   min-height: var(--tap);
   padding: 0.35rem 0.9rem;
   border: 1px solid var(--line);
-  /* Every button, not just the ends of the row: the row wraps, and rounding
-     only the first and last would leave half-round corners mid-line. */
-  border-radius: var(--radius);
+  border-radius: 0;   /* the row carries it; see .seg-row above */
   background: transparent;
   color: var(--ink);
   font-size: 0.9375rem;

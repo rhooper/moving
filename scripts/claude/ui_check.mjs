@@ -536,6 +536,20 @@ const IN_NEW = async () => {
         here[0] ? `${getComputedStyle(here[0]).backgroundColor} vs ${getComputedStyle(other).backgroundColor}`
                 : "no tab is marked current");
 
+  // A pushbutton row is one control, so only its outside is rounded: the
+  // seams where buttons meet stay square. The row wraps on a phone, which is
+  // why the rounding lives on the row and not on its first and last button --
+  // those are mid-line as often as not.
+  const segRow = document.querySelector(".seg-row");
+  const segSpans = Array.from(segRow.querySelectorAll("span"));
+  check("a pushbutton row is rounded on the outside",
+        getComputedStyle(segRow).borderTopLeftRadius !== "0px",
+        getComputedStyle(segRow).borderRadius);
+  check("and square at every seam between its buttons",
+        segSpans.every((s) => getComputedStyle(s).borderTopLeftRadius === "0px"
+                           && getComputedStyle(s).borderBottomRightRadius === "0px"),
+        segSpans.map((s) => getComputedStyle(s).borderTopLeftRadius).join(","));
+
   const buttons = Array.from(document.querySelectorAll("#new button[type=submit]"));
   const form = document.getElementById("new");
   const kinds = await fetch("/api/settings/kinds").then((r) => r.json());

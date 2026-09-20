@@ -156,7 +156,9 @@ def test_the_three_handling_flags_carry_the_label_s_own_glyphs():
 #: mark) are not surfaces and stay square.
 ROUNDED = [
     "input, textarea, button, select",
-    ".seg-row span",
+    # The row, not its buttons: a pushbutton row is one control, so only its
+    # outside is rounded and the seams between buttons stay square.
+    ".seg-row",
     ".boxlist .t",
     "dialog",
     ".shots figure",
@@ -178,6 +180,15 @@ def test_the_radius_is_a_token():
 @pytest.mark.parametrize("selector", ROUNDED)
 def test_the_box_like_surfaces_are_rounded(selector):
     assert "border-radius: var(--radius)" in rule(selector), selector
+
+
+def test_the_seams_between_pushbuttons_stay_square():
+    # Asked for directly: "for radio buttons, don't round the inner edges."
+    # The row clips its children, which is what squares the inside and rounds
+    # the outside at once -- so the buttons must not round themselves.
+    button = rule(".seg-row span")
+    assert "border-radius: 0" in button, button
+    assert "overflow: hidden" in rule(".seg-row")
 
 
 def test_no_site_hard_codes_the_number():
