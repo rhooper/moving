@@ -3,7 +3,11 @@
 //          viewer rather than a new tab; opened while the photo is still being
 //          read it says so, then fills in BY ITSELF when the job ends; Escape,
 //          Close and a tap outside close it, a tap inside does not; the
-//          thumbnail is still a real link; nothing throws in the page.
+//          thumbnail is still a real link; nothing throws in the page. And the
+//          button that runs the ordinary read again: what it says after a quick
+//          read and after a closer look, that pressing it runs the QUICK read,
+//          that re-reading takes nothing away from the record, and that a
+//          single thing's photo offers no read at all.
 // Date:    2026-09-18
 // Usage:   node scripts/claude/viewer_check.mjs <base-url> <CODE> <photo.jpg> <out-dir>
 //          WRITES: uploads a photo. Refuses the live service. Needs the stub
@@ -27,14 +31,16 @@ const NAME = "viewer_check";
 }
 
 const [base, code, photoPath, outDir] = process.argv.slice(2);
+// Overridable: this is not the only headless Chrome on the machine.
+const PORT = Number(process.env.CDP_PORT) || 9352;
 const profile = mkdtempSync(join(tmpdir(), "viewer-check-"));
 const chrome = spawn("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  ["--headless=new", "--disable-gpu", "--remote-debugging-port=9352", `--user-data-dir=${profile}`,
+  ["--headless=new", "--disable-gpu", `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`,
    "--window-size=420,900", "about:blank"], { stdio: "ignore" });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let wsUrl;
 for (let i = 0; i < 150 && !wsUrl; i++) {
-  try { wsUrl = (await (await fetch("http://127.0.0.1:9352/json")).json()).find((p) => p.type === "page")?.webSocketDebuggerUrl; } catch {}
+  try { wsUrl = (await (await fetch(`http://127.0.0.1:${PORT}/json`)).json()).find((p) => p.type === "page")?.webSocketDebuggerUrl; } catch {}
   await sleep(100);
 }
 const ws = new WebSocket(wsUrl); await new Promise((r) => (ws.onopen = r));
@@ -101,14 +107,16 @@ try {
         await evaluate(`document.querySelector("dialog.viewer").scrollWidth <= document.querySelector("dialog.viewer").clientWidth + 1`));
 
   // --- a closer look, on request ---
-  check("a quick read offers a closer look",
-        await evaluate(`!document.querySelector("dialog.viewer .closer").hidden`));
+  const button = (which) => evaluate(`(() => { const b = document.querySelector("dialog.viewer [data-${which}]");
+    return b && !b.hidden && !b.closest("[hidden]") ? b.textContent.trim() : null; })()`);
+  check("after a quick read the read button says Read again", (await button("rerun")) === "Read again", await button("rerun"));
+  check("a quick read offers a closer look", (await button("closer")) === "Look closer", await button("closer"));
   await evaluate(`document.querySelector("dialog.viewer [data-closer]").click()`);
   await waitFor(`document.querySelector("dialog.viewer")?.dataset.state === "busy"`, "the closer look to start");
   check("asking says a closer look is under way, in the viewer",
         /closer look/.test(await evaluate(`document.querySelector("dialog.viewer .note").textContent`)),
         await evaluate(`document.querySelector("dialog.viewer .note").textContent`));
-  check("the offer goes away while it runs", await evaluate(`document.querySelector("dialog.viewer .closer").hidden`));
+  check("both buttons go away while it runs", (await button("closer")) === null && (await button("rerun")) === null);
   await waitFor(`/Looking closer|Queued/.test(document.querySelector(".shots figure .analysis .state")?.textContent || "")`,
                 "the strip to say it is looking closer");
   check("and under the photo in the strip", true);
@@ -121,13 +129,38 @@ try {
         JSON.stringify(closerNames));
   check("and says that is what this was",
         (await evaluate(`document.querySelector("dialog.viewer h2").textContent`)) === "Seen on a closer look");
-  check("a closer look is not offered twice", await evaluate(`document.querySelector("dialog.viewer .closer").hidden`));
+  check("a closer look is not offered twice", (await button("closer")) === null);
+  check("but the ordinary read is still on offer after it", (await button("rerun")) === "Read again", await button("rerun"));
   const merged = await (await fetch(`${base}/api/boxes/${code}/items`)).json();
   check("the record gained what was new, and the better count, with no duplicates",
         JSON.stringify(merged.map((i) => [i.name, i.qty]).sort()) ===
           JSON.stringify([["Dualit toaster manual", 1], ["kettle", 1], ["mug", 4], ["toaster", 1]]),
         JSON.stringify(merged.map((i) => [i.name, i.qty])));
   await shot("viewer-closer-done.png");
+
+  // --- read again: the ORDINARY read, and it takes nothing away ---
+  const before = JSON.stringify(merged.map((i) => [i.name, i.qty]).sort());
+  await evaluate(`document.querySelector("dialog.viewer [data-rerun]").click()`);
+  await waitFor(`document.querySelector("dialog.viewer")?.dataset.state === "busy"`, "the re-read to start");
+  check("pressing Read again hides both buttons while it runs",
+        (await button("rerun")) === null && (await button("closer")) === null);
+  const running = await evaluate(`document.querySelector("dialog.viewer .note").textContent`);
+  check("and it is the ordinary read that runs, not another closer look",
+        /still being read/.test(running) && !/closer look/i.test(running), running);
+  await shot("viewer-rerun-busy.png");
+  await waitFor(`document.querySelector("dialog.viewer")?.dataset.state === "done"`, "the re-read to finish", 250);
+  check("when it is done the heading is the ordinary one again",
+        (await evaluate(`document.querySelector("dialog.viewer h2").textContent`)) === "Seen in this photo",
+        await evaluate(`document.querySelector("dialog.viewer h2").textContent`));
+  const rereadNames = await evaluate(`[...document.querySelectorAll("dialog.viewer ul.items li")].map((li) => li.innerText.replace(/\\s+/g, " ").trim())`);
+  check("the viewer shows what THIS read saw",
+        JSON.stringify(rereadNames) === JSON.stringify(["kettle", "mug ×3", "toaster"]), JSON.stringify(rereadNames));
+  check("and a closer look is on offer again", (await button("closer")) === "Look closer" && (await button("rerun")) === "Read again");
+  const after = await (await fetch(`${base}/api/boxes/${code}/items`)).json();
+  check("re-reading removed nothing from the record and lowered no count",
+        JSON.stringify(after.map((i) => [i.name, i.qty]).sort()) === before,
+        JSON.stringify(after.map((i) => [i.name, i.qty]).sort()));
+  await shot("viewer-rerun-done.png");
 
   // --- closing ---
   await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
@@ -137,8 +170,9 @@ try {
 
   await evaluate(`document.querySelector(".shots figure .pic a").click()`);
   await waitFor(`Boolean(document.querySelector("dialog.viewer")?.open)`, "the viewer again");
-  check("reopened, it shows the findings straight away",
-        (await evaluate(`document.querySelectorAll("dialog.viewer ul.items li").length`)) === 4);
+  // Whatever the last read of this photo was: here, the quick one just re-run.
+  check("reopened, it shows the last read's findings straight away",
+        (await evaluate(`document.querySelectorAll("dialog.viewer ul.items li").length`)) === 3);
   // A click on the backdrop lands on the dialog element itself.
   await evaluate(`document.querySelector("dialog.viewer").dispatchEvent(new MouseEvent("click", { bubbles: true }))`);
   await waitFor(`!document.querySelector("dialog.viewer")`, "the backdrop to close it");
@@ -156,6 +190,25 @@ try {
   // --- the rest of the strip still works ---
   check("the link is still a link, for a long press or middle click",
         /\/photos\/\d+\/full$/.test(await evaluate(`document.querySelector(".shots figure .pic a").getAttribute("href")`)));
+  // --- a single thing: its photos are not read, and the viewer does not offer to ---
+  const bike = (await (await fetch(`${base}/api/boxes`, { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ kind: "item", content_summary: "bicycle" }) })).json()).code;
+  const bikeForm = new FormData();
+  bikeForm.append("file", new Blob([readFileSync(photoPath)], { type: "image/jpeg" }), "bike.jpg");
+  await fetch(`${base}/api/boxes/${bike}/photos`, { method: "POST", body: bikeForm });
+  await evaluate(`location.hash = ${JSON.stringify(`#/b/${bike}`)}`);
+  await waitFor(`document.querySelector("h1.code")?.textContent === ${JSON.stringify(bike)} && Boolean(document.querySelector(".shots figure .pic a"))`,
+                "the single thing's page and photo");
+  await evaluate(`document.querySelector(".shots figure .pic a").click()`);
+  await waitFor(`Boolean(document.querySelector("dialog.viewer")?.open)`, "the viewer on a single thing");
+  check("a single thing's photo offers no read, of either kind",
+        (await button("rerun")) === null && (await button("closer")) === null);
+  const single = await evaluate(`document.querySelector("dialog.viewer .note").textContent`);
+  check("and says why: it is a single thing", /single thing/.test(single), single);
+  await shot("viewer-single-thing.png");
+  await evaluate(`document.querySelector("dialog.viewer form button").click()`);
+  await waitFor(`!document.querySelector("dialog.viewer")`, "that viewer to close");
+
   check("nothing threw in the page", thrown.length === 0, thrown.join(" | "));
 } catch (error) { check(`harness: ${error.message}`, false); }
 

@@ -93,6 +93,53 @@ const IN_PAGE = async () => {
   check("the copies field is not one of the autosaved ones",
         $("#copies") && !$("#copies").closest("#summary-form, #destination, #location"));
 
+  // The kind, its size and the two rooms are rows of pushbuttons: real radio
+  // groups, looked at and -- for the one row where a press changes nothing --
+  // pressed. The optional rows are not pressed here: a press there saves.
+  const record = await fetch(`/api/boxes/${location.hash.split("/").pop()}`).then((r) => r.json());
+  const kindsNow = await fetch("/api/settings/kinds").then((r) => r.json());
+  const shapeNow = kindsNow.find((k) => k.kind === (record.box || record).kind);
+  const rowFor = (name) => document.querySelector(`#destination .seg[data-name="${name}"]`);
+  const expected = ["kind", ...(shapeNow.sizes.length ? ["size"] : []), "destination_room_id", "source_room_id"];
+  check("the pushbutton rows are there, and no dropdown is left in the form",
+        expected.every((n) => rowFor(n)) && !$("#destination select"),
+        expected.filter((n) => !rowFor(n)).join(","));
+  check("the size row is there exactly when this kind of thing has sizes",
+        Boolean(rowFor("size")) === shapeNow.sizes.length > 0);
+  const rowsNow = expected.map(rowFor).filter(Boolean);
+  check("each row is a named group of real radio buttons",
+        rowsNow.every((g) => g.tagName === "FIELDSET" && g.querySelector("legend")?.textContent.trim()
+          && g.querySelectorAll("input[type=radio]").length > 1
+          && [...g.querySelectorAll("input[type=radio]")].every((r) => r.name === g.dataset.name && r.labels.length === 1)));
+  check("every button can be reached and focused from the keyboard",
+        rowsNow.every((g) => [...g.querySelectorAll("input[type=radio]")].every((r) => {
+          if (r.disabled || r.tabIndex < 0) return false;
+          r.focus();
+          return document.activeElement === r;
+        })));
+  document.activeElement?.blur();
+  check("every button is at least 44 px tall and none cuts its words short",
+        rowsNow.every((g) => [...g.querySelectorAll(".seg-row span")].every((f) =>
+          f.getBoundingClientRect().height >= 44 && f.scrollWidth <= f.clientWidth + 1)));
+  check("the kind must have a value; the size and the rooms may be cleared",
+        !("optional" in rowFor("kind").dataset)
+          && expected.filter((n) => n !== "kind").every((n) => "optional" in rowFor(n).dataset));
+  check("an optional row says what nothing chosen means, or how to un-choose",
+        expected.filter((n) => n !== "kind").every((n) => {
+          const said = rowFor(n).querySelector(".seg-said").textContent;
+          return rowFor(n).dataset.value === "" ? /^(No size|Not decided yet|Not recorded)$/.test(said) : said === "Tap it again to clear";
+        }));
+  check("the row shows what the server has",
+        rowFor("kind").dataset.value === (record.box || record).kind
+          && rowFor("destination_room_id").dataset.value === String((record.box || record).destination_room_id ?? ""));
+  // Pressing the chosen kind: the one press on this page that must do nothing.
+  const kindNow = rowFor("kind").querySelector("input:checked");
+  kindNow.labels[0].click();
+  kindNow.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
+  check("the kind cannot be cleared: pressing the chosen one leaves it chosen",
+        kindNow.checked && rowFor("kind").dataset.value === kindNow.value);
+  check("the label count shown is this kind's own", $("#copies").value === String(shapeNow.copies), $("#copies").value);
+
   // Typed, then put back before the pause runs out: nothing to save.
   const field = $("#summary-form [name=content_summary]");
   const line = $("#summary-form .autosave-state");
@@ -275,7 +322,9 @@ const IN_NEW = async () => {
   check("it is big enough to hit", Boolean(box) && box.height >= 44 && box.width >= 44,
         `${box?.width}x${box?.height}`);
   const buttons = Array.from(document.querySelectorAll("#new button[type=submit]"));
-  const kind = document.querySelector("#new [name=kind]");
+  const form = document.getElementById("new");
+  const kinds = await fetch("/api/settings/kinds").then((r) => r.json());
+  const press = (name, value) => form.querySelector(`.seg[data-name="${name}"] input[value="${value}"]`).labels[0].click();
 
   const create = document.querySelector("#new #create");
   check("the first button creates and prints the stub",
@@ -287,14 +336,44 @@ const IN_NEW = async () => {
   check("Create names the kind it makes",
         /^Create \w+$/.test(create.textContent), create.textContent);
 
-  const other = Array.from(kind.options).find((o) => o.value !== kind.value);
-  if (other) {
-    kind.value = other.value;
-    kind.dispatchEvent(new Event("change", { bubbles: true }));
-    check("changing the kind renames Create",
-          create.textContent === `Create ${other.textContent.trim().toLowerCase()}`,
-          create.textContent);
+  // The same rows of pushbuttons as the record page. Nothing here writes: the
+  // form saves nothing until a Create is pressed, and none is.
+  check("the form's pickers are pushbutton rows, not dropdowns",
+        ["kind", "size", "destination_room_id", "source_room_id"].every((n) => form.querySelector(`.seg[data-name="${n}"]`))
+          && !form.querySelector("select"));
+  const sized = kinds.find((k) => k.sizes.length);
+  const single = kinds.find((k) => !k.sizes.length);
+  const sizeRow = form.querySelector('.seg[data-name="size"]');
+  if (sized && single) {
+    press("kind", sized.kind);
+    check("changing the kind renames Create", create.textContent === `Create ${sized.label.toLowerCase()}`, create.textContent);
+    check("a container offers a size", !sizeRow.hidden && !sizeRow.disabled);
+    press("size", sized.sizes[0]);
+    check("a chosen size is in what the form would send", new FormData(form).get("size") === sized.sizes[0]);
+    press("size", sized.sizes[0]);
+    check("pressing it again clears it", new FormData(form).get("size") === null
+          && sizeRow.querySelector(".seg-said").textContent === "No size");
+    press("size", sized.sizes[0]);
+    press("kind", single.kind);
+    check("a single thing offers no size", sizeRow.hidden && sizeRow.disabled);
+    check("and a size chosen before the kind changed would not be sent", new FormData(form).get("size") === null);
+    check("Create follows", create.textContent === `Create ${single.label.toLowerCase()}`, create.textContent);
   }
+  const room = form.querySelector('.seg[data-name="destination_room_id"] input');
+  if (room) {
+    room.labels[0].click();
+    check("a room can be chosen", new FormData(form).get("destination_room_id") === room.value);
+    room.labels[0].click();
+    check("and un-chosen, which sends no room at all", new FormData(form).get("destination_room_id") === null
+          && form.querySelector('.seg[data-name="destination_room_id"] .seg-said').textContent === "Not decided yet");
+  }
+  // Return on a pushbutton must not make a record (a barcode reader ends on one).
+  const before = location.hash;
+  const radio = form.querySelector('.seg[data-name="kind"] input:checked');
+  radio.focus();
+  const notStopped = radio.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  await new Promise((r) => setTimeout(r, 300));
+  check("Return on a pushbutton creates nothing", !notStopped && location.hash === before);
   return results;
 };
 
