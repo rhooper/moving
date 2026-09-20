@@ -58,7 +58,11 @@ const waitFor = async (selector, gone = false) => {
 };
 const goto = async (hash, selector) => { await evaluate(`location.hash = ${JSON.stringify(hash)}`); await sleep(300); await waitFor(selector); };
 const api = async (path, method = "GET", body) =>
-  (await fetch(`${base}/api${path}`, { method, headers: { "content-type": "application/json" }, body: body && JSON.stringify(body) })).json();
+  (await fetch(`${base}/api${path}`, {
+    method,
+    headers: { "content-type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),  // a GET carries no body
+  })).json();
 
 const results = [];
 const check = (name, ok, detail = "") => results.push([name, Boolean(ok), String(detail)]);

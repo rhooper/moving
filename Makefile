@@ -7,6 +7,10 @@
 # server defaults to 8788 and the two never fight over the socket.
 
 PORT ?= 8788
+# The throwaway server and Chrome debugging port the browser checks use.
+# Override both when two runs must not collide (agents run these in parallel).
+CHECK_PORT ?= 8797
+CDP_PORT ?= 9340
 
 .DEFAULT_GOAL := help
 .PHONY: help setup run test lint fmt check ui-check browser-check proof version version-minor version-major deploy install uninstall status labels backup
@@ -63,7 +67,7 @@ status:  ## health and printer state of the live service
 	@curl -s http://127.0.0.1:8787/api/printer; echo
 
 browser-check:  ## EVERY browser check, writing ones included, on a throwaway server (~2 min)
-	scripts/claude/browser_checks.sh
+	PORT=$(CHECK_PORT) CDP_PORT=$(CDP_PORT) scripts/claude/browser_checks.sh
 
 proof:  ## test print without tape: label proof sheet, inline in iTerm (CODES="B-0003 ..." adds real records)
 	uv run python scripts/claude/label_proof.py $(CODES)

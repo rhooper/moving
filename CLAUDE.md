@@ -298,6 +298,22 @@ it — all of that is mined and coerced. But a reply with no usable JSON raises
 `DraftUnreadable` rather than returning an empty draft, which would read as
 "the model saw an empty box".
 
+**Things go inside things** (`boxes.parent_id`, migration 0009; `set_parent`,
+`children_of`, `path_to` in `store.py`; `parent_code` on POST/PATCH). A record
+may be inside one container -- a bag in a box in a crate, to any depth -- and
+the record carries `children` (shaped like list rows), `path` (outermost first)
+and `parent`. The store keeps the pointer honest since it has no foreign key:
+a parent must exist, be a container (`holds_contents`), not be binned, and not
+be inside the thing being moved; **a container holding things can neither be
+deleted (409) nor become a single thing**. Browsing shows the top level only
+(`parent_id IS NULL`); **search looks everywhere** and each row carries
+`parent_code` to say where. What is inside counts as contents for the print
+gate. Moves announce `box.updated` for both containers. Nested records keep a
+code -- they are opened and scanned like any other -- but nothing prints unless
+asked; "generally won't have a label". **Backend only so far**: the record page
+does not yet show what is inside, offer to put things inside, or show the way
+out. Deleting a nested record and restoring it puts it back where it was.
+
 **FastAPI's `include_router` does not flatten into `app.routes`** in this
 version: each included router is one `_IncludedRouter` wrapper whose real
 routes hang off `original_router`. Its `routes` attribute is a *string* — walk
@@ -342,6 +358,18 @@ were reported missing.
   hand-bump `VERSION` in `web/sw.js` again. It was a hand-bumped literal once,
   nobody bumped it, and deployed phones ran a stale app.js against the new API
   until buttons errored. Dev (revision `unknown`) serves the file as written.
+- **Every asset URL carries the deployed revision** (`api/assets.py`, tests in
+  `test_cachebust.py`): `/app.js?v=<rev>` in index.html, in the worker's shell
+  list, and in the `import` lines *inside* each module -- a versioned entry
+  point importing unversioned modules busts nothing. A URL with the current
+  revision is `immutable` for a year; anything else (index.html, sw.js, an old
+  `?v=`) is `no-cache`. This closed the hole the sw.js fix left: the worker's
+  shell re-fetch could be answered by the browser's HTTP cache with last
+  week's app.js, which is why deploys needed "reload it twice". Not `sw.js`:
+  a worker is identified by its script URL. Dev serves files as written.
+  `MOVING_REVISION` names a revision for a throwaway server, and
+  `browser_checks.sh` sets it, so the checks load the app the way production
+  serves it rather than the one way it never does.
 
 **`CDPATH` is set in this user's shell, and it corrupts `$(cd … && pwd)`.**
 When `cd` resolves a *relative* path through `CDPATH`, bash prints the
@@ -450,9 +478,9 @@ word from the generated comment; they are escaped now.
   natively: page reload, fields in the query string, nothing saved. The box
   page's summary and destination forms shipped that way and never saved once.
   That is the third half-landed patch in `app.js` (after `splitItems`); there
-  is no JS linter on this machine, so `node --check` plus these static guards
-  are all that stands between a patch script and production. `no-undef` would
-  have caught two of the three -- `brew install oxlint` is the cheap fix.
+  there was no JS linter then. There is now (oxlint, `make lint`), and the
+  module-mode syntax test; these static guards remain because they check
+  things a linter does not (a drawn form with no listener).
 - **Anything that hides or destroys asks first, through `confirmed()`** (a native
   `<dialog>`, never `confirm()`): box delete, permanent delete, photo delete.
   Cancel holds the focus so a stray Enter or double tap lands on the safe
@@ -536,13 +564,39 @@ word from the generated comment; they are escaped now.
   noticed. The working form is `node --input-type=module --check < file`, and
   `tests/test_web_syntax.py` runs it for every module in the deploy gate -- with
   a test that the check *can* fail, which is the property the old one lacked.
-- **A full label prints `label_copies` copies** (`prefs.py`, default 2, set in
-  Settings; a box wants a label on more than one face). A print request may
-  say otherwise; a stub prints one. `label_print_count` counts *labels*, not
-  button presses. `/api/printer` carries the number so the record page learns
-  it without a sixth request. The copies field on the record page is a choice
-  for one print, not part of the record: its `dataset.initial` follows its
-  value so it never makes the page look half-edited and hold back live updates.
+- **How many labels print is per kind of thing** (`kinds.KINDS[...]["copies"]`,
+  overridable per kind in Settings via `PUT /api/settings/kind-copies`; read
+  through `prefs.label_copies(conn, kind)`). Two for a box, tub or crate --
+  they get stacked and more than one face is seen -- one for a bag, a loose
+  item or furniture. A print request may say otherwise; a stub prints one; a
+  mixed batch prints each at its own number. `label_print_count` counts
+  *labels*, not button presses. There was one global number for two days;
+  nobody set it, and one number cannot be right for a crate and a lamp.
+  `/api/settings/kinds` carries `copies` and `sizes` per kind, so the record
+  page (which fetches it for the picker anyway) needs no extra request; the
+  copies field there starts at the record's kind's number and is a choice for
+  one print, not part of the record -- its `dataset.initial` follows its value
+  so it never looks half-edited and holds back live updates.
+- **A container may have a size** (`boxes.size`, migration 0008: small, medium,
+  large, extra large -- `kinds.SIZES`, no CHECK, like `kind`). Only something
+  that holds contents: a single thing is refused one (422), and a container
+  that becomes a single thing loses it, since "large lamp" means nothing and
+  the picker that could clear it is gone by then. The list row says "large
+  box" / "XL crate" (`rowStatus`).
+- **Kind, size and the two rooms are pushbutton rows** (`web/segmented.js`, one
+  builder; `pressed()` is the pure clear-on-second-press rule, tested): native
+  radios in a `<fieldset>`, each `<label>` drawn as a joined button, so
+  `FormData` and the autosaver's `change` handling need no glue. An optional
+  row **clears on a second tap of the selected button** -- that is what the
+  owner meant by "double tapping to clear"; the kind is required and ignores
+  it. Three things found by pressing: Chrome sends no click for Space on an
+  already-chosen radio, so keyboard users could select but never clear
+  (handled on keydown); a lone last button on a wrapped row stretched into a
+  full-width bar (the last line keeps its natural width); and **a focused
+  radio swallowed a barcode scan** -- see the wedge bullet. The new-record
+  form's destination row lists destination rooms only, as the record page
+  always did. Known: Undo of a kind change brings the kind back but not the
+  size the server cleared.
 - **Printing a thin label asks first** (`confirmThinLabel`): no contents, or no
   destination room. It replaced the "print anyway" tick box. The server still
   refuses an empty box without `allow_empty`, and the UI only ever sends that
@@ -561,7 +615,11 @@ word from the generated comment; they are escaped now.
   tape; the Return is swallowed when it completes a scan. And **Firefox opens
   quick find on "/"** when nothing is focused, which would eat a scanned URL;
   "/" is suppressed only while a scan is under way. Scanning a binned record
-  opens it, where Restore is offered -- same as the `/b/` redirect.
+  opens it, where Restore is offered -- same as the `/b/` redirect. **A radio
+  or a tick box counts as a button, not a field**, for this purpose: when a
+  pushbutton row had the focus, the listener ignored the scan as "typing" and
+  the reader's Return submitted the form it sat in -- on the new-record form
+  that created an empty record.
 - **Run `make browser-check` after touching `web/app.js`.** It starts a
   throwaway server (own database, fake printer, stub vision provider) and runs
   every browser check against it: `ui_check` and `wedge_check` (read-only, and
@@ -575,8 +633,9 @@ word from the generated comment; they are escaped now.
   duplicated photo strip, a `route()` that never told the record it was being
   left, and an Undo button that moved under the finger.
   Harness traps, all met the hard way: give each Chrome its own debugging port
-  and `--user-data-dir` and **never `pkill` Chrome by pattern** (agents run in
-  parallel and kill each other's); `--screenshot` plus a debugging port never
+  and `--user-data-dir` (every check honours `CDP_PORT`; `make browser-check
+  CHECK_PORT=8801 CDP_PORT=9366` keeps two runs apart) and **never `pkill`
+  Chrome by pattern** (agents run in parallel and kill each other's); `--screenshot` plus a debugging port never
   exits; a narrow `--window-size` does not narrow the layout (use an iframe or
   `Emulation.setDeviceMetricsOverride`); headless Chrome follows the Mac's dark
   mode; a headless page fires no blur events without focus emulation.
