@@ -17,7 +17,7 @@
       "Bash(tail ./.env)",
       "Bash(less .env)",
       "Bash(more .env)",
-      "Bash(grep:* .env)",
+      "Bash(grep * .env)",
       "Bash(source .env)",
       "Bash(. .env)",
       "Bash(security find-generic-password:*)",

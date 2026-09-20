@@ -848,10 +848,15 @@ running application. Its only sanctioned uses are the two the app was built
 for, and only when a person's action in the UI triggers them: classifying an
 uploaded photo, and phrasing a contents list into a record's summary.
 
-No Claude session or subagent may call the API with it -- not from `curl`, the
-SDK, a REPL or a script, and not to check that the key works, benchmark a
-model, compare providers or try a prompt. There is no verification exception:
-write the script, hand the owner the command, and let them run it.
+**The line is between the app working and the assistant spending.** Starting
+the app and exercising it -- `make run`, the local checks and CI targets,
+uploading a photo, pressing "From contents", "Look closer" -- is the app doing
+the job it was built for, and is sanctioned: that is how the cloud path gets
+verified. What is never sanctioned is a Claude session or subagent calling the
+API *itself*: `curl`, the SDK, a REPL, or a script of its own, whether to check
+the key works, benchmark a model, compare providers, or try a prompt. Route
+every real call through the application's own code paths, and keep the spend to
+what a person's use of the app would have cost.
 
 Being unable to *read* the key is not the restriction; the restriction is on
 *using* it, and it holds wherever a key is reachable. `.claude/settings.json`
