@@ -11,11 +11,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..kinds import KINDS
+from ..kinds import KINDS, SIZES
 from ..store import STATUSES
 
 Status = Literal[STATUSES]  # type: ignore[valid-type]
 Kind = Literal[tuple(KINDS)]  # type: ignore[valid-type]
+Size = Literal[SIZES]  # type: ignore[valid-type]
 
 
 class Strict(BaseModel):
@@ -28,6 +29,9 @@ class BoxWrite(Strict):
     source_room_id: int | None = None
     source_location: str | None = None
     content_summary: str | None = None
+    #: A container's size. Whether this *kind* can have one is the store's
+    #: call (it knows what the record is becoming); the value is checked here.
+    size: Size | None = None
     notes: str | None = None
     fragile: bool | None = None
     open_first: bool | None = None
@@ -92,8 +96,9 @@ class CodeFormat(Strict):
     digits: int = Field(default=4, ge=1, le=12)
 
 
-class Printing(Strict):
-    label_copies: int = Field(ge=1, le=10)
+class KindCopies(Strict):
+    kind: Kind
+    copies: int = Field(ge=1, le=10)
 
 
 class NextNumber(Strict):

@@ -1,8 +1,8 @@
-"""How many copies of a label print, and the setting that decides the default.
+"""How many copies of a label print when a request says, and what gets counted.
 
-A box usually wants a label on more than one face, so the default is two and
-lives in the database with the other settings -- it describes how this move is
-being labelled, not how this machine is configured.
+What prints when a request does *not* say is per kind of thing, and lives in
+test_kind_copies_and_size.py. (For two days it was one global number; the tests
+for that are gone with it.)
 """
 
 import pytest
@@ -41,10 +41,7 @@ def a_box(client, **fields):
 
 
 class TestTheDefault:
-    def test_it_is_two_until_someone_says_otherwise(self, client):
-        assert client.get("/api/settings/printing").json() == {"label_copies": 2}
-
-    def test_a_print_that_does_not_say_gets_the_default(self, client, spy):
+    def test_a_box_that_does_not_say_gets_two(self, client, spy):
         code = a_box(client)
 
         response = client.post("/api/labels/print", json={"codes": [code]})
@@ -69,31 +66,7 @@ class TestTheDefault:
 
         assert [n for _, n, _ in spy.jobs] == [1, 3]
 
-    def test_the_box_page_learns_the_default_without_another_request(self, client):
-        # It already asks /api/printer on every draw; a sixth request per page
-        # for one number would be a poor trade.
-        assert client.get("/api/printer").json()["label_copies"] == 2
-
-
-class TestChangingIt:
-    def test_the_setting_sticks_and_printing_follows_it(self, client, spy):
-        code = a_box(client)
-
-        saved = client.put("/api/settings/printing", json={"label_copies": 3})
-        client.post("/api/labels/print", json={"codes": [code]})
-
-        assert saved.json() == {"label_copies": 3}
-        assert client.get("/api/settings/printing").json() == {"label_copies": 3}
-        assert client.get("/api/printer").json()["label_copies"] == 3
-        assert [n for _, n, _ in spy.jobs] == [3]
-
-    @pytest.mark.parametrize("bad", [0, -1, 11, "lots", None])
-    def test_nonsense_is_refused(self, client, bad):
-        response = client.put("/api/settings/printing", json={"label_copies": bad})
-
-        assert response.status_code == 422
-        assert client.get("/api/settings/printing").json() == {"label_copies": 2}
-
+class TestWhatAPrintMayAsk:
     @pytest.mark.parametrize("bad", [0, 11])
     def test_a_print_cannot_ask_for_nonsense_either(self, client, spy, bad):
         code = a_box(client)

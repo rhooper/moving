@@ -76,7 +76,12 @@ def create_box(
 ) -> dict:
     # Every publish below happens after the store call returns, so a request
     # that failed announces nothing and no client refetches for no reason.
-    box = store.create_box(conn, **body.set_fields())
+    try:
+        box = store.create_box(conn, **body.set_fields())
+    except ValueError as bad:
+        # The schema checks each value; only the store knows whether they make
+        # sense together -- a size on something that is not a container.
+        raise HTTPException(status_code=422, detail=str(bad)) from bad
     changes.publish(events.BOX_CREATED, box["code"])
     return box
 
@@ -103,7 +108,10 @@ def update_box(
     changes: events.Publisher = Depends(get_events),
 ) -> dict:
     _require(conn, code)
-    box = store.update_box(conn, code, **body.set_fields())
+    try:
+        box = store.update_box(conn, code, **body.set_fields())
+    except ValueError as bad:
+        raise HTTPException(status_code=422, detail=str(bad)) from bad
     changes.publish(events.BOX_UPDATED, code)
     return box
 

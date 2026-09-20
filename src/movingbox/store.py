@@ -24,6 +24,7 @@ EDITABLE = (
     "source_room_id",
     "source_location",
     "content_summary",
+    "size",
     "notes",
     "fragile",
     "open_first",
@@ -96,6 +97,7 @@ def create_box(conn: sqlite3.Connection, *, actor: str | None = None, **fields) 
         raise ValueError(f"Not settable at creation: {sorted(unknown)}")
 
     kinds.check(fields.get("kind", kinds.DEFAULT))
+    kinds.check_size(fields.get("size"), fields.get("kind", kinds.DEFAULT))
     code = db.next_box_code(conn, kind=fields.get("kind", kinds.DEFAULT))
     columns = ["code", *fields]
     placeholders = ", ".join("?" * len(columns))
@@ -130,6 +132,13 @@ def update_box(conn: sqlite3.Connection, code: str, **fields) -> dict[str, Any]:
         raise ValueError(f"Not editable: {sorted(unknown)} (status and location have own calls)")
     if "kind" in fields:
         kinds.check(fields["kind"])
+    becoming = fields.get("kind", box["kind"])
+    if "size" in fields:
+        kinds.check_size(fields["size"], becoming)
+    elif not kinds.holds_contents(becoming) and box["size"] is not None:
+        # A container that becomes a single thing loses its size: "large lamp"
+        # means nothing, and the picker that could clear it is no longer shown.
+        fields = {**fields, "size": None}
     if fields:
         assignments = ", ".join(f"{name} = ?" for name in fields)
         # Whoever writes the summary through here is a person, so it becomes

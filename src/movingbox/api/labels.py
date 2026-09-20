@@ -76,13 +76,15 @@ def print_labels(
                 ),
             )
 
-    # Two by default for a full label -- a box wants one on more than one
-    # face -- and one for a stub, which goes on an empty box, once.
-    copies = body.copies or (1 if body.stub else prefs.label_copies(conn))
-
     backend = printer.get_backend(config)
     printed = []
     for code, data in labels:
+        # What was asked for; else one for a stub, which goes on an empty box,
+        # once; else whatever this *kind* of thing gets -- two for what is
+        # stacked, one for the rest. Per label, so a mixed batch is right.
+        copies = body.copies or (
+            1 if body.stub else prefs.label_copies(conn, store.get_box(conn, code)["kind"])
+        )
         try:
             image = (
                 layout.render_stub(data)
