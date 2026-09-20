@@ -49,6 +49,29 @@ export function mayHold(container, record, children, kinds) {
   return { ok: true, why: "" };
 }
 
+/**
+ * Where a nested record goes: wherever its nearest container with a room goes.
+ * `path` is outermost first, so the search runs from the end. Returns
+ * `{ code, room }` -- the container whose room it is, or the nearest one with
+ * `room: null` when none has chosen -- or null at the top level.
+ */
+export function inheritedRoom(path) {
+  const steps = path || [];
+  if (!steps.length) return null;
+  const chosen = [...steps].reverse().find((step) => step.destination_room_id != null);
+  const step = chosen || steps[steps.length - 1];
+  return { code: step.code, room: chosen ? chosen.destination_room_id : null };
+}
+
+/**
+ * The containers a fragile record is inside that are not themselves marked
+ * fragile, outermost first: the ones the page offers to mark. Fragile climbs;
+ * it never descends, and clearing it never climbs.
+ */
+export function notYetFragile(path) {
+  return (path || []).filter((step) => !step.fragile);
+}
+
 /** Why Delete is not offered on a container holding things, or "" when it is. */
 export function blockedDelete(children) {
   const count = (children || []).length;
