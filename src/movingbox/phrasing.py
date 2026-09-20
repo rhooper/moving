@@ -48,9 +48,15 @@ KEEP_ALIVE = "30m"
 KEEP_ALIVE_SECONDS = 30 * 60
 
 #: How often the warmer pings. Derived from KEEP_ALIVE rather than typed
-#: separately, so a refresh can never end up slower than the timeout it exists
-#: to beat -- two thirds leaves room for a ping that fails and retries.
-REFRESH = KEEP_ALIVE_SECONDS * 2 / 3
+#: separately, so a refresh can never end up slower than the idle timeout it
+#: exists to beat. A sixth of it rather than most of it, because the idle
+#: timeout is not the only thing that unloads a model: Ollama holds three at
+#: once by default (OLLAMA_MAX_LOADED_MODELS), and this app already wants
+#: exactly three -- the summary model and the two vision ones. Anything else
+#: on the machine evicts one of them, and if it is this one the next press of
+#: the button falls back. Five minutes is how long that lasts. The ping costs
+#: nothing when the model is already there: measured at 10-40 ms.
+REFRESH = KEEP_ALIVE_SECONDS / 6
 
 #: Retried this often while Ollama is unreachable: often enough to pick up a
 #: machine that woke before Ollama did, rarely enough to keep quiet about it.
