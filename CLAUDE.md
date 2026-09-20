@@ -358,6 +358,26 @@ not set) but don't undo on clear". Each step of `path` carries the container's
   writes, outside the record's Undo. The server changes nothing by itself: the
   climb is the prompted choice that was asked for. `nesting_check.mjs` presses
   all of it, the dialog included.
+- **"Add something inside" is a dialog, not a page** (`addInside()` in
+  `app.js`; the decisions in `nesting.js`: `kindsToAddInside`,
+  `addInsideRequest`, `addedInside`). Asked for as "optimize workflow for
+  sub-items: Adding a subitem should pop up a dialog that asks for type and a
+  photo and an optional source. The rest of the activities can be done from
+  the ui." Somebody at an open crate drops bags in without leaving the crate's
+  page: a native `<dialog>` on `document.body` (so a live refresh underneath
+  cannot take it away, and the autosaver's hold never counts its fields) asks
+  for the kind (every kind -- a crate holds a bag or a lamp), a photo (the
+  same camera input as `#shot`, the filled button; optional, and said to be)
+  and a source room, and nothing else: no summary (the photo is read in the
+  background and names the contents), no destination (it goes where the
+  container goes), no size, no flags. Add creates and stays, the row arriving
+  through the same `box.updated` refetch as any other (asked for explicitly,
+  since the page's own write comes back as an echo the socket drops) and a
+  line under the section naming it with a link; Add and open goes to it;
+  Cancel, Escape and the backdrop make nothing. A photo that fails to upload
+  leaves the record standing and the dialog open saying so, its buttons turned
+  into "Try the photo again" / "Open it" -- neither a half-made thing nor a
+  photo silently dropped. `#/new/in/CODE` still exists for the full form.
 
 **FastAPI's `include_router` does not flatten into `app.routes`** in this
 version: each included router is one `_IncludedRouter` wrapper whose real
