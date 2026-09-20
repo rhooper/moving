@@ -14,6 +14,7 @@ dependencies = [
     "pyusb>=1.2",                 # USB backend for brother_ql
     "httpx>=0.27",                # Ollama / Claude vision providers
     "reportlab>=4.2",             # manifest PDF
+    "anthropic>=1.7",           # Claude vision provider (the cloud tier)
 ]
 
 [project.scripts]

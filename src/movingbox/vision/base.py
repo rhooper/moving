@@ -45,8 +45,30 @@ class BoxDraft:
     confidence: str | None = None
 
 
+@dataclass(frozen=True)
+class Reading:
+    """Who actually answered, and what it cost.
+
+    A hybrid setup falls back, so the model named on a job when it was queued
+    is not necessarily the one that produced the draft -- and a wrong item has
+    to be traceable to the model that wrote it. Tokens and dollars are zero for
+    a local model, which is the honest number rather than a missing one.
+    """
+
+    provider: str
+    model: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost_usd: float = 0.0
+
+
 class VisionProvider(Protocol):
     name: str
+
+    #: What the last `draft` cost, where the provider knows. Read with
+    #: `getattr(provider, "last", None)`: a provider need not keep one, and a
+    #: provider that says nothing about cost cost nothing.
+    last: Reading | None
 
     def draft(self, images: list[bytes], *, model: str) -> BoxDraft: ...
 
