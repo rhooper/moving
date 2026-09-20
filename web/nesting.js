@@ -72,6 +72,38 @@ export function notYetFragile(path) {
   return (path || []).filter((step) => !step.fragile);
 }
 
+// --- adding something inside, from the container's page --------------------------
+//
+// "Adding a subitem should pop up a dialog that asks for type and a photo and
+// an optional source. The rest of the activities can be done from the ui."
+
+/** The kinds the dialog offers: all of them. A crate can hold a bag or a lamp. */
+export function kindsToAddInside(kinds) {
+  return [...(kinds || [])];
+}
+
+/**
+ * What the dialog sends to make the record: the kind, the container, and the
+ * source room or null. No summary (the photo names the contents), no
+ * destination (it goes where the container goes), no size, no flags.
+ */
+export function addInsideRequest({ kind, parentCode, sourceRoom }) {
+  return { kind, parent_code: parentCode, source_room_id: sourceRoom ? Number(sourceRoom) : null };
+}
+
+/**
+ * What to say once it is made. A photo that did not upload is said, not
+ * dropped: the record stands, and there is a page to add one from.
+ */
+export function addedInside(made, photoError) {
+  const named = `Added ${made.code} (${spoken(made.kind)})`;
+  if (!photoError) return { text: `${named}.`, warn: false };
+  return {
+    text: `${named}, but its photo did not upload: ${photoError.message}. Add one from its page.`,
+    warn: true,
+  };
+}
+
 /** Why Delete is not offered on a container holding things, or "" when it is. */
 export function blockedDelete(children) {
   const count = (children || []).length;

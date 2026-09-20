@@ -5,7 +5,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { blockedDelete, describe, inheritedRoom, mayHold, notYetFragile, trail } from "../web/nesting.js";
+import {
+  addedInside, addInsideRequest, blockedDelete, describe, inheritedRoom, kindsToAddInside, mayHold,
+  notYetFragile, trail,
+} from "../web/nesting.js";
 
 // --- naming a container ----------------------------------------------------------
 
@@ -152,4 +155,42 @@ test("every container already fragile means nothing to ask", () => {
   assert.deepEqual(notYetFragile([{ code: "B-0001", fragile: 1 }, { code: "B-0002", fragile: true }]), []);
   assert.deepEqual(notYetFragile([]), []);
   assert.deepEqual(notYetFragile(null), []);
+});
+
+// --- adding something inside, from the container's page ---------------------------------
+//
+// "Adding a subitem should pop up a dialog that asks for type and a photo and
+// an optional source. The rest of the activities can be done from the ui."
+// What the dialog offers and what it sends are decided here; the dialog is
+// only the asking.
+
+const everyKind = [
+  { kind: "box", label: "Box", contents: true }, { kind: "bag", label: "Bag", contents: true },
+  { kind: "item", label: "Loose item", contents: false }, { kind: "furniture", label: "Furniture", contents: false },
+];
+
+test("a container can hold a container or a single thing: every kind is offered, in order", () => {
+  assert.deepEqual(kindsToAddInside(everyKind).map((k) => k.kind), ["box", "bag", "item", "furniture"]);
+  assert.deepEqual(kindsToAddInside([]), []);
+});
+
+test("the dialog sends the kind, where it is, and where it came from -- nothing else", () => {
+  assert.deepEqual(addInsideRequest({ kind: "bag", parentCode: "B-0001", sourceRoom: "3" }),
+                   { kind: "bag", parent_code: "B-0001", source_room_id: 3 });
+});
+
+test("no source room is null, not an empty string", () => {
+  assert.deepEqual(addInsideRequest({ kind: "bag", parentCode: "B-0001", sourceRoom: "" }),
+                   { kind: "bag", parent_code: "B-0001", source_room_id: null });
+  assert.deepEqual(addInsideRequest({ kind: "bag", parentCode: "B-0001" }),
+                   { kind: "bag", parent_code: "B-0001", source_room_id: null });
+});
+
+test("what was added is named, and a photo that did not upload is said, not dropped", () => {
+  const made = { code: "B-0009", kind: "bag" };
+  assert.deepEqual(addedInside(made, null), { text: "Added B-0009 (bag).", warn: false });
+  assert.deepEqual(addedInside(made, new Error("the server is unreachable")), {
+    text: "Added B-0009 (bag), but its photo did not upload: the server is unreachable. Add one from its page.",
+    warn: true,
+  });
 });
