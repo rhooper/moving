@@ -12,12 +12,17 @@
 //          appears without leaving the page, Add and open lands on it, Cancel
 //          makes nothing, and a photo that fails to upload (failed at the
 //          network) leaves the record standing with a visible message.
+//          And tapping one of those rows: it opens that record's editor over
+//          the container as a modal, folds away the sections it has nothing
+//          in, saves itself, keeps its own undo stack while the page behind
+//          keeps the container's, commits what is pending when it closes, and
+//          takes a change from elsewhere in place.
 // Date:    2026-09-20
 // Usage:   node scripts/claude/nesting_check.mjs <base-url>
 //          WRITES: creates records and marks them. Refuses the live service.
 //          scripts/claude/browser_checks.sh runs it on a throwaway.
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { crc32, deflateSync } from "node:zlib";
@@ -99,12 +104,31 @@ const q = (selector) => `document.querySelector(${JSON.stringify(selector)})`;
 // A real click on an element's centre: the dialog's buttons take a real press.
 const click = async (selector) => {
   const spot = await evaluate(`(() => { const el = ${q(selector)}; if (!el) return null; el.scrollIntoView({ block: "center" });
-    const b = el.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()`);
+    const b = el.getBoundingClientRect();
+    return { x: b.left + b.width / 2, y: b.top + b.height / 2, seen: b.width > 0 && b.height > 0 }; })()`);
   if (!spot) throw new Error(`nothing to click: ${selector}`);
+  // Folded away or otherwise unrendered: clicking its 0x0 box would land at
+  // the top-left of the window, which inside a dialog is the backdrop.
+  if (!spot.seen) throw new Error(`not visible to click: ${selector}`);
   for (const type of ["mousePressed", "mouseReleased"]) {
     await send("Input.dispatchMouseEvent", { type, x: spot.x, y: spot.y, button: "left", clickCount: 1 });
   }
   await sleep(80);
+};
+
+// Real keystrokes: a pause in typing is what makes a text field save.
+const type = async (text, gap = 15) => {
+  for (const ch of text) {
+    await send("Input.dispatchKeyEvent", { type: "keyDown", key: ch, text: ch });
+    await send("Input.dispatchKeyEvent", { type: "keyUp", key: ch });
+    await sleep(gap);
+  }
+};
+const press = async (key, code = key, vk = 0, text = "") => {
+  await send("Input.dispatchKeyEvent",
+    { type: text ? "keyDown" : "rawKeyDown", key, code, windowsVirtualKeyCode: vk, text });
+  await send("Input.dispatchKeyEvent", { type: "keyUp", key, code, windowsVirtualKeyCode: vk });
+  await sleep(60);
 };
 
 const results = [];
@@ -289,6 +313,153 @@ try {
   check("trying the photo again uploads it to the same record, no second record",
         (await api(`/boxes/${stood.code}/photos`)).length === 1 && (await api(`/boxes/${crate}`)).children.length === before + 1);
   await send("Fetch.disable");
+
+  // --- editing something inside, over the container's page ---
+  const bare = (await api("/boxes", "POST", { kind: "bag", parent_code: crate })).code;
+  const full = (await api("/boxes", "POST", {
+    kind: "box", content_summary: "tea things", size: "small", fragile: true, parent_code: crate })).code;
+  await api(`/boxes/${full}/items`, "POST", { name: "teapot" });
+
+  const editor = () => evaluate(`(() => { const d = document.querySelector("dialog.editor"); if (!d) return null;
+    const undo = d.querySelector(".undo");
+    return { open: d.open, code: d.querySelector("h2").textContent, where: d.querySelector("#child-where").textContent,
+             folds: Object.fromEntries([...d.querySelectorAll("details.fold")].map((f) => [f.dataset.fold, f.open])),
+             marks: [...d.querySelectorAll("details.fold")].map((f) => getComputedStyle(f.querySelector("summary"), "::before").content),
+             line: d.querySelector(".autosave-state").textContent,
+             undo: undo.hidden ? null : undo.textContent,
+             summary: d.querySelector("#child-what")?.value, kind: d.querySelector('[name="kind"]:checked')?.value,
+             mark: d.__mark }; })()`);
+  const rowSays = (code) => evaluate(`${q("#inside li[data-key='" + code + "'] .s")}?.textContent`);
+  const unfold = async (key) => {
+    if (await evaluate(`document.querySelector('dialog.editor [data-fold="${key}"]').open`)) return;
+    await click(`dialog.editor [data-fold="${key}"] > summary`);
+    await sleep(150);
+  };
+  const openEditorOn = async (code) => {
+    await click(`#inside li[data-key="${code}"] a`);
+    await waitFor(`Boolean(document.querySelector("dialog.editor[open]"))`, `the editor on ${code}`);
+    await sleep(250);
+    await evaluate(`document.querySelector("dialog.editor").__mark = "same"`);
+  };
+
+  await goto(`#/b/${crate}`, `Boolean(${q(`#inside li[data-key="${bare}"]`)})`);
+  const onContainer = await evaluate("location.hash");
+  await openEditorOn(bare);
+  let shown = await editor();
+  check("tapping something inside opens its editor over the container, not another page",
+        shown.open && shown.code === bare && (await evaluate("location.hash")) === onContainer, JSON.stringify(shown));
+  check("it says what the record is and where it is going", /^A bag inside/.test(shown.where) && /going where/.test(shown.where), shown.where);
+  check("an empty record folds every section away but the one it always has",
+        JSON.stringify(shown.folds) === JSON.stringify({ summary: false, kind: true, size: false, source: false, handling: false, items: false }),
+        JSON.stringify(shown.folds));
+  check("the marker is drawn by us, > shut and v open, not the browser's triangle",
+        shown.marks.filter((m) => m === '">"').length === 5 && shown.marks.filter((m) => m === '"v"').length === 1,
+        JSON.stringify(shown.marks));
+  check("a folded section is always an empty one: nothing with content is hidden",
+        await evaluate(`[...document.querySelectorAll("dialog.editor details.fold:not([open])")].every((f) => {
+          const body = f.querySelector(".fold-body");
+          const written = body.querySelector("textarea, input:not([type=radio])");
+          const chosen = body.querySelector("input[type=radio]:checked");
+          const listed = body.querySelector("ul.items li");
+          const marked = body.querySelector(".chip.on");
+          return !chosen && !listed && !marked && (!written || written.value === "");
+        })`));
+
+  // It saves itself, like the record page does.
+  await unfold("summary");
+  check("opening a fold reveals its field and flips the marker",
+        (await editor()).folds.summary && (await evaluate(`getComputedStyle(document.querySelector('dialog.editor [data-fold="summary"] > summary'), "::before").content`)) === '"v"');
+  await click("#child-what");
+  await type("spare forks");
+  await waitFor(`${q("dialog.editor .autosave-state")}.textContent === "Saved"`, "the summary to save");
+  shown = await editor();
+  check("typing in it saves after the pause, with Undo naming the child's field",
+        shown.undo === "Undo summary" && shown.mark === "same", JSON.stringify(shown));
+  check("the server has it", (await api(`/boxes/${bare}`)).content_summary === "spare forks");
+  check("and the container's row behind already says so, before anything closes",
+        (await rowSays(bare)) === "spare forks", await rowSays(bare));
+
+  // Two records in play: the modal's undo stack is the child's, the page's is
+  // the container's, and neither reaches into the other.
+  await evaluate(`document.querySelector('dialog.editor [data-fold="kind"] input[value="tub"]').labels[0].click()`);
+  await waitFor(`document.querySelector('dialog.editor [name="kind"]:checked')?.value === "tub"`, "the kind to change");
+  await sleep(700);
+  check("a picker in the modal saves too, and the sections are rebuilt for the new kind",
+        (await api(`/boxes/${bare}`)).kind === "tub" && (await editor()).undo === "Undo kind", JSON.stringify(await editor()));
+  check("the page behind kept its own status line and its own undo, untouched",
+        (await evaluate(`${q("#summary-form .undo")}.hidden`)) === true
+          && (await evaluate(`${q("#summary-form .autosave-state")}.textContent`)) === "",
+        await evaluate(`${q("#summary-form .autosave-state")}.textContent`));
+  await click("dialog.editor .undo");
+  await waitFor(`${q("dialog.editor .autosave-state")}.textContent === "Undone"`, "the undo in the modal");
+  check("Undo in the modal takes back the child's change and nothing else",
+        (await api(`/boxes/${bare}`)).kind === "bag" && (await api(`/boxes/${crate}`)).kind === "crate");
+
+  // A change from elsewhere, taken in place.
+  await evaluate(`document.querySelector("dialog.editor").__mark = "same"`);
+  const shotBody = new FormData();
+  shotBody.append("file", new Blob([readFileSync(photo)], { type: "image/png" }), "p.png");
+  await fetch(`${base}/api/boxes/${bare}/photos`, { method: "POST", body: shotBody });
+  await waitFor(`${q("dialog.editor #child-items")} && ${q("dialog.editor #child-items")}.children.length > 0`,
+                "the model's items to reach the open modal", 250);
+  shown = await editor();
+  check("a change from elsewhere fills the modal in place, without rebuilding it under the hands",
+        shown.mark === "same" && shown.open, JSON.stringify(shown));
+  check("and what arrived is not left folded away", shown.folds.items === true, JSON.stringify(shown.folds));
+
+  // Closing commits what is still waiting.
+  await unfold("source");
+  await click("#child-source-location");
+  await type("shelf 3");
+  await press("Escape", "Escape", 27);
+  await waitFor(`!document.querySelector("dialog.editor")`, "Escape to close it");
+  check("Escape closes it", (await evaluate("location.hash")) === onContainer);
+  check("and what was still in the pause was committed on the way out",
+        (await api(`/boxes/${bare}`)).source_location === "shelf 3", (await api(`/boxes/${bare}`)).source_location);
+
+  // A record with something in it opens with those sections open.
+  await openEditorOn(full);
+  shown = await editor();
+  check("a record with content opens showing it: only what is empty is folded",
+        JSON.stringify(shown.folds) === JSON.stringify({ summary: true, kind: true, size: true, source: false, handling: true, items: true }),
+        JSON.stringify(shown.folds));
+  check("the handling it has is on show", await evaluate(`Boolean(${q("dialog.editor .chip.on")})`));
+
+  // A scan while it is open goes nowhere, as for any modal.
+  const hashNow = await evaluate("location.hash");
+  await evaluate(`document.activeElement?.blur()`);
+  await type(crate, 5);
+  await press("Enter", "Enter", 13, "\r");
+  await sleep(400);
+  check("a scan while the editor is open goes nowhere", (await evaluate("location.hash")) === hashNow, await evaluate("location.hash"));
+
+  // Adding an item from the modal, and the backdrop closing it.
+  await unfold("items");
+  await click("#child-add");
+  await type("sugar tongs");
+  await click("#child-add-go");
+  await waitFor(`${q("dialog.editor #child-items")}.children.length === 2`, "the item to be added");
+  check("an item can be added from the modal",
+        (await api(`/boxes/${full}/items`)).some((i) => i.name === "sugar tongs"));
+  await evaluate(`document.querySelector("dialog.editor").dispatchEvent(new MouseEvent("click", { bubbles: true }))`);
+  await waitFor(`!document.querySelector("dialog.editor")`, "the backdrop to close it");
+  check("a tap outside closes it", true);
+
+  // Close, the third way out.
+  await openEditorOn(full);
+  await click("#child-close");
+  await waitFor(`!document.querySelector("dialog.editor")`, "Close to close it");
+  check("the Close button closes it, and leaves you on the container",
+        (await evaluate("location.hash")) === onContainer, await evaluate("location.hash"));
+
+  // The whole page is still the whole truth, and still one tap away.
+  await openEditorOn(full);
+  await click("#child-full");
+  await waitFor(`location.hash === ${JSON.stringify(`#/b/${full}`)} && !document.querySelector("dialog.editor")`,
+                "the link to the whole page");
+  check("the link inside opens the record's own page, and the modal gets out of the way",
+        (await evaluate(`Boolean(${q("#summary-form")}) && ${q("h1.code")}.textContent === ${JSON.stringify(full)}`)));
+
   check("nothing threw in the page", thrown.length === 0, thrown.join(" | "));
 } catch (error) { check(`harness: ${error.message}`, false); }
 
