@@ -6,8 +6,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  addedInside, addInsideRequest, blockedDelete, describe, inheritedRoom, kindsToAddInside, mayHold,
-  notYetFragile, trail,
+  addedInside, addInsideRequest, blockedDelete, cameraTrouble, describe, editorSections, frameSize,
+  inheritedRoom, kindsToAddInside, mayHold, notYetFragile, trail,
 } from "../web/nesting.js";
 
 // --- naming a container ----------------------------------------------------------
@@ -193,4 +193,133 @@ test("what was added is named, and a photo that did not upload is said, not drop
     text: "Added B-0009 (bag), but its photo did not upload: the server is unreachable. Add one from its page.",
     warn: true,
   });
+});
+
+// --- what the sub-item editor shows, and what it folds away -----------------------
+//
+// "collapse unused inputs using >v style expand/collapse indicators". The rule
+// is about *content*, not about which field it is: a section with something in
+// it is open, an empty one is folded. Nothing with content is ever hidden --
+// otherwise somebody edits a record without seeing what is already on it.
+
+const bagShape = { kind: "bag", label: "Bag", contents: true, sizes: ["small", "large"] };
+const lampShape = { kind: "item", label: "Loose item", contents: false, sizes: [] };
+const bare = { code: "B-0009", kind: "bag", content_summary: "", size: null, source_room_id: null,
+               source_location: null, fragile: 0, heavy: 0, open_first: 0 };
+const sectionsOf = (...args) => editorSections(...args).map((s) => s.key);
+const openOf = (...args) => editorSections(...args).filter((s) => s.open).map((s) => s.key);
+
+test("an empty record folds everything away but the one thing it always has", () => {
+  // A bag just dropped into a crate: nothing typed, nothing chosen.
+  assert.deepEqual(sectionsOf(bare, [], bagShape), ["summary", "kind", "size", "source", "handling", "items"]);
+  assert.deepEqual(openOf(bare, [], bagShape), ["kind"]);
+});
+
+test("every section that has something in it starts open", () => {
+  const full = { ...bare, content_summary: "cutlery", size: "small", source_room_id: 3, fragile: 1 };
+  assert.deepEqual(openOf(full, [{ id: 1, name: "forks" }], bagShape),
+                   ["summary", "kind", "size", "source", "handling", "items"]);
+});
+
+test("each section is opened by its own content and nothing else", () => {
+  assert.deepEqual(openOf({ ...bare, content_summary: "cutlery" }, [], bagShape), ["summary", "kind"]);
+  assert.deepEqual(openOf({ ...bare, size: "large" }, [], bagShape), ["kind", "size"]);
+  assert.deepEqual(openOf({ ...bare, source_room_id: 3 }, [], bagShape), ["kind", "source"]);
+  // Where in that room is part of where it came from.
+  assert.deepEqual(openOf({ ...bare, source_location: "shelf 3" }, [], bagShape), ["kind", "source"]);
+  assert.deepEqual(openOf({ ...bare, heavy: 1 }, [], bagShape), ["kind", "handling"]);
+  assert.deepEqual(openOf({ ...bare, open_first: 1 }, [], bagShape), ["kind", "handling"]);
+  assert.deepEqual(openOf(bare, [{ id: 1, name: "forks" }], bagShape), ["kind", "items"]);
+});
+
+test("whitespace is not content", () => {
+  assert.deepEqual(openOf({ ...bare, content_summary: "   " }, [], bagShape), ["kind"]);
+});
+
+test("a single thing has no size and nothing inside it to list", () => {
+  const lamp = { ...bare, kind: "item", content_summary: "Desk lamp" };
+  assert.deepEqual(sectionsOf(lamp, [], lampShape), ["summary", "kind", "source", "handling"]);
+  assert.deepEqual(openOf(lamp, [], lampShape), ["summary", "kind"]);
+});
+
+test("the summary is named for what the record is", () => {
+  const named = (shape) => editorSections(bare, [], shape).find((s) => s.key === "summary").legend;
+  assert.equal(named(bagShape), "What is in it");
+  assert.equal(named(lampShape), "What it is");
+});
+
+test("a record the server has not described yet is still all there", () => {
+  // Every field missing rather than empty: nothing throws, nothing opens.
+  assert.deepEqual(openOf({ code: "B-0009", kind: "bag" }, undefined, bagShape), ["kind"]);
+});
+
+// --- the viewfinder in the add dialog ------------------------------------------------
+//
+// "can we use javascript to have a live camera immediately during adding a
+// subitem?" It can fail in half a dozen ordinary ways -- no permission, no
+// camera, a plain LAN address -- and none of them is an error state: the file
+// picker is still there, and the line says which of them happened.
+
+test("no secure context is the one that is about the address, not the camera", () => {
+  // getUserMedia rejects silently on a LAN IP; this is checked before asking.
+  const said = cameraTrouble(null, { secure: false });
+  assert.match(said, /secure connection/);
+  assert.match(said, /[Cc]hoose a photo/);
+});
+
+test("a refusal says so plainly, and is not an error", () => {
+  const said = cameraTrouble({ name: "NotAllowedError" });
+  assert.match(said, /declined/);
+  assert.match(said, /[Cc]hoose a photo/);
+  assert.doesNotMatch(said, /error|failed/i);
+});
+
+test("no camera, and a camera somebody else is using, read differently", () => {
+  assert.match(cameraTrouble({ name: "NotFoundError" }), /No camera/);
+  assert.match(cameraTrouble({ name: "OverconstrainedError" }), /No camera/);
+  assert.match(cameraTrouble({ name: "NotReadableError" }), /already in use|busy/i);
+});
+
+test("anything else names itself rather than pretending to know", () => {
+  const said = cameraTrouble({ name: "AbortError" });
+  assert.match(said, /AbortError/);
+  assert.match(said, /[Cc]hoose a photo/);
+});
+
+test("every one of them points at the way that still works", () => {
+  for (const name of ["NotAllowedError", "NotFoundError", "NotReadableError", "AbortError", undefined]) {
+    assert.match(cameraTrouble(name ? { name } : null), /[Cc]hoose a photo/);
+  }
+});
+
+// --- what a captured frame comes out as ----------------------------------------------
+//
+// The server downscales to 2048 px and strips the metadata, so there is no
+// point sending more than that -- and every byte over it is a phone uploading
+// a 4K frame over a house's wifi.
+
+test("a big frame comes down to what the server would keep", () => {
+  assert.deepEqual(frameSize(4032, 3024), { width: 2048, height: 1536 });
+  // Held upright, the long edge is the height.
+  assert.deepEqual(frameSize(3024, 4032), { width: 1536, height: 2048 });
+});
+
+test("a small frame is left alone rather than blown up", () => {
+  assert.deepEqual(frameSize(640, 480), { width: 640, height: 480 });
+  assert.deepEqual(frameSize(1080, 1920), { width: 1080, height: 1920 });
+  assert.deepEqual(frameSize(2048, 1536), { width: 2048, height: 1536 });
+});
+
+test("the shape is kept, to whole pixels", () => {
+  const { width, height } = frameSize(3000, 2001);
+  assert.equal(width, 2048);
+  assert.equal(height, Math.round(2001 * (2048 / 3000)));
+  assert.ok(Number.isInteger(height));
+});
+
+test("a frame with no size yet is not a frame", () => {
+  // The video element has no dimensions until it has data.
+  for (const bad of [[0, 0], [640, 0], [Number.NaN, 480]]) {
+    assert.equal(frameSize(...bad), null);
+  }
 });
