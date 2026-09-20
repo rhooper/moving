@@ -284,6 +284,18 @@ export function readingWith(spend) {
       why: `Raise MOVING_VISION_BUDGET_USD above ${money(spent)} and restart to carry on.`,
     };
   }
+  // Configured for the cloud, a key set, and still reading locally: something
+  // is wrong that no amount of budget will fix -- a refused key, or nothing
+  // answering. Said here because otherwise it only shows up in a log, and the
+  // items quietly get worse.
+  if (s.recent_reads && s.recent_local === s.recent_reads) {
+    return {
+      ...bar, state: "failing",
+      now: `${s.model} is configured, but the last ${s.recent_reads}
+            ${s.recent_reads === 1 ? "photo was" : "photos were"} read on this machine by ${local}.`,
+      why: "The key may have been refused, or nothing answered. See var/log/moving.err.log.",
+    };
+  }
   return {
     ...bar, state: "cloud",
     now: `Photos are read by ${s.model}.`,

@@ -278,3 +278,39 @@ class TestConstruction:
 
         assert made is not None
         assert made.name == "claude"
+
+
+class TestSayingWhyTheKeyWasRefused:
+    def refusal(self, body):
+        return anthropic.AuthenticationError(
+            "invalid x-api-key",
+            response=SimpleNamespace(status_code=401, headers={}, request=None),
+            body=body,
+        )
+
+    def test_the_api_s_own_error_type_is_carried(self):
+        model, _ = provider(self.refusal({"error": {"type": "authentication_error"}}))
+
+        with pytest.raises(base.DraftUnreadable) as failure:
+            model.draft([a_jpeg()], model="claude-sonnet-5")
+
+        assert "authentication_error" in str(failure.value)
+        assert "ANTHROPIC_API_KEY in .env" in str(failure.value)
+
+    def test_a_body_that_says_nothing_still_gives_a_usable_message(self):
+        model, _ = provider(self.refusal(None))
+
+        with pytest.raises(base.DraftUnreadable) as failure:
+            model.draft([a_jpeg()], model="claude-sonnet-5")
+
+        assert "HTTP 401" in str(failure.value)
+
+    def test_no_part_of_the_key_is_ever_shown(self):
+        model, _ = provider(
+            self.refusal({"error": {"type": "authentication_error", "key": "sk-ant-secret"}})
+        )
+
+        with pytest.raises(base.DraftUnreadable) as failure:
+            model.draft([a_jpeg()], model="claude-sonnet-5")
+
+        assert "sk-ant" not in str(failure.value)

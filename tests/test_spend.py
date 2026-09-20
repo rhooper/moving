@@ -144,6 +144,26 @@ class TestWhatSettingsIsTold:
             {"model": "claude-sonnet-5", "photos": 2, "spent_usd": pytest.approx(0.015)},
         ]
 
+    def test_a_key_that_is_set_but_never_answers_is_visible(self, conn, config):
+        # A refused key looks exactly like a working one until you compare the
+        # items. Two photos in a row read locally is what says otherwise.
+        for _ in range(2):
+            spend.record(
+                conn, a_job(conn, status="done"), read(provider="ollama", model="qwen3", cost=0.0)
+            )
+
+        told = spend.status(conn, config.replace(vision_provider="claude"))
+
+        assert (told["recent_reads"], told["recent_local"]) == (2, 2)
+
+    def test_a_cloud_read_among_them_is_not(self, conn, config):
+        spend.record(conn, a_job(conn), read(provider="ollama", model="qwen3", cost=0.0))
+        spend.record(conn, a_job(conn), read())
+
+        told = spend.status(conn, config.replace(vision_provider="claude"))
+
+        assert (told["recent_reads"], told["recent_local"]) == (2, 1)
+
     def test_it_says_which_tiers_are_configured(self, conn, config):
         told = spend.status(conn, config.replace(vision_provider="claude"))
 

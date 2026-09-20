@@ -537,3 +537,29 @@ test("a local-only setup is not described as out of budget", async () => {
   assert.equal(seen.state, "local");
   assert.match(seen.why, /Nothing is spent/);
 });
+
+test("a key that is set but not working is said out loud, not left in a log", async () => {
+  const { readingWith } = await import("../web/covers.js");
+
+  const seen = readingWith({
+    provider: "claude", key: true, over: false, spent_usd: 0, cap_usd: 30,
+    model: "claude-sonnet-5", detail_model: "claude-opus-5", local_model: "qwen3-vl:4b-instruct",
+    recent_reads: 6, recent_local: 6,
+  });
+
+  assert.equal(seen.state, "failing");
+  assert.match(seen.now, /read on this machine/);
+  assert.match(seen.why, /refused/);
+});
+
+test("one local read among several cloud ones is the fallback working, not a fault", async () => {
+  const { readingWith } = await import("../web/covers.js");
+
+  const seen = readingWith({
+    provider: "claude", key: true, over: false, spent_usd: 1, cap_usd: 30,
+    model: "claude-sonnet-5", detail_model: "claude-opus-5", local_model: "qwen3-vl:4b-instruct",
+    recent_reads: 6, recent_local: 1,
+  });
+
+  assert.equal(seen.state, "cloud");
+});

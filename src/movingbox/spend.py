@@ -92,6 +92,29 @@ def by_model(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     ]
 
 
+#: How far back "recently" looks when asking whether the cloud tier is
+#: actually answering.
+RECENT = 10
+
+
+def recent_reads(conn: sqlite3.Connection, config: Config) -> tuple[int, int]:
+    """Of the last few photos read, how many, and how many read locally.
+
+    A key that is set and refused looks exactly like a key that works, right
+    up until you compare the items. This is what turns that into something the
+    Settings page can say out loud.
+    """
+    rows = conn.execute(
+        """
+        SELECT provider FROM ai_jobs
+         WHERE photo_id IS NOT NULL AND status IN ('done', 'error')
+         ORDER BY id DESC LIMIT ?
+        """,
+        (RECENT,),
+    ).fetchall()
+    return len(rows), sum(1 for row in rows if row["provider"] != "claude")
+
+
 def status(conn: sqlite3.Connection, config: Config) -> dict[str, Any]:
     """Everything the Settings page says about the cloud tier.
 
@@ -104,6 +127,7 @@ def status(conn: sqlite3.Connection, config: Config) -> dict[str, Any]:
     counted = conn.execute(
         "SELECT COUNT(*) AS n FROM ai_jobs WHERE cost_usd IS NOT NULL AND cost_usd > 0"
     ).fetchone()
+    reads, locally = recent_reads(conn, config)
     return {
         "provider": config.vision_provider,
         "model": config.vision_cloud_model,
@@ -116,6 +140,11 @@ def status(conn: sqlite3.Connection, config: Config) -> dict[str, Any]:
         "over": over,
         "photos": counted["n"],
         "by_model": by_model(conn),
+        # Of the last few photos read, how many and how many by the local
+        # model. Configured for the cloud and still reading locally means
+        # something is wrong that no amount of budget will fix.
+        "recent_reads": reads,
+        "recent_local": locally,
         # The one thing somebody actually wants to know from this panel: are
         # my photos being read by the good model right now, or not?
         "reading_locally": config.vision_provider != "claude" or not has_key or over,

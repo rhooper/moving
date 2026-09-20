@@ -78,6 +78,20 @@ PRICES: dict[str, tuple[float, float]] = {
 _KEY = re.compile(r"sk-ant-[A-Za-z0-9_-]+")
 
 
+def api_error_type(failure: Exception) -> str:
+    """The API's own error type, e.g. "authentication_error". Never a value.
+
+    Read out of the structured body rather than the message, because the type
+    is a fixed enum and a message is free text.
+    """
+    body = getattr(failure, "body", None)
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict) and isinstance(error.get("type"), str):
+            return error["type"]
+    return ""
+
+
 def redact(text: str) -> str:
     """Take any API key out of a string before it is stored or shown.
 
@@ -273,7 +287,15 @@ class ClaudeProvider:
     def explain(self, failure: Exception) -> str:
         """A failure message that names the problem and carries no secret."""
         if isinstance(failure, anthropic.AuthenticationError):
-            return "the Anthropic API key was refused; check ANTHROPIC_API_KEY"
+            # The API's own error *type* -- an enum, never key material -- so
+            # the difference between a wrong key and a revoked one is one line
+            # in the log rather than a round of guessing. The value itself is
+            # never shown, not even its first characters.
+            kind = api_error_type(failure)
+            return (
+                f"the Anthropic API refused the key (HTTP 401{', ' + kind if kind else ''}). "
+                f"Check ANTHROPIC_API_KEY in .env"
+            )
         if isinstance(failure, anthropic.PermissionDeniedError):
             return "this Anthropic API key is not allowed to use that model"
         if isinstance(failure, anthropic.RateLimitError):

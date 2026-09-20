@@ -246,3 +246,19 @@ class TestWhatTheAppBuilds:
         from movingbox.vision.stub import StubProvider
 
         assert isinstance(build_vision_provider(self.blank(vision_provider="stub")), StubProvider)
+
+
+class TestTrailingComments:
+    def test_an_unquoted_value_ends_at_a_trailing_comment(self):
+        # An API key with " # mine" still on the end is sent verbatim and comes
+        # back as a 401, which reads as a bad key rather than as a bad line.
+        assert secrets.parse("ANTHROPIC_API_KEY=sk-ant-x  # the one from March") == {
+            "ANTHROPIC_API_KEY": "sk-ant-x"
+        }
+
+    def test_a_quoted_value_keeps_its_hash(self):
+        assert secrets.parse('A="one # two"') == {"A": "one # two"}
+
+    def test_a_hash_with_no_space_before_it_is_part_of_the_value(self):
+        # Because it might be, and guessing wrong truncates a real secret.
+        assert secrets.parse("A=one#two") == {"A": "one#two"}

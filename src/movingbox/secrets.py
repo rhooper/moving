@@ -67,9 +67,15 @@ def parse(text: str) -> dict[str, str]:
         if not sep or not name:
             continue
         value = value.strip()
-        # A quoted value keeps its spaces; an unquoted one has none to keep.
         if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            # A quoted value keeps whatever is inside the quotes, `#` included.
             value = value[1:-1]
+        else:
+            # An unquoted value ends at a trailing comment. This matters more
+            # than it looks: an API key with " # mine" still on the end is
+            # sent verbatim and comes back as a 401, which reads as a bad key
+            # rather than as a bad line.
+            value = value.split(" #", 1)[0].split("\t#", 1)[0].strip()
         found[name] = value
     return found
 
