@@ -474,3 +474,146 @@ class TestTheThread:
         assert ("photos.changed", box["code"]) in told
         assert ("box.updated", box["code"]) in told
         assert names(conn, box["code"]) == [("kettle", 1, "ai")]
+
+
+class TestWhatItCostAndWhoAnswered:
+    """The budget, from the worker's side.
+
+    Nothing here reaches a model: the cloud half of the pair is a fake that
+    answers or fails on command, as everywhere else in the suite.
+    """
+
+    def pair(self, cloud, local):
+        from movingbox.vision import hybrid
+
+        return hybrid.Hybrid(
+            cloud=cloud,
+            local=local,
+            fallbacks={"claude-sonnet-5": "qwen3-vl:4b-instruct"},
+        )
+
+    def cloud(self, config):
+        return config.replace(vision_provider="claude", anthropic_api_key="sk-ant-test")
+
+    class Cloud:
+        """A stand-in for the Claude provider: answers, or fails, for a price."""
+
+        name = "claude"
+
+        def __init__(self, draft=None, failure=None, cost=0.0075):
+            self._draft = draft
+            self._failure = failure
+            self._cost = cost
+            self.asked = []
+            self.last = None
+
+        def draft(self, images, *, model):
+            self.asked.append(model)
+            if self._failure is not None:
+                self.last = None
+                raise self._failure
+            self.last = base.Reading(
+                provider="claude",
+                model=model,
+                input_tokens=2760,
+                output_tokens=200,
+                cost_usd=self._cost,
+            )
+            return self._draft
+
+    def test_the_job_records_the_model_that_answered_and_the_price(self, conn, config, box):
+        config = self.cloud(config)
+        photo = photographed(conn, config, box["code"])
+        cloud = self.Cloud(draft=saw(("kettle", 1)))
+
+        worker(config, self.pair(cloud, Seen())).run_once()
+
+        job = conn.execute("SELECT * FROM ai_jobs WHERE photo_id = ?", (photo["id"],)).fetchone()
+        assert (job["provider"], job["model"]) == ("claude", "claude-sonnet-5")
+        assert (job["input_tokens"], job["output_tokens"]) == (2760, 200)
+        assert job["cost_usd"] == pytest.approx(0.0075)
+
+    def test_a_fallback_is_recorded_as_the_local_model(self, conn, config, box):
+        # The job was queued naming claude-sonnet-5; Ollama is what read it.
+        config = self.cloud(config)
+        photo = photographed(conn, config, box["code"])
+        cloud = self.Cloud(failure=base.DraftUnreadable("the API could not be reached"))
+
+        worker(config, self.pair(cloud, Seen(saw(("kettle", 1))))).run_once()
+
+        job = conn.execute("SELECT * FROM ai_jobs WHERE photo_id = ?", (photo["id"],)).fetchone()
+        assert (job["provider"], job["model"]) == ("stub", "qwen3-vl:4b-instruct")
+        assert job["cost_usd"] == 0.0
+        assert names(conn, box["code"]) == [("kettle", 1, "ai")]
+
+    def test_a_read_that_failed_after_the_call_still_records_what_it_cost(self, conn, config, box):
+        config = self.cloud(config)
+        photo = photographed(conn, config, box["code"])
+        cloud = self.Cloud(failure=base.DraftUnreadable("ran out of room"))
+        cloud.last = None
+        pair = self.pair(cloud, Seen(base.DraftUnreadable("nothing answered")))
+
+        # Make the cloud's failure a *paid* one.
+        def draft(images, *, model):
+            cloud.asked.append(model)
+            cloud.last = base.Reading(provider="claude", model=model, cost_usd=0.0075)
+            raise base.DraftUnreadable("ran out of room")
+
+        cloud.draft = draft
+        worker(config, pair).run_once()
+
+        job = conn.execute("SELECT * FROM ai_jobs WHERE photo_id = ?", (photo["id"],)).fetchone()
+        assert job["status"] == "error"
+        assert job["cost_usd"] == pytest.approx(0.0075)
+
+    def test_past_the_cap_the_cloud_is_not_offered(self, conn, config, box):
+        config = self.cloud(config).replace(vision_budget_usd=1.0)
+        spend_it(conn, 1.0)
+        photo = photographed(conn, config, box["code"])
+        cloud = self.Cloud(draft=saw(("kettle", 1)))
+
+        worker(config, self.pair(cloud, Seen(saw(("mug", 2))))).run_once()
+
+        assert cloud.asked == []  # never even tried
+        job = conn.execute("SELECT * FROM ai_jobs WHERE photo_id = ?", (photo["id"],)).fetchone()
+        assert job["provider"] == "stub"
+        assert names(conn, box["code"]) == [("mug", 2, "ai")]
+
+    def test_under_the_cap_it_is(self, conn, config, box):
+        config = self.cloud(config).replace(vision_budget_usd=1.0)
+        spend_it(conn, 0.5)
+        photographed(conn, config, box["code"])
+        cloud = self.Cloud(draft=saw(("kettle", 1)))
+
+        worker(config, self.pair(cloud, Seen())).run_once()
+
+        assert cloud.asked == ["claude-sonnet-5"]
+
+    def test_the_cap_is_checked_per_job_not_once_at_startup(self, conn, config, box):
+        # A queue of photos can cross the cap halfway down it.
+        config = self.cloud(config).replace(vision_budget_usd=0.005)
+        photographed(conn, config, box["code"], colour=(10, 20, 30))
+        photographed(conn, config, box["code"], colour=(40, 50, 60))
+        cloud = self.Cloud(draft=saw(("kettle", 1)), cost=0.0075)
+        hand = worker(config, self.pair(cloud, Seen(saw(("mug", 1)))))
+
+        hand.run_once()
+        hand.run_once()
+
+        assert cloud.asked == ["claude-sonnet-5"]  # the second one was over
+        providers = [
+            row["provider"]
+            for row in conn.execute("SELECT provider FROM ai_jobs ORDER BY id").fetchall()
+        ]
+        assert providers == ["claude", "stub"]
+
+
+def spend_it(conn, dollars):
+    """A finished job that cost this much, so the cap has something to see."""
+    conn.execute(
+        """
+        INSERT INTO ai_jobs (box_id, photo_id, provider, model, prompt_version, status, cost_usd)
+        VALUES (NULL, NULL, 'claude', 'claude-sonnet-5', 'v1', 'done', ?)
+        """,
+        (dollars,),
+    )

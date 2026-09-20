@@ -370,6 +370,15 @@ ul.items li.renaming .ai { display: none; }
 .say { border-left: 3px solid var(--ink); padding: 0.5rem 0.75rem; margin: 0 0 1rem; background: var(--sunk); }
 .say.warn { border-left-color: var(--signal); }
 
+/* What reading photos has cost, against the cap. Not .bar -- that is the
+   navigation. Ink on sunk, like everything else that is a quantity here; the
+   signal colour is kept for the one state that needs acting on. */
+.spend { margin: 0.75rem 0 0.25rem; }
+.spend .spent { font-weight: 600; }
+.gauge { height: 6px; background: var(--sunk); border: 1px solid var(--line); margin: 0 0 0.75rem; }
+.gauge span { display: block; height: 100%; background: var(--ink); }
+[data-reading="over"] .gauge span { background: var(--signal); }
+
 /* The record page saves itself; this line under each of its forms says how
    that is going, and carries Undo. It is always there and as tall as the
    button it sometimes holds, so "Saved" arriving -- every few seconds, while

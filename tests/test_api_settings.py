@@ -93,3 +93,76 @@ class TestNextNumber:
 
         assert response.status_code == 409
         assert "B-0001" in response.json()["detail"]
+
+
+class TestWhatThePhotoReadingCosts:
+    """A budget nobody can see is a budget that gets exceeded."""
+
+    def cloud(self, config):
+        return config.replace(
+            vision_provider="claude",
+            anthropic_api_key="sk-ant-secret-value",
+            vision_budget_usd=30.0,
+        )
+
+    def test_a_fresh_move_has_spent_nothing(self, client):
+        body = client.get("/api/settings/spend").json()
+
+        assert body["spent_usd"] == 0.0
+        assert body["photos"] == 0
+        assert body["by_model"] == []
+
+    def test_it_names_the_tiers_and_the_cap(self, config):
+        with TestClient(create_app(self.cloud(config))) as client:
+            body = client.get("/api/settings/spend").json()
+
+        assert body["model"] == "claude-sonnet-5"
+        assert body["detail_model"] == "claude-opus-5"
+        assert body["cap_usd"] == 30.0
+        assert body["reading_locally"] is False
+
+    def test_the_key_is_a_yes_or_no_and_never_a_value(self, config):
+        with TestClient(create_app(self.cloud(config))) as client:
+            response = client.get("/api/settings/spend")
+
+        assert response.json()["key"] is True
+        assert "sk-ant" not in response.text
+
+    def test_a_local_only_setup_says_so_rather_than_looking_broken(self, client):
+        body = client.get("/api/settings/spend").json()
+
+        assert body["provider"] == "ollama"
+        assert body["reading_locally"] is True
+        assert body["local_model"] == "qwen3-vl:4b-instruct"
+
+    def test_what_has_been_spent_shows_up(self, config):
+        from movingbox import db, spend
+        from movingbox.vision import base
+
+        conn = db.connect(config.db_path)
+        conn.execute(
+            "INSERT INTO ai_jobs (provider, model, prompt_version, status) "
+            "VALUES ('claude', 'claude-sonnet-5', 'v1', 'done')"
+        )
+        spend.record(
+            conn,
+            conn.execute("SELECT MAX(id) AS id FROM ai_jobs").fetchone()["id"],
+            base.Reading(
+                provider="claude",
+                model="claude-sonnet-5",
+                input_tokens=2760,
+                output_tokens=200,
+                cost_usd=0.0075,
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        with TestClient(create_app(self.cloud(config))) as client:
+            body = client.get("/api/settings/spend").json()
+
+        assert body["spent_usd"] == pytest.approx(0.0075)
+        assert body["photos"] == 1
+        assert body["by_model"] == [
+            {"model": "claude-sonnet-5", "photos": 1, "spent_usd": pytest.approx(0.0075)}
+        ]

@@ -13,18 +13,25 @@ from movingbox.vision import base, hybrid
 class Answers:
     """A provider that answers, or fails, and remembers what it was asked."""
 
-    def __init__(self, name, draft=None, failure=None, cost=0.0):
+    def __init__(self, name, draft=None, failure=None, cost=0.0, wasted=0.0):
         self.name = name
         self._draft = draft or base.BoxDraft(summary=name, items=[])
         self._failure = failure
         self._cost = cost
+        #: What a failing call still cost -- a reply that reached the model
+        #: and then could not be read is billed all the same.
+        self._wasted = wasted
         self.asked: list[str] = []
         self.last: base.Reading | None = None
 
     def draft(self, images, *, model):
         self.asked.append(model)
         if self._failure is not None:
-            self.last = None
+            self.last = (
+                base.Reading(provider=self.name, model=model, cost_usd=self._wasted)
+                if self._wasted
+                else None
+            )
             raise self._failure
         self.last = base.Reading(provider=self.name, model=model, cost_usd=self._cost)
         return self._draft
@@ -148,6 +155,28 @@ class TestBookkeeping:
         pair.draft([b"jpeg"], model="claude-sonnet-5")
 
         assert pair.last == base.Reading(provider="ollama", model="qwen3-vl:4b-instruct")
+
+    def test_a_paid_attempt_that_did_not_answer_is_still_charged(self):
+        # A reply that reached the model and then failed to read still cost
+        # money. The local model answered and charged nothing, so cost_usd on
+        # the job is what the *job* cost, not what the answerer charged.
+        cloud = Answers("claude", failure=base.DraftUnreadable("truncated"), wasted=0.0075)
+        pair = both(cloud, Answers("ollama"))
+
+        pair.draft([b"jpeg"], model="claude-sonnet-5")
+
+        assert pair.last.provider == "ollama"
+        assert pair.last.cost_usd == 0.0075
+
+    def test_when_nothing_could_read_it_the_paid_attempt_is_still_recorded(self):
+        cloud = Answers("claude", failure=base.DraftUnreadable("truncated"), wasted=0.0075)
+        local = Answers("ollama", failure=base.DraftUnreadable("not running"))
+        pair = both(cloud, local)
+
+        with pytest.raises(base.DraftUnreadable):
+            pair.draft([b"jpeg"], model="claude-sonnet-5")
+
+        assert pair.last.cost_usd == 0.0075
 
     def test_a_failed_read_leaves_no_stale_reading(self):
         cloud = Answers("claude", failure=base.DraftUnreadable("no"))

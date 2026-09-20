@@ -19,6 +19,7 @@ local one that stands in for it.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 
 from . import base
@@ -63,6 +64,9 @@ class Hybrid:
     def draft(self, images: list[bytes], *, model: str) -> base.BoxDraft:
         self.last = None
         refused: base.DraftUnreadable | None = None
+        #: A cloud call that reached the model and then could not be read.
+        #: It was billed all the same, and the budget has to know.
+        wasted: base.Reading | None = None
 
         if self.use_cloud and self.cloud is not None:
             try:
@@ -72,6 +76,8 @@ class Hybrid:
                 # log and safe to put in front of somebody.
                 log.warning("cloud read failed, falling back to the local model: %s", failure)
                 refused = failure
+                wasted = getattr(self.cloud, "last", None)
+                self.last = wasted
             else:
                 self.last = self._reading(self.cloud, model)
                 return found
@@ -82,9 +88,24 @@ class Hybrid:
         except base.DraftUnreadable as failure:
             if refused is None:
                 raise
+            # `last` is left at the wasted attempt so the job still records
+            # what it cost, even though nothing came of it.
             # Both reasons, cloud first: the local one is usually the more
             # actionable ("ollama is not running"), so it reads last.
             raise base.DraftUnreadable(f"{refused}; and the local model: {failure}") from failure
 
-        self.last = self._reading(self.local, local_model)
+        reading = self._reading(self.local, local_model)
+        if wasted is not None:
+            # `provider` and `model` name who answered -- the local model,
+            # which charged nothing -- while `cost_usd` is what the *job*
+            # cost. A breakdown by model therefore books a wasted cloud call
+            # against the model that rescued it, which is rare, small, and
+            # better than losing the number.
+            reading = dataclasses.replace(
+                reading,
+                input_tokens=reading.input_tokens + wasted.input_tokens,
+                output_tokens=reading.output_tokens + wasted.output_tokens,
+                cost_usd=reading.cost_usd + wasted.cost_usd,
+            )
+        self.last = reading
         return found
