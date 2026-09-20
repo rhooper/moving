@@ -13,7 +13,7 @@ import {
   partOf,
   reconcile,
 } from "/live.js";
-import { blockedDelete, describe, mayHold, trail } from "/nesting.js";
+import { blockedDelete, describe, inheritedRoom, mayHold, notYetFragile, trail } from "/nesting.js";
 import { choose, chosen, restrict, segmented } from "/segmented.js";
 import { splitItems } from "/text.js";
 import { KeyBuffer, entered } from "/wedge.js";
@@ -270,7 +270,7 @@ function failed(message, title = "That did not work") {
 // A native <dialog> rather than confirm(): confirm() cannot be styled, names
 // its buttons "OK" and "Cancel" whatever is at stake, and some mobile browsers
 // suppress it outright after the first one.
-function confirmed({ title, message, action }) {
+function confirmed({ title, message, action, dismiss = "Cancel" }) {
   return new Promise((resolve) => {
     const dialog = document.createElement("dialog");
     dialog.className = "ask";
@@ -282,6 +282,7 @@ function confirmed({ title, message, action }) {
     dialog.querySelector("h2").textContent = title;
     dialog.querySelector("p").textContent = message;
     dialog.querySelector("[value=yes]").textContent = action;
+    dialog.querySelector("[value=no]").textContent = dismiss;
     dialog.addEventListener("close", () => {
       resolve(dialog.returnValue === "yes");
       dialog.remove();
@@ -410,6 +411,40 @@ document.addEventListener("visibilitychange", () => {
 });
 addEventListener("pagehide", () => editing?.auto.commitAll());
 addEventListener("online", () => editing?.auto.retryFailed());
+
+// --- fragile climbs ------------------------------------------------------------
+//
+// "fragile should percolate up to the parent and set that (prompt to set if
+// it's not set) but don't undo on clear." A fragile thing makes whatever it is
+// inside fragile, so when a record is marked fragile, or a fragile one is put
+// inside something, the page offers to mark the containers that are not yet.
+// A prompted choice, on the page: the server changes nothing by itself.
+// Clearing Fragile on the record touches nothing else; the containers' marks
+// are their own writes, outside the record's own Undo.
+//
+// `record` is the record with its `path`. Resolves to the steps that were
+// marked, so the caller can bring its own copy of the path into line and not
+// ask again for the same containers.
+async function offerFragileClimb(record) {
+  const steps = notYetFragile(record.path);
+  if (!steps.length) return [];
+  const named = steps.map((step) => `${step.code} (${describe(step)})`);
+  const list = named.length > 1 ? `${named.slice(0, -1).join(", ")} and ${named.at(-1)}` : named[0];
+  const sure = await confirmed({
+    title: "Mark what it is inside fragile too?",
+    message: `${record.code} is inside ${list}, which ${steps.length === 1 ? "is" : "are"} not marked fragile. `
+      + "Something fragile inside makes the whole thing fragile.",
+    action: steps.length === 1 ? "Mark it fragile" : "Mark them fragile",
+    dismiss: "Not now",
+  });
+  if (!sure) return [];
+  for (const step of steps) {
+    await api(`/boxes/${encodeURIComponent(step.code)}`, {
+      method: "PATCH", body: JSON.stringify({ fragile: true }) });
+    step.fragile = 1;
+  }
+  return steps;
+}
 
 // --- looking at one photo ------------------------------------------------------
 //
@@ -1188,6 +1223,7 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
         <div data-seg="kind"></div>
         ${shape.sizes?.length ? '<div data-seg="size"></div>' : ""}
         <div data-seg="destination_room_id"></div>
+        <p class="meta" id="goes-with" hidden></p>
         <div data-seg="source_room_id"></div>
         <label class="dlabel" for="dest-from">Where in that room (optional)</label>
         <input id="dest-from" name="source_location" placeholder="shelf 3, under the desk"
@@ -1316,7 +1352,12 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
   for (const button of app.querySelectorAll("[data-flag]")) {
     button.addEventListener("click", () => {
       const key = button.dataset.flag;
-      act(() => api(path, { method: "PATCH", body: JSON.stringify({ [key]: !box[key] }) }));
+      act(async () => {
+        const fresh = await api(path, { method: "PATCH", body: JSON.stringify({ [key]: !box[key] }) });
+        // Turned on, on something inside something: offer to mark the
+        // containers too. Turned off: nothing else moves.
+        if (key === "fragile" && fresh.fragile) await offerFragileClimb(fresh);
+      });
     });
   }
 
@@ -1360,7 +1401,9 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
       name: "size", legend: "How big", options: sizeChoices(shape.sizes),
       value: box.size, optional: true, empty: "No size" }));
   }
-  mount(segmented({
+  // Always built, even for a nested record that hides it: it comes and goes
+  // in place as the record is put inside something and taken out again.
+  const roomRow = mount(segmented({
     name: "destination_room_id", legend: "Destination room", options: roomChoices(forDestination(rooms)),
     value: box.destination_room_id, optional: true, empty: "Not decided yet" }));
   mount(segmented({
@@ -1464,11 +1507,31 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
     }
   }
 
+  // Where this record is going. Inside a container it goes where the container
+  // goes -- the nearest one with a room -- and its own row is put away; the
+  // room it had stays in the database and comes back if it is taken out.
+  const goingTo = () => {
+    const from = inheritedRoom(box.path);
+    return from ? from.room : box.destination_room_id;
+  };
+
   function showRoom() {
-    const now = rooms.find((r) => r.id === box.destination_room_id);
+    const now = rooms.find((r) => r.id === goingTo());
     const band = document.getElementById("room-band");
     setText(band, now?.name || "");
     band.hidden = !now;
+
+    const from = inheritedRoom(box.path);
+    roomRow.hidden = Boolean(from);
+    // A disabled fieldset's radios stay out of FormData and fire nothing.
+    roomRow.disabled = Boolean(from);
+    const line = document.getElementById("goes-with");
+    line.hidden = !from;
+    if (!from) return;
+    const link = document.createElement("a");
+    link.setAttribute("href", `#/b/${encodeURIComponent(from.code)}`);
+    link.textContent = from.code;
+    line.replaceChildren("Goes where ", link, now ? ` goes: ${now.name}.` : " goes; no room chosen for it yet.");
   }
 
   // --- things inside things ---
@@ -1514,6 +1577,7 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
       line.textContent = "Not inside anything.";
     }
     document.getElementById("container-out").hidden = !parent;
+    showRoom();
   }
 
   function drawChildren() {
@@ -1624,7 +1688,13 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
       };
       if (fieldOf(key)) savedKey(key, value);
       if (key === "destination_room_id") showRoom();
-      if (key === "parent_code") showInside();
+      if (key === "parent_code") {
+        showInside();
+        // A fragile thing put inside something: offer to mark that fragile.
+        // The steps marked are the page's own copy of the path, so the same
+        // containers are not asked about again.
+        if (box.fragile && box.parent) offerFragileClimb(box).catch((error) => failed(error.message));
+      }
       // A refresh held back behind this edit may be able to go now.
       fieldClosed();
     },
@@ -1891,7 +1961,7 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
 
   printButton.addEventListener("click", async () => {
     const contents = hasContents(box, items);
-    const sure = await confirmThinLabel(code, { contents, room: Boolean(box.destination_room_id) });
+    const sure = await confirmThinLabel(code, { contents, room: Boolean(goingTo()) });
     if (!sure) return;
 
     const copies = Math.min(10, Math.max(1, Number(copiesField.value) || 1));
@@ -2045,9 +2115,14 @@ async function viewNew(parentCode = null) {
   const allSizes = allKinds.find((k) => k.sizes?.length)?.sizes || [];
   const sizeRow = mount(segmented({
     name: "size", legend: "How big", options: sizeChoices(allSizes), optional: true, empty: "No size" }));
-  mount(segmented({
-    name: "destination_room_id", legend: "Destination room", options: roomChoices(forDestination(rooms)),
-    optional: true, empty: "Not decided yet" }));
+  // Inside a container there is no room to choose: it goes where that goes.
+  const roomSlot = app.querySelector('[data-seg="destination_room_id"]');
+  if (parent) roomSlot.closest(".section").remove();
+  else {
+    mount(segmented({
+      name: "destination_room_id", legend: "Destination room", options: roomChoices(forDestination(rooms)),
+      optional: true, empty: "Not decided yet" }));
+  }
   mount(segmented({
     name: "source_room_id", legend: "Packed from", options: roomChoices(forSource(rooms)),
     optional: true, empty: "Not recorded" }));
@@ -2097,7 +2172,7 @@ async function viewNew(parentCode = null) {
     if (printing === "label") {
       const sure = await confirmThinLabel("its label", {
         contents: Boolean(payload.content_summary),
-        room: Boolean(payload.destination_room_id),
+        room: Boolean(payload.destination_room_id || inheritedRoom([...(parent?.path || []), parent].filter(Boolean))?.room),
       });
       if (!sure) return;
     }
@@ -2119,6 +2194,9 @@ async function viewNew(parentCode = null) {
         }
         return made;
       });
+      // Made fragile, inside something: offer to mark the containers too,
+      // from the path the server sent back with it, before going to it.
+      if (payload.fragile && box.path?.length) await offerFragileClimb(box);
       location.hash = `#/b/${box.code}`;
       if (unprinted) {
         failed(`${box.code} was created, but its ${printing} did not print: ${unprinted}`,
