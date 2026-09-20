@@ -104,6 +104,39 @@ export function addedInside(made, photoError) {
   };
 }
 
+// --- the sub-item editor's sections -----------------------------------------------
+//
+// "pop open the subitem editor as a modal, rather than changing page. collapse
+// unused inputs using >v style expand/collapse indicators."
+//
+// The rule is about content, not about which field it is: a section with
+// something in it starts open, an empty one starts folded. **Nothing with
+// content is ever folded away** -- otherwise somebody edits a record without
+// seeing what is already on it. A section that does not apply at all (the size
+// of a lamp, the contents of a lamp) is not there in the first place.
+//
+// Deciding it here rather than in the markup keeps it one rule to extend: the
+// record page could fold the same way later without rewriting the reasoning.
+const filled = (value) => String(value ?? "").trim() !== "";
+
+export function editorSections(box, items, shape) {
+  const record = box || {};
+  const holds = Boolean(shape?.contents);
+  const sections = [
+    { key: "summary", legend: holds ? "What is in it" : "What it is", open: filled(record.content_summary) },
+    // A record is always something, so this one is always open: the rule
+    // decides it, not an exception to the rule.
+    { key: "kind", legend: "Kind", open: filled(record.kind) },
+    ...(holds ? [{ key: "size", legend: "How big", open: filled(record.size) }] : []),
+    { key: "source", legend: "Where it came from",
+      open: filled(record.source_room_id) || filled(record.source_location) },
+    { key: "handling", legend: "Handling",
+      open: Boolean(record.fragile || record.heavy || record.open_first) },
+    ...(holds ? [{ key: "items", legend: "Items", open: (items || []).length > 0 }] : []),
+  ];
+  return sections;
+}
+
 /** Why Delete is not offered on a container holding things, or "" when it is. */
 export function blockedDelete(children) {
   const count = (children || []).length;

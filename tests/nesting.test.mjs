@@ -6,8 +6,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  addedInside, addInsideRequest, blockedDelete, describe, inheritedRoom, kindsToAddInside, mayHold,
-  notYetFragile, trail,
+  addedInside, addInsideRequest, blockedDelete, describe, editorSections, inheritedRoom,
+  kindsToAddInside, mayHold, notYetFragile, trail,
 } from "../web/nesting.js";
 
 // --- naming a container ----------------------------------------------------------
@@ -193,4 +193,62 @@ test("what was added is named, and a photo that did not upload is said, not drop
     text: "Added B-0009 (bag), but its photo did not upload: the server is unreachable. Add one from its page.",
     warn: true,
   });
+});
+
+// --- what the sub-item editor shows, and what it folds away -----------------------
+//
+// "collapse unused inputs using >v style expand/collapse indicators". The rule
+// is about *content*, not about which field it is: a section with something in
+// it is open, an empty one is folded. Nothing with content is ever hidden --
+// otherwise somebody edits a record without seeing what is already on it.
+
+const bagShape = { kind: "bag", label: "Bag", contents: true, sizes: ["small", "large"] };
+const lampShape = { kind: "item", label: "Loose item", contents: false, sizes: [] };
+const bare = { code: "B-0009", kind: "bag", content_summary: "", size: null, source_room_id: null,
+               source_location: null, fragile: 0, heavy: 0, open_first: 0 };
+const sectionsOf = (...args) => editorSections(...args).map((s) => s.key);
+const openOf = (...args) => editorSections(...args).filter((s) => s.open).map((s) => s.key);
+
+test("an empty record folds everything away but the one thing it always has", () => {
+  // A bag just dropped into a crate: nothing typed, nothing chosen.
+  assert.deepEqual(sectionsOf(bare, [], bagShape), ["summary", "kind", "size", "source", "handling", "items"]);
+  assert.deepEqual(openOf(bare, [], bagShape), ["kind"]);
+});
+
+test("every section that has something in it starts open", () => {
+  const full = { ...bare, content_summary: "cutlery", size: "small", source_room_id: 3, fragile: 1 };
+  assert.deepEqual(openOf(full, [{ id: 1, name: "forks" }], bagShape),
+                   ["summary", "kind", "size", "source", "handling", "items"]);
+});
+
+test("each section is opened by its own content and nothing else", () => {
+  assert.deepEqual(openOf({ ...bare, content_summary: "cutlery" }, [], bagShape), ["summary", "kind"]);
+  assert.deepEqual(openOf({ ...bare, size: "large" }, [], bagShape), ["kind", "size"]);
+  assert.deepEqual(openOf({ ...bare, source_room_id: 3 }, [], bagShape), ["kind", "source"]);
+  // Where in that room is part of where it came from.
+  assert.deepEqual(openOf({ ...bare, source_location: "shelf 3" }, [], bagShape), ["kind", "source"]);
+  assert.deepEqual(openOf({ ...bare, heavy: 1 }, [], bagShape), ["kind", "handling"]);
+  assert.deepEqual(openOf({ ...bare, open_first: 1 }, [], bagShape), ["kind", "handling"]);
+  assert.deepEqual(openOf(bare, [{ id: 1, name: "forks" }], bagShape), ["kind", "items"]);
+});
+
+test("whitespace is not content", () => {
+  assert.deepEqual(openOf({ ...bare, content_summary: "   " }, [], bagShape), ["kind"]);
+});
+
+test("a single thing has no size and nothing inside it to list", () => {
+  const lamp = { ...bare, kind: "item", content_summary: "Desk lamp" };
+  assert.deepEqual(sectionsOf(lamp, [], lampShape), ["summary", "kind", "source", "handling"]);
+  assert.deepEqual(openOf(lamp, [], lampShape), ["summary", "kind"]);
+});
+
+test("the summary is named for what the record is", () => {
+  const named = (shape) => editorSections(bare, [], shape).find((s) => s.key === "summary").legend;
+  assert.equal(named(bagShape), "What is in it");
+  assert.equal(named(lampShape), "What it is");
+});
+
+test("a record the server has not described yet is still all there", () => {
+  // Every field missing rather than empty: nothing throws, nothing opens.
+  assert.deepEqual(openOf({ code: "B-0009", kind: "bag" }, undefined, bagShape), ["kind"]);
 });
