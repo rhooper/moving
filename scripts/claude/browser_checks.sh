@@ -43,6 +43,15 @@ ONE=$(post /api/boxes "{\"content_summary\":\"pots and pans\",\"destination_room
 TWO=$(post /api/boxes "{\"content_summary\":\"books\",\"destination_room_id\":$ROOM}" | code)
 VIEW=$(post /api/boxes "{}" | code)
 post "/api/boxes/$ONE/items" '{"name":"stock pot"}' >/dev/null
+# Things inside things, for the read-only checks to find: a crate holding a
+# bag, a small box (with two bags of its own) and a lamp. The search word
+# "samovar" is inside the small box, two levels down.
+CRATE=$(post /api/boxes "{\"kind\":\"crate\",\"content_summary\":\"kitchen\",\"destination_room_id\":$ROOM}" | code)
+post /api/boxes "{\"kind\":\"bag\",\"content_summary\":\"cutlery\",\"parent_code\":\"$CRATE\"}" >/dev/null
+TIN=$(post /api/boxes "{\"kind\":\"box\",\"content_summary\":\"tea and the samovar\",\"size\":\"small\",\"parent_code\":\"$CRATE\"}" | code)
+post /api/boxes "{\"kind\":\"item\",\"content_summary\":\"Desk lamp\",\"parent_code\":\"$CRATE\"}" >/dev/null
+post /api/boxes "{\"kind\":\"bag\",\"content_summary\":\"teaspoons\",\"parent_code\":\"$TIN\"}" >/dev/null
+post /api/boxes "{\"kind\":\"bag\",\"content_summary\":\"strainer\",\"parent_code\":\"$TIN\"}" >/dev/null
 uv run python -c "
 from PIL import Image, ImageDraw
 im = Image.new('RGB', (1600, 1200), (190, 160, 120))

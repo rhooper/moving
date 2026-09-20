@@ -184,6 +184,17 @@ test("a rewritten summary alone can be applied without redrawing the page", () =
   assert.equal(onlySummaryChanged(drawn, { ...fresh, summary_source: "manual" }), true);
 });
 
+test("what is inside, and what it is inside, are applied in place as well", () => {
+  // A move publishes box.updated for both containers and the moved record.
+  // The record page draws its children and its breadcrumb from these, in
+  // place, like the summary -- not by redrawing a page somebody is typing on.
+  const fresh = {
+    ...drawn, updated_at: "2026-09-20 10:00:09",
+    children: [{ code: "B-0011", kind: "bag" }], path: [{ code: "B-0001" }], parent: { code: "B-0001" },
+  };
+  assert.equal(onlySummaryChanged({ ...drawn, children: [], path: [], parent: null }, fresh), true);
+});
+
 test("nothing changed at all is also fine to apply in place", () => {
   assert.equal(onlySummaryChanged(drawn, { ...drawn }), true);
 });

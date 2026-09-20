@@ -146,9 +146,13 @@ export function partOf(event) {
   return (event && PARTS.get(event.kind)) || null;
 }
 
-// What `box.updated` may change without the rest of the page caring.
-// `updated_at` moves on every write, so it says nothing about what changed.
-const SUMMARY_KEYS = new Set(["content_summary", "summary_source", "updated_at"]);
+// What `box.updated` may change without the rest of the page caring: the
+// summary, and what the record is inside and what is inside it, which the
+// record page draws in place from the same event. `updated_at` moves on every
+// write, so it says nothing about what changed.
+const SUMMARY_KEYS = new Set([
+  "content_summary", "summary_source", "updated_at", "children", "path", "parent",
+]);
 
 /**
  * Whether `after` differs from the box that was drawn in nothing but its

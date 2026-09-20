@@ -310,9 +310,26 @@ deleted (409) nor become a single thing**. Browsing shows the top level only
 `parent_code` to say where. What is inside counts as contents for the print
 gate. Moves announce `box.updated` for both containers. Nested records keep a
 code -- they are opened and scanned like any other -- but nothing prints unless
-asked; "generally won't have a label". **Backend only so far**: the record page
-does not yet show what is inside, offer to put things inside, or show the way
-out. Deleting a nested record and restoring it puts it back where it was.
+asked; "generally won't have a label". Deleting a nested record and restoring
+it puts it back where it was.
+
+On the page (`web/nesting.js` holds the pure rules, tested): a container shows
+an "Inside this crate" section of rows drawn like the list (`rowFor`/`fillRow`
+through `reconcile`, updated in place from the same `box.updated` fetch as the
+summary); a nested record shows the breadcrumb out above its code; "What it is
+inside" is its own section -- a container relationship is not a room -- with a
+lookup field that takes a typed or **scanned** code, previews the container,
+then "Put it inside" / "Take it out", autosaved as `parent_code` with "Undo
+move". `mayHold()` refuses on the page what the server would refuse (itself,
+its own child, a single thing, the bin) so the 422 is the exception, and a
+refused move is not retried by Undo either -- it was, once. Delete is withdrawn
+and the single-thing kinds greyed (`segmented.restrict()`, real `disabled`,
+arrow keys skip) while things are inside. `#/new/in/CODE` is the new-record
+form pre-set inside a container, plain Create first. The list says "3 inside";
+a nested search result says "in B-0012" on a line *above* the row's rule, which
+is why that rule moved from the `<a>` to the `<li>`. The record carries `parent`
+(a step) but no `parent_code` field; the page keeps a hidden `parent_code` input
+for the autosaver and reads `fresh.parent` on landing.
 
 **FastAPI's `include_router` does not flatten into `app.routes`** in this
 version: each included router is one `_IncludedRouter` wrapper whose real

@@ -154,10 +154,19 @@ function countdown(status, remainingMs, closer = false) {
 // look for one. The cell is narrow and does not wrap, so "extra large" is XL.
 const SHORT_SIZE = { "extra large": "XL" };
 
+//
+// `inside` is a third line for a container holding other records ("3 inside"),
+// and "" for the rest: the count is about this row, so it sits on the row that
+// has children, not on the ones it lists.
 export function rowStatus(box) {
   const kind = box.kind || "box";
   const size = box.size ? (SHORT_SIZE[box.size] || box.size) : "";
-  return { kind: size ? `${size} ${kind}` : kind, status: box.status || "open" };
+  const count = Number(box.child_count) || 0;
+  return {
+    kind: size ? `${size} ${kind}` : kind,
+    status: box.status || "open",
+    inside: count ? `${count} inside` : "",
+  };
 }
 
 // What the photo viewer says beside a picture: what the model saw in *this*

@@ -1,0 +1,59 @@
+// Things inside things, as the page sees them: a bag in a box in a crate.
+//
+// The server keeps the pointer honest (a parent must exist, be a container, not
+// be binned, and not be inside the thing being moved) and says why when it
+// refuses. These are the same rules as the page knows them, decided before the
+// server is asked, so that a move is never offered that would be refused and
+// the reason is on the screen at once. The wording for what is inside a row
+// lives in covers.js with the rest of the row; the way out of a nested record
+// and the naming of a container live here. Pure: no DOM, tested under node.
+
+// The word for a kind, as the picker shows it. Only for the two that need a
+// longer name in a sentence; every other kind reads as its own key.
+const SPOKEN = { item: "loose item" };
+const spoken = (kind) => SPOKEN[kind] || kind || "box";
+
+/** A container in a sentence: "kitchen crate", or just "crate". */
+export function describe(box) {
+  const kind = spoken(box.kind);
+  const summary = String(box.content_summary ?? "").trim();
+  if (!summary) return kind;
+  // "kitchen crate" is already the whole name.
+  return summary.toLowerCase().endsWith(kind) ? summary : `${summary} ${kind}`;
+}
+
+/** The breadcrumb for a nested record: `path` outermost first, each step named. */
+export function trail(path) {
+  return (path || []).map((step) => ({ code: step.code, hint: describe(step) }));
+}
+
+/**
+ * Whether `container` may hold `record` -- `record`'s direct children are
+ * `children`, and `kinds` is what /api/settings/kinds says holds contents.
+ *
+ * Deeper descendants are not known here (a child's own children are only a
+ * count); the server refuses those, and its reason is shown the same way.
+ */
+export function mayHold(container, record, children, kinds) {
+  if (!container) return { ok: false, why: "There is no record with that code." };
+  const no = (why) => ({ ok: false, why });
+  if (container.code === record.code) return no("It cannot go inside itself.");
+  if ((children || []).some((child) => child.code === container.code)) {
+    return no(`${container.code} is inside this one, so this one cannot go inside it.`);
+  }
+  const shape = (kinds || []).find((k) => k.kind === container.kind);
+  if (shape && !shape.contents) {
+    return no(`${container.code} is a ${spoken(container.kind)}, not a container.`);
+  }
+  if (container.deleted_at) return no(`${container.code} is in the bin.`);
+  return { ok: true, why: "" };
+}
+
+/** Why Delete is not offered on a container holding things, or "" when it is. */
+export function blockedDelete(children) {
+  const count = (children || []).length;
+  if (!count) return "";
+  return count === 1
+    ? "Move the thing inside it out first."
+    : `Move the ${count} things inside it out first.`;
+}

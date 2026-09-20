@@ -12,6 +12,7 @@ const SHELL = [
   "/app.js",
   "/autosave.js",
   "/live.js",
+  "/nesting.js",
   "/scan.js",
   "/segmented.js",
   "/text.js",

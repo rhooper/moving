@@ -13,7 +13,8 @@ import {
   partOf,
   reconcile,
 } from "/live.js";
-import { choose, chosen, segmented } from "/segmented.js";
+import { blockedDelete, describe, mayHold, trail } from "/nesting.js";
+import { choose, chosen, restrict, segmented } from "/segmented.js";
 import { splitItems } from "/text.js";
 import { KeyBuffer, entered } from "/wedge.js";
 
@@ -310,6 +311,9 @@ const AUTOSAVED = new Map([
   ["source_room_id", "packed from"],
   ["source_location", "where in that room"],
   ["current_location", "location"],
+  // Which container it is inside. Saved as null to take it out; "Undo move"
+  // reads right whichever way the last move went.
+  ["parent_code", "move"],
 ]);
 const ROOM_FIELDS = new Set(["destination_room_id", "source_room_id"]);
 
@@ -975,13 +979,21 @@ function rowFor(box) {
     span.className = cls;
     link.append(span);
   }
-  // Two lines in the last cell: what it is, over how far along it is.
-  for (const cls of ["k", "st"]) {
+  // Three lines in the last cell: what it is, how far along it is, and how
+  // much is inside it (blank for most rows).
+  for (const cls of ["k", "st", "in"]) {
     const line = document.createElement("span");
     line.className = cls;
     link.lastElementChild.append(line);
   }
   row.append(link);
+  // Where a nested record is, for a search result. Its own link, after the
+  // row's: a link cannot sit inside a link.
+  const at = document.createElement("span");
+  at.className = "at";
+  at.hidden = true;
+  at.append("in ", document.createElement("a"));
+  row.append(at);
   return row;
 }
 
@@ -992,7 +1004,14 @@ function fillRow(row, box) {
   const said = rowStatus(box);
   setText(where.querySelector(".k"), said.kind);
   setText(where.querySelector(".st"), said.status);
+  setText(where.querySelector(".in"), said.inside);
   setThumb(row.querySelector("span.t img"), coverUrl(box));
+  const at = row.querySelector(".at");
+  const parent = box.parent_code || "";
+  at.hidden = !parent;
+  const link = at.querySelector("a");
+  setText(link, parent);
+  link.setAttribute("href", `#/b/${encodeURIComponent(parent)}`);
 }
 
 // Removing the attribute rather than setting src="" -- an empty src makes the
@@ -1049,8 +1068,10 @@ async function viewBoxes(query) {
           <span class="c">${escape(b.code)}</span>
           <span class="s">${escape(b.content_summary || "Nothing written down yet")}</span>
           <span class="w"><span class="k">${escape(rowStatus(b).kind)}</span><span
-            class="st">${escape(rowStatus(b).status)}</span></span>
-        </a></li>`).join("")}</ul>`
+            class="st">${escape(rowStatus(b).status)}</span><span
+            class="in">${escape(rowStatus(b).inside)}</span></span>
+        </a><span class="at"${b.parent_code ? "" : " hidden"}>in <a
+          href="#/b/${escape(b.parent_code || "")}">${escape(b.parent_code || "")}</a></span></li>`).join("")}</ul>`
     : query
       ? `<div class="empty"><p>Nothing matches “${escape(query)}”.</p></div>`
       : `<div class="empty">
@@ -1141,6 +1162,7 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
           <button class="btn quiet" id="purge">Delete permanently</button>
         </div>
       </div>` : ""}
+    <nav class="trail" id="trail" aria-label="Inside" hidden></nav>
     <h1 class="code">${escape(box.code)}</h1>
     ${flags.length ? `<div class="flags">${flags.map((f) => `<span class="flag">${escape(f)}</span>`).join("")}</div>` : ""}
     <div class="band" id="room-band"${room ? "" : " hidden"}>${escape(room?.name || "")}</div>
@@ -1199,7 +1221,38 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
       </form>
     </div>
 
+    <div class="section">
+      <h2>What it is inside</h2>
+      <form id="container">
+        <p class="meta" id="inside-of"></p>
+        <input type="hidden" name="parent_code" value="${escape(box.parent?.code || "")}">
+        <label class="dlabel" for="container-code">Put it inside a container: type its code, or scan its label</label>
+        <div class="row">
+          <input id="container-code" name="parent_lookup" placeholder="B-0012"
+                 autocapitalize="characters" autocomplete="off" enterkeyhint="go">
+          <button class="btn quiet" type="submit" id="container-look">Look up</button>
+        </div>
+        <p class="meta" id="container-found" hidden></p>
+        <div class="row" id="container-acts" hidden>
+          <button class="btn" type="button" id="container-put"></button>
+        </div>
+        <div class="row" id="container-out" hidden>
+          <button class="btn quiet" type="button" id="container-take">Take it out</button>
+        </div>
+        ${AUTOSAVE_LINE}
+      </form>
+    </div>
+
     ${!shape.contents ? "" : `
+    <div class="section" id="inside-section">
+      <h2>Inside this ${escape(shape.label.toLowerCase())}</h2>
+      <p class="meta" id="inside-empty" hidden>Nothing inside yet.</p>
+      <ul class="boxlist" id="inside"></ul>
+      <div class="row" style="margin-top:0.75rem">
+        <a class="btn quiet" id="add-inside" href="#/new/in/${escape(encodeURIComponent(code))}">Add something inside</a>
+      </div>
+    </div>
+
     <div class="section">
       <h2>What is in it</h2>
       <p class="meta" id="items-hint" hidden>Tap a name to change it.</p>
@@ -1250,7 +1303,8 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
     <div class="section danger">
       <h2>Delete</h2>
       <p class="meta" id="delete-note"></p>
-      <div class="row">
+      <p class="meta" id="delete-blocked" hidden></p>
+      <div class="row" id="delete-row">
         <button class="btn quiet" id="delete">Delete this ${escape(shape.label.toLowerCase())}</button>
       </div>
     </div>`}`);
@@ -1296,7 +1350,7 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
 
   // The pushbutton rows: the kind, its size (a container only), and the two
   // rooms. Built after the draw, into the slots the markup left for them.
-  mount(segmented({ name: "kind", legend: "This is a", options: kindChoices(allKinds), value: box.kind }));
+  const kindRow = mount(segmented({ name: "kind", legend: "This is a", options: kindChoices(allKinds), value: box.kind }));
   if (shape.sizes?.length) {
     mount(segmented({
       name: "size", legend: "How big", options: sizeChoices(shape.sizes),
@@ -1317,8 +1371,9 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
   const summaryForm = document.getElementById("summary-form");
   const destinationForm = document.getElementById("destination");
   const locationForm = document.getElementById("location");
+  const containerForm = document.getElementById("container");
   const summaryField = summaryForm.querySelector("[name=content_summary]");
-  const savingForms = [summaryForm, destinationForm, locationForm];
+  const savingForms = [summaryForm, destinationForm, locationForm, containerForm];
 
   // One autosaved key is one control: a text field, or a row of pushbuttons,
   // which is several radios sharing the name. Everything below reads and
@@ -1412,6 +1467,127 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
     band.hidden = !now;
   }
 
+  // --- things inside things ---
+  //
+  // What this record is inside (the breadcrumb above the code, and the line in
+  // "What it is inside") and what is inside it (rows like the list's, drawn by
+  // reconcile so a tap on one survives an update). All of it comes with the
+  // record and moves on box.updated, so it is redrawn from `box` in place --
+  // never by redrawing a page somebody is typing on.
+  let children = box.children || [];
+  const singles = allKinds.filter((k) => !k.contents).map((k) => k.kind);
+
+  function showInside() {
+    const nav = document.getElementById("trail");
+    const steps = trail(box.path);
+    nav.replaceChildren(...steps.flatMap((step) => {
+      const link = document.createElement("a");
+      link.setAttribute("href", `#/b/${encodeURIComponent(step.code)}`);
+      link.title = step.hint;
+      link.textContent = step.code;
+      const sep = document.createElement("span");
+      sep.className = "sep";
+      sep.setAttribute("aria-hidden", "true");
+      sep.textContent = "›";
+      return [link, sep];
+    }));
+    if (steps.length) {
+      const now = document.createElement("span");
+      now.setAttribute("aria-current", "page");
+      now.textContent = "this";
+      nav.append(now);
+    }
+    nav.hidden = !steps.length;
+
+    const line = document.getElementById("inside-of");
+    const parent = box.parent;
+    if (parent) {
+      const link = document.createElement("a");
+      link.setAttribute("href", `#/b/${encodeURIComponent(parent.code)}`);
+      link.textContent = parent.code;
+      line.replaceChildren("Inside ", link, ` (${describe(parent)}).`);
+    } else {
+      line.textContent = "Not inside anything.";
+    }
+    document.getElementById("container-out").hidden = !parent;
+  }
+
+  function drawChildren() {
+    const list = document.getElementById("inside");
+    if (!list) return;   // a single thing: nothing goes inside it
+    // The rows say where they are only on a search result; here, where they
+    // are is the page they are on.
+    const rows = children.map((child) => ({ ...child, parent_code: null }));
+    reconcile(list, rows, { key: (child) => child.code, create: rowFor, update: fillRow });
+    document.getElementById("inside-empty").hidden = children.length > 0;
+    // A container holding things cannot become a single thing, and cannot be
+    // deleted: the server refuses both, so neither is offered.
+    restrict(kindRow, children.length ? singles : [],
+      "It holds things: move them out before making it a single thing.");
+    const blocked = blockedDelete(children);
+    const note = document.getElementById("delete-blocked");
+    if (note) {
+      setText(note, blocked);
+      note.hidden = !blocked;
+      document.getElementById("delete-row").hidden = Boolean(blocked);
+    }
+  }
+  showInside();
+  drawChildren();
+
+  // Putting this record inside a container. A code is typed or scanned in
+  // (the barcode reader types and presses Return, which submits), looked up,
+  // and shown -- what it is, and whether it may hold this -- before anything
+  // is saved. Saving is the autosaver's, with Undo, like every other field:
+  // the hidden `parent_code` is the field it tracks.
+  const lookup = document.getElementById("container-code");
+  const found = document.getElementById("container-found");
+  const acts = document.getElementById("container-acts");
+  const put = document.getElementById("container-put");
+  let candidate = null;
+  const offer = (message, warn) => {
+    setText(found, message);
+    found.hidden = !message;
+    found.classList.toggle("warn", Boolean(warn));
+    acts.hidden = !candidate;
+  };
+  containerForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    candidate = null;
+    // A scanned QR is the record's URL; the Code 128 and a typed code are bare.
+    const typed = lookup.value.trim();
+    const wanted = (entered(typed)?.code || typed).toUpperCase();
+    if (!wanted) { offer("", false); return; }
+    const look = document.getElementById("container-look");
+    let target = null;
+    try {
+      target = await busy(look, "Looking…", () => api(`/boxes/${encodeURIComponent(wanted)}`));
+    } catch (error) {
+      offer(error.status === 404 ? `There is no ${wanted}.` : error.message, true);
+      return;
+    }
+    const verdict = mayHold(target, box, children, allKinds);
+    if (!verdict.ok) { offer(verdict.why, true); return; }
+    candidate = target;
+    setText(put, `Put it inside ${target.code}`);
+    offer(`${target.code}: ${describe(target)}.`, false);
+  });
+  put.addEventListener("click", () => {
+    if (!candidate) return;
+    auto.edit("parent_code", candidate.code, "change");
+    session.undoAt = containerForm.id;
+    candidate = null;
+    offer("", false);
+    lookup.value = "";
+    lookup.dataset.initial = "";
+    drawLines();
+  });
+  document.getElementById("container-take").addEventListener("click", () => {
+    auto.edit("parent_code", "", "change");
+    session.undoAt = containerForm.id;
+    drawLines();
+  });
+
   // The kind decides which sections exist, so it is the one save that redraws
   // the page. Whatever had the focus gets it back, caret included: the redraw
   // is this page's doing, not the person's.
@@ -1438,9 +1614,13 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
     // field's `dataset.initial`, which is how the live-refresh hold knows the
     // field is no longer half-edited.
     landed(key, value, fresh) {
-      box = { ...box, [key]: fresh[key], summary_source: fresh.summary_source, updated_at: fresh.updated_at };
+      box = {
+        ...box, [key]: fresh[key], summary_source: fresh.summary_source, updated_at: fresh.updated_at,
+        parent: fresh.parent, path: fresh.path, children: fresh.children,
+      };
       if (fieldOf(key)) savedKey(key, value);
       if (key === "destination_room_id") showRoom();
+      if (key === "parent_code") showInside();
       // A refresh held back behind this edit may be able to go now.
       fieldClosed();
     },
@@ -1502,8 +1682,12 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
     try {
       const step = await busy(button, "Undoing…", async () => {
         // One more try for anything that failed, too: if the network is back
-        // it lands, and is then undone like any other save.
-        auto.commitAll();
+        // it lands, and is then undone like any other save. Not for a save
+        // the server understood and refused -- asking again gets the same
+        // answer, and Undo beside "Not saved" means "give that up".
+        for (const key of AUTOSAVED.keys()) {
+          if (auto.state(key) !== "clean" && !session.refused.has(key)) auto.commit(key);
+        }
         await auto.idle();
         // Still not there. The newest thing to take back is then the unsaved
         // edit itself, and the server never had it: give it up here, and send
@@ -1535,6 +1719,13 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
   async function refreshSummary() {
     const fresh = await api(path);
     if (!summaryField.isConnected) { stale("summary")(); return; }
+    // What is inside it, and what it is inside: a move at either end sends
+    // box.updated here. Drawn in place; they touch nothing anyone types in.
+    children = fresh.children || [];
+    box = { ...box, children, path: fresh.path, parent: fresh.parent };
+    drawChildren();
+    showInside();
+    recount();
     const incoming = fresh.content_summary || "";
     const moved = incoming !== (summaryField.dataset.initial ?? "");
     const inUse = auto.state("content_summary") !== "clean" || hasUnsavedEdits([{
@@ -1643,7 +1834,8 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
     const sure = await confirmed({
       title: `Delete ${code}?`,
       message: [
-        "It leaves the list and search on every device.",
+        box.parent ? `It is inside ${box.parent.code}; it leaves there, and search, on every device.`
+          : "It leaves the list and search on every device.",
         losing.length ? `Its ${losing.join(" and ")} go with it.` : "",
         "Nothing is destroyed: it goes to the bin, and you can restore it from there.",
       ].filter(Boolean).join(" "),
@@ -1773,10 +1965,29 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
   });
 }
 
-async function viewNew() {
-  const [rooms, allKinds] = await Promise.all([api("/rooms"), api("/settings/kinds")]);
+async function viewNew(parentCode = null) {
+  const [rooms, allKinds, parent] = await Promise.all([
+    api("/rooms"),
+    api("/settings/kinds"),
+    // "Add something inside" on a container's page comes here with its code.
+    // A code that is not a record is not fatal: the form is drawn on its own.
+    parentCode ? api(`/boxes/${encodeURIComponent(parentCode)}`).catch(() => null) : null,
+  ]);
+  // Inside a container the usual move is just Create: "generally won't have a
+  // label". The stub and the label stay available, after it.
+  const creates = parent
+    ? `<button class="btn" type="submit" id="create">Create</button>
+       <button class="btn quiet" type="submit" id="create-stub" data-print="stub" style="margin-top:0.75rem">Create and print stub</button>
+       <button class="btn quiet" type="submit" id="create-print" data-print="label" style="margin-top:0.5rem">Create and print label</button>`
+    : `<button class="btn" type="submit" id="create-stub" data-print="stub">Create and print stub</button>
+       <p class="meta" style="margin:0.35rem 0 0">One inch of tape: just the number and the QR, to stick on before you pack.</p>
+       <button class="btn quiet" type="submit" id="create" style="margin-top:0.75rem">Create</button>
+       <button class="btn quiet" type="submit" id="create-print" data-print="label" style="margin-top:0.5rem">Create and print label</button>`;
   show(`
     <h1 class="code">New</h1>
+    ${parent ? `
+      <p class="say" id="inside-note">Inside <a href="#/b/${escape(encodeURIComponent(parent.code))}">${escape(parent.code)}</a>
+        (${escape(describe(parent))}).<br><a href="#/new" id="not-inside">Make it on its own instead</a></p>` : ""}
     <form id="new">
       <div class="section">
         <h2>What it is</h2>
@@ -1799,13 +2010,12 @@ async function viewNew() {
         </label>
       </div>
       <div class="section">
-        <button class="btn" type="submit" id="create-stub" data-print="stub">Create and print stub</button>
-        <p class="meta" style="margin:0.35rem 0 0">One inch of tape: just the number and the QR, to stick on before you pack.</p>
-        <button class="btn quiet" type="submit" id="create" style="margin-top:0.75rem">Create</button>
-        <button class="btn quiet" type="submit" id="create-print" data-print="label"
-                style="margin-top:0.5rem">Create and print label</button>
+        ${creates}
       </div>
     </form>`);
+  if (parentCode && !parent) {
+    announce(`There is no ${parentCode} to put this inside; it will be on its own.`, { warn: true });
+  }
 
   // The stub is the first button because it is the usual move: make the
   // record, stick an inch of tape on the empty box, pack, print the full
@@ -1870,6 +2080,7 @@ async function viewNew() {
     // that has no size.
     const size = form.get("size");
     if (size) payload.size = size;
+    if (parent) payload.parent_code = parent.code;
 
     // Which button was pressed: data-print is "stub", "label", or absent.
     const pressed = event.submitter || document.getElementById("create");
@@ -2333,7 +2544,8 @@ const routes = [
   [/^#?\/?$/, viewBoxes],
   [/^#\/search\/(.+)$/, (q) => viewBoxes(decodeURIComponent(q))],
   [/^#\/b\/([^/]+)$/, viewBox],
-  [/^#\/new$/, viewNew],
+  [/^#\/new$/, () => viewNew()],
+  [/^#\/new\/in\/([^/]+)$/, (inside) => viewNew(decodeURIComponent(inside))],
   [/^#\/settings$/, viewSettings],
   [/^#\/deleted$/, viewDeleted],
   [/^#\/scan$/, () => import("/scan.js").then((m) => m.viewScan(show, showError))],

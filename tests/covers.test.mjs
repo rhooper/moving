@@ -230,15 +230,15 @@ test("a status this side has never heard of draws nothing rather than crashing",
 test("a row says what the record is, over where it has got to", async () => {
   const { rowStatus } = await import("../web/covers.js");
 
-  assert.deepEqual(rowStatus({ kind: "tub", status: "packed" }), { kind: "tub", status: "packed" });
-  assert.deepEqual(rowStatus({ kind: "item", status: "loaded" }), { kind: "item", status: "loaded" });
+  assert.deepEqual(rowStatus({ kind: "tub", status: "packed" }), { kind: "tub", status: "packed", inside: "" });
+  assert.deepEqual(rowStatus({ kind: "item", status: "loaded" }), { kind: "item", status: "loaded", inside: "" });
 });
 
 test("a record from before kinds existed is a box, and a new one is open", async () => {
   const { rowStatus } = await import("../web/covers.js");
 
-  assert.deepEqual(rowStatus({}), { kind: "box", status: "open" });
-  assert.deepEqual(rowStatus({ kind: null, status: null }), { kind: "box", status: "open" });
+  assert.deepEqual(rowStatus({}), { kind: "box", status: "open", inside: "" });
+  assert.deepEqual(rowStatus({ kind: null, status: null }), { kind: "box", status: "open", inside: "" });
 });
 
 test("a container with a size says so, in front of what it is", async () => {
@@ -260,10 +260,30 @@ test("no size means no change: what it is, and nothing in front of it", async ()
   const { rowStatus } = await import("../web/covers.js");
 
   for (const none of [null, undefined, ""]) {
-    assert.deepEqual(rowStatus({ kind: "box", size: none, status: "packed" }), { kind: "box", status: "packed" });
+    assert.deepEqual(rowStatus({ kind: "box", size: none, status: "packed" }), { kind: "box", status: "packed", inside: "" });
   }
   // The status line is untouched by any of this.
   assert.equal(rowStatus({ kind: "box", size: "large", status: "loaded" }).status, "loaded");
+});
+
+test("a container with things inside says how many, on a line of its own", async () => {
+  // "3 inside" under the status: the count is about this row, not the ones
+  // it lists, so it belongs on the row that has children.
+  const { rowStatus } = await import("../web/covers.js");
+
+  assert.equal(rowStatus({ kind: "crate", status: "open", child_count: 3 }).inside, "3 inside");
+  assert.equal(rowStatus({ kind: "box", status: "open", child_count: 1 }).inside, "1 inside");
+});
+
+test("nothing inside means no line, not '0 inside'", async () => {
+  const { rowStatus } = await import("../web/covers.js");
+
+  for (const none of [0, null, undefined]) {
+    assert.equal(rowStatus({ kind: "box", status: "open", child_count: none }).inside, "");
+  }
+  // The other two lines are untouched by the count.
+  assert.deepEqual(rowStatus({ kind: "tub", size: "large", status: "packed", child_count: 2 }),
+                   { kind: "large tub", status: "packed", inside: "2 inside" });
 });
 
 test("where it is right now is not what this cell is for", async () => {
@@ -273,7 +293,7 @@ test("where it is right now is not what this cell is for", async () => {
 
   const said = rowStatus({ kind: "box", status: "packed", current_location: "garage stack 3" });
 
-  assert.deepEqual(said, { kind: "box", status: "packed" });
+  assert.deepEqual(said, { kind: "box", status: "packed", inside: "" });
 });
 
 // --- the photo viewer: what the model saw in *this* photo ------------------------------
