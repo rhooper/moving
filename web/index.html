@@ -201,12 +201,14 @@ ul.items .rename { flex: 1; min-width: 0; min-height: 2rem; height: 2rem; paddin
 ul.items li.renaming .ai { display: none; }
 
 .boxlist { list-style: none; margin: 0; padding: 0; }
-.boxlist a {
+/* The rule under a row is the row's, not its link's: a nested search result
+   has a line under the link ("in B-0012") that belongs above the rule. */
+.boxlist li { border-bottom: 1px solid var(--line); }
+.boxlist li > a {
   display: flex;
   align-items: baseline;
   gap: 0.75rem;
   padding: 0.6rem 0;
-  border-bottom: 1px solid var(--line);
   text-decoration: none;
 }
 
@@ -251,8 +253,21 @@ ul.items li.renaming .ai { display: none; }
   color: var(--muted);
   white-space: nowrap;
 }
-/* What it is, over how far along it is. */
+/* What it is, over how far along it is, over how much is inside it. */
 .boxlist .w .k { color: var(--ink); font-weight: 650; }
+.boxlist .w .in { color: var(--ink); }
+
+/* A search result that is inside something says where, under its row: a
+   link of its own, since a link cannot sit inside the row's link. */
+.boxlist .at { display: block; margin: -0.4rem 0 0.55rem calc(var(--thumb) + 0.75rem); font-size: 0.8125rem; color: var(--muted); }
+.boxlist .at a { display: inline; padding: 0; border: 0; font-weight: 650; }
+
+/* The way out of a nested record: the path, outermost first, above the code.
+   One line on a desktop; on a phone it may wrap. */
+.trail { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.3rem 0.45rem; margin: 0.25rem 0 -0.25rem; font-size: 0.9375rem; color: var(--muted); }
+.trail a { font-weight: 650; color: var(--ink); }
+.trail .sep { user-select: none; }
+@media (min-width: 46rem) { .trail { flex-wrap: nowrap; white-space: nowrap; } }
 
 .empty { color: var(--muted); padding: 2rem 0; }
 .empty p { margin: 0 0 1rem; }
@@ -486,6 +501,10 @@ dialog .row > * { flex: 1; }
 .seg-row input:checked + span { background: var(--ink); border-color: var(--ink); color: var(--paper); z-index: 1; }
 .seg-row input:focus-visible + span { outline: 3px solid var(--signal); outline-offset: -3px; z-index: 2; }
 .seg-hint { min-height: 1.1rem; margin: 0.3rem 0 0; font-size: 0.8125rem; line-height: 1.3; }
+/* A button the server would refuse: greyed, and skipped by the arrow keys
+   since the radio under it is really disabled. The reason is under the row. */
+.seg-row label.off span { color: var(--muted); background: var(--sunk); cursor: not-allowed; }
+.seg-why { margin: 0.3rem 0 0; font-size: 0.8125rem; line-height: 1.3; }
 
 /* Read by a screen reader, not seen. */
 .vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
@@ -619,7 +638,7 @@ button.working::before {
 
 .dlabel { display: block; font-size: 0.8125rem; color: var(--muted); margin: 0.5rem 0 0.25rem; }
 
-label.btn { display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+label.btn, a.btn { display: inline-flex; align-items: center; justify-content: center; cursor: pointer; text-decoration: none; }
 
 @media (prefers-reduced-motion: no-preference) {
   .step, .btn, .seg-row span { transition: background-color 90ms linear, color 90ms linear; }

@@ -75,6 +75,28 @@ function settle(group) {
 }
 
 /**
+ * Grey out some of a row's buttons, with a reason under the row. Real
+ * `disabled`, so arrow keys skip them and a screen reader says so; a press on
+ * one does nothing. `values` empty lifts it. For the kind row of a container
+ * that holds things: the server refuses to make it a single thing.
+ */
+export function restrict(group, values, why) {
+  const off = new Set((values || []).map(String));
+  for (const radio of group.querySelectorAll("input[type=radio]")) {
+    radio.disabled = off.has(radio.value);
+    radio.closest("label").classList.toggle("off", radio.disabled);
+  }
+  let note = group.querySelector(".seg-why");
+  if (!note) {
+    note = document.createElement("p");
+    note.className = "meta seg-why";
+    group.append(note);
+  }
+  note.textContent = off.size ? why : "";
+  note.hidden = !off.size;
+}
+
+/**
  * Build a row.
  *
  * `options` are `{ value, label }`; `value` is the selection to start with
