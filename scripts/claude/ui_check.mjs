@@ -292,9 +292,127 @@ const IN_PAGE = async () => {
     check("cancelling deleted nothing", !(still.box || still).deleted_at);
   }
 
+  // Things inside things, on this record: the section is there for a container
+  // and the way to put this record inside another. A look-up is a GET, so it
+  // can be pressed; nothing here is put anywhere.
+  const insideSection = $("#inside-section");
+  check("a container has an 'Inside this …' section, named for its kind",
+        Boolean(shapeNow.contents) === Boolean(insideSection)
+          && (!insideSection || insideSection.querySelector("h2").textContent === `Inside this ${shapeNow.label.toLowerCase()}`),
+        insideSection?.querySelector("h2")?.textContent);
+  if (insideSection) {
+    const kids = (record.box || record).children || [];
+    check("it lists what is inside, one row each, like the list",
+          insideSection.querySelectorAll("#inside li").length === kids.length
+            && kids.every((k) => insideSection.querySelector(`#inside li[data-key="${k.code}"] a[href="#/b/${k.code}"]`)),
+          `${insideSection.querySelectorAll("#inside li").length} rows for ${kids.length}`);
+    check("with nothing inside it says so, and offers to add something",
+          (kids.length > 0) !== !$("#inside-empty").hidden
+            && $("#add-inside")?.getAttribute("href") === `#/new/in/${encodeURIComponent(location.hash.split("/").pop())}`);
+    check("a container's rows do not each say they are in it", !insideSection.querySelector("#inside .at:not([hidden])"));
+  }
+  check("the way in: a code field, a Look up, and a line saying what it is inside",
+        $("#container-code") && $("#container-look") && /^(Not inside anything\.|Inside )/.test($("#inside-of").textContent),
+        $("#inside-of")?.textContent);
+  check("nothing offers to put it anywhere until a code has been looked up", $("#container-acts").hidden && $("#container-found").hidden);
+  // Looking up its own code: refused here, before any server is asked.
+  $("#container-code").value = location.hash.split("/").pop();
+  $("#container").requestSubmit();
+  await wait(() => !$("#container-found").hidden, "the look-up of itself");
+  check("it cannot be put inside itself, and says so", /itself/.test($("#container-found").textContent) && $("#container-acts").hidden,
+        $("#container-found").textContent);
+  $("#container-code").value = "";
+  $("#container-code").dataset.initial = "";
+
   check("the whole visit wrote nothing", writes.length === 0, writes.join("; "));
   window.fetch = realFetch;
 
+  return results;
+};
+
+// Things inside things, wherever this server has some: a record holding
+// others, one inside another, and a single thing. Found through the API, so
+// this runs against the throwaway (browser_checks.sh seeds them) and skips
+// with a note where there are none. Read-only.
+const IN_NESTED = async () => {
+  const wait = async (test, what) => {
+    for (let i = 0; i < 100; i++) {
+      if (test()) return;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    throw new Error(`timed out waiting for ${what}`);
+  };
+  const $ = (s) => document.querySelector(s);
+  const results = [];
+  const check = (name, passed, detail = "") => results.push([name, Boolean(passed), String(detail)]);
+  const open = async (hash, ready) => {
+    location.hash = hash;
+    await wait(() => $(ready) && !$(ready).hidden, `${hash} to draw`);
+    await new Promise((r) => setTimeout(r, 150));
+  };
+  const rows = await fetch("/api/boxes?limit=100").then((r) => r.json());
+  const holder = rows.find((b) => b.child_count > 0);
+  if (!holder) {
+    check("nesting: nothing on this server has things inside it, so those checks did not run", true);
+    return results;
+  }
+
+  await open("#/", "#boxlist");
+  const holderRow = $(`#boxlist li[data-key="${holder.code}"]`);
+  check("the list says how much is inside a container",
+        holderRow?.querySelector(".in").textContent === `${holder.child_count} inside`, holderRow?.querySelector(".in")?.textContent);
+  check("and nothing on a row with nothing inside",
+        Array.from(document.querySelectorAll("#boxlist li")).every((li) => (li.querySelector(".in").textContent !== "")
+          === (rows.find((b) => b.code === li.dataset.key)?.child_count > 0)));
+  check("nested records are not in the top-level list", rows.every((b) => !b.parent_code));
+
+  const full = await fetch(`/api/boxes/${holder.code}`).then((r) => r.json());
+  await open(`#/b/${holder.code}`, "#inside");
+  check("on the container, each thing inside is a row, and a row that itself holds things says so",
+        full.children.every((k) => {
+          const row = $(`#inside li[data-key="${k.code}"]`);
+          return row && row.querySelector(".in").textContent === (k.child_count ? `${k.child_count} inside` : "");
+        }), Array.from(document.querySelectorAll("#inside li .in")).map((i) => i.textContent).join(","));
+  check("Delete is not offered while things are inside; why is said instead",
+        $("#delete-row").hidden && /Move the .*inside it out first/.test($("#delete-blocked").textContent), $("#delete-blocked")?.textContent);
+  const singles = Array.from(document.querySelectorAll('.seg[data-name="kind"] input:disabled')).map((r) => r.value).sort();
+  check("the kinds that hold nothing are greyed out, with a reason",
+        JSON.stringify(singles) === JSON.stringify(["furniture", "item"]) && /move them out/.test($(".seg-why").textContent),
+        `${singles} / ${$(".seg-why")?.textContent}`);
+  check("and cannot take the focus", (() => { const r = $('.seg[data-name="kind"] input:disabled'); r.focus(); return document.activeElement !== r; })());
+
+  const child = full.children[0];
+  await open(`#/b/${child.code}`, "#trail");
+  check("a nested record shows the way out above its code, each step a link",
+        $("#trail a")?.getAttribute("href") === `#/b/${holder.code}` && /this$/.test($("#trail").textContent.trim())
+          && $("#trail").compareDocumentPosition($("h1.code")) & Node.DOCUMENT_POSITION_FOLLOWING,
+        $("#trail")?.innerText);
+  check("and says what it is inside, as a link", $("#inside-of a")?.getAttribute("href") === `#/b/${holder.code}`, $("#inside-of")?.textContent);
+  check("with a way to take it out", !$("#container-out").hidden);
+  const deep = full.children.find((k) => k.child_count > 0);
+  if (deep) {
+    const grand = (await fetch(`/api/boxes/${deep.code}`).then((r) => r.json())).children[0];
+    await open(`#/b/${grand.code}`, "#trail");
+    check("two levels down the breadcrumb has both steps, outermost first",
+          Array.from(document.querySelectorAll("#trail a")).map((a) => a.textContent).join(" › ") === `${holder.code} › ${deep.code}`,
+          $("#trail")?.innerText);
+  }
+
+  const single = full.children.find((k) => k.kind === "item" || k.kind === "furniture");
+  if (single) {
+    await open(`#/b/${single.code}`, "#summary-form");
+    check("a single thing has no 'Inside this' section at all", !$("#inside-section"));
+    check("but can still be put inside something", Boolean($("#container-code")));
+  }
+
+  const found = await fetch("/api/search?q=samovar").then((r) => r.json());
+  const nested = found.find((b) => b.parent_code);
+  if (nested) {
+    await open("#/search/samovar", "#boxlist");
+    const at = $(`#boxlist li[data-key="${nested.code}"] .at`);
+    check("a nested search result says where it is, with a link to the container",
+          at && !at.hidden && at.querySelector("a")?.getAttribute("href") === `#/b/${nested.parent_code}`, at?.textContent);
+  }
   return results;
 };
 
@@ -430,6 +548,14 @@ try {
     throw new Error(second.result.exceptionDetails.exception?.description || "new-form script failed");
   }
   results.push(...second.result.result.value);
+
+  const third = await send("Runtime.evaluate", {
+    expression: `(${IN_NESTED.toString()})()`, awaitPromise: true, returnByValue: true,
+  });
+  if (third.result?.exceptionDetails) {
+    throw new Error(third.result.exceptionDetails.exception?.description || "nesting script failed");
+  }
+  results.push(...third.result.result.value);
   results.push(["nothing threw in the page while all that happened",
                 thrown.length === 0, thrown.join(" | ")]);
   failures = 0;

@@ -711,6 +711,143 @@ try {
         made && made.kind === "furniture" && !("size" in made) && !("destination_room_id" in made), JSON.stringify(made));
   check("new form: and the server made it", (await server(`/api/boxes/${(await evaluate("location.hash")).slice(4)}`)).kind === "furniture");
 
+  // === 12c. things inside things ======================================================
+  const record = () => server(api);
+  const insideOf = () => evaluate(`${q("#inside-of")}.textContent`);
+  const trailText = () => evaluate(`(() => { const t = ${q("#trail")}; return t.hidden ? null : t.innerText.replace(/\\s+/g, " ").trim(); })()`);
+  const foundText = () => evaluate(`(() => { const f = ${q("#container-found")}; return f.hidden ? null : f.textContent; })()`);
+  const inList = async (which) => (await server("/api/boxes?limit=100")).some((b) => b.code === which);
+
+  // A child arriving from elsewhere is drawn in place, under a field being typed in.
+  await evaluate(`location.hash = ${JSON.stringify(`#/b/${code}`)}`);
+  await waitFor(`${q("h1.code")}?.textContent === ${JSON.stringify(code)} && ${q("#inside")}`, "the record, a box");
+  await sleep(300);
+  await markPage();
+  await evaluate(`${q("#inside")}.__mark = "inside"`);
+  await into("[name=content_summary]");
+  await type(" ");
+  const bag = await post("/api/boxes", { kind: "bag", content_summary: "spoons", parent_code: code });
+  await waitFor(q(`#inside li[data-key="${bag.code}"]`), "the new child to appear on the parent's page");
+  check("something put inside from elsewhere appears on the container's page in place",
+        (await pageSurvived()) && (await evaluate(`${q("#inside")}.__mark`)) === "inside"
+          && (await evaluate(`document.activeElement?.name`)) === "content_summary"
+          && (await evaluate(`${q("#inside-empty")}.hidden`)));
+  check("its row links to it and says nothing is inside it",
+        await evaluate(`(() => { const li = ${q(`#inside li[data-key="${bag.code}"]`)};
+          return li.querySelector("a").getAttribute("href") === ${JSON.stringify(`#/b/${bag.code}`)} && li.querySelector(".in").textContent === ""; })()`));
+  check("Delete is withdrawn, with the reason, in place",
+        await evaluate(`${q("#delete-row")}.hidden && /Move the thing inside it out first/.test(${q("#delete-blocked")}.textContent)`),
+        await evaluate(`${q("#delete-blocked")}.textContent`));
+  check("the kinds that hold nothing are greyed out, in place",
+        (await evaluate(`[...document.querySelectorAll('.seg[data-name="kind"] input:disabled')].map((r) => r.value).sort().join()`)) === "furniture,item");
+  const said409 = await (await fetch(`${base}${api}`, { method: "DELETE" })).json();
+  check("and the server's refusal, should it be reached, is a sentence", /inside/.test(said409.detail || ""), JSON.stringify(said409));
+  await press("Backspace");
+  await press("Tab");
+
+  // Create inside, from the button on the container.
+  mark = writes().length;
+  await click("#add-inside");
+  await waitFor(`${q("#inside-note")} && ${q("#new #create")}`, "the new-record form, pre-set inside");
+  check("Add something inside opens the form pre-set inside this container",
+        (await evaluate(`${q("#inside-note")}.textContent`)).includes(code) && (await evaluate("location.hash")) === `#/new/in/${code}`,
+        await evaluate(`${q("#inside-note")}.textContent`));
+  check("with plain Create first and filled in, the stub and the label after it",
+        await evaluate(`(() => { const b = [...document.querySelectorAll("#new button[type=submit]")];
+          return b[0].id === "create" && b[0].classList.contains("btn") && !b[0].classList.contains("quiet") && b.length === 3; })()`));
+  await tap("kind", "bag");
+  await into("#new [name=content_summary]");
+  await type("forks");
+  await click("#create");
+  await waitFor(`location.hash.startsWith("#/b/") && ${q("#trail")} && !${q("#trail")}.hidden`, "the new nested record, with its breadcrumb");
+  const forks = (await evaluate("location.hash")).slice(4);
+  const madeInside = patchOf(writesSince(mark).find((w) => w.method === "POST" && w.url === "/api/boxes"));
+  check("it was created inside", madeInside?.parent_code === code && (await server(`/api/boxes/${forks}`)).parent?.code === code, JSON.stringify(madeInside));
+  check("the breadcrumb leads back to the container", (await trailText()) === `${code} › this`
+        && (await evaluate(`${q("#trail a")}.getAttribute("href")`)) === `#/b/${code}`, await trailText());
+  await click("#trail a");
+  await waitFor(`${q("h1.code")}?.textContent === ${JSON.stringify(code)} && ${q(`#inside li[data-key="${forks}"]`)}`, "back on the container, with the new child listed");
+  check("following it lands on the container, which lists the new child", true);
+  await markPage();   // a fresh draw: what follows must not redraw it again
+
+  // Moving this record into a container, by typing its code and pressing Return.
+  const crate2 = await post("/api/boxes", { kind: "crate", content_summary: "hallway" });
+  mark = writes().length;
+  await into("#container-code");
+  await type(crate2.code.toLowerCase());   // as a thumb would type it
+  await press("Enter");
+  await waitFor(`${q("#container-found")} && !${q("#container-found")}.hidden`, "the look-up");
+  check("Return looks the code up and shows what it is, before anything is saved",
+        (await foundText()) === `${crate2.code}: hallway crate.` && writesSince(mark).length === 0
+          && (await evaluate(`!${q("#container-acts")}.hidden && ${q("#container-put")}.textContent === "Put it inside " + ${JSON.stringify(crate2.code)}`)),
+        `${await foundText()} / ${show(writesSince(mark))}`);
+  await click("#container-put");
+  await waitFor(`${q("#container .autosave-state")}.textContent === "Saved"`, "the move to save");
+  sent = writesSince(mark);
+  check("Put it inside saves the move, once", sent.length === 1 && JSON.stringify(patchOf(sent[0])) === JSON.stringify({ parent_code: crate2.code }), show(sent));
+  check("the page shows where it is now, breadcrumb and all, without a redraw",
+        (await insideOf()) === `Inside ${crate2.code} (hallway crate).` && (await trailText()) === `${crate2.code} › this` && (await pageSurvived()),
+        `${await insideOf()} / ${await trailText()}`);
+  check("the server agrees, and it has left the top-level list", (await record()).parent?.code === crate2.code && !(await inList(code)));
+  check("Undo is offered as Undo move", (await lineOf("container")).undo === "Undo move", JSON.stringify(await lineOf("container")));
+  mark = writes().length;
+  await click("#container .undo");
+  await waitFor(`${q("#container .autosave-state")}.textContent === "Undone"`, "the undo of the move");
+  check("Undo takes it back out", JSON.stringify(writesSince(mark).map(patchOf)) === JSON.stringify([{ parent_code: null }])
+        && (await insideOf()) === "Not inside anything." && (await trailText()) === null && (await inList(code)), show(writesSince(mark)));
+
+  // A scanned label: the reader types the QR's URL into the focused field and presses Return.
+  mark = writes().length;
+  await into("#container-code");
+  await type(`https://moving.example.ts.net/b/${crate2.code}`, 5);
+  await press("Enter");
+  await waitFor(`${q("#container-found")} && !${q("#container-found")}.hidden`, "the look-up of a scanned URL");
+  check("a scanned QR (a URL) is understood as the code", (await foundText()) === `${crate2.code}: hallway crate.`, await foundText());
+  await click("#container-put");
+  await waitFor(`${q("#container .autosave-state")}.textContent === "Saved"`, "the scanned move to save");
+  check("and put inside", (await record()).parent?.code === crate2.code);
+  mark = writes().length;
+  await click("#container-take");
+  await waitFor(`${q("#container .autosave-state")}.textContent === "Saved" && ${q("#container-out")}.hidden`, "taking it out");
+  check("Take it out saves null and puts it back in the list",
+        JSON.stringify(writesSince(mark).map(patchOf)) === JSON.stringify([{ parent_code: null }]) && (await inList(code)), show(writesSince(mark)));
+
+  // Refused moves: one the page knows about, one only the server can know.
+  mark = writes().length;
+  await into("#container-code");
+  await type(bag.code);
+  await press("Enter");
+  await waitFor(`${q("#container-found")} && !${q("#container-found")}.hidden`, "the look-up of its own child");
+  check("into something inside it: refused on the page, with the reason, nothing sent",
+        /is inside this one/.test(await foundText()) && (await evaluate(`${q("#container-acts")}.hidden`)) && writesSince(mark).length === 0, await foundText());
+  const lamp = await post("/api/boxes", { kind: "item", content_summary: "Desk lamp" });
+  await into("#container-code");
+  await evaluate(`${q("#container-code")}.select()`);
+  await type(lamp.code);
+  await press("Enter");
+  await waitFor(`/${lamp.code}/.test(${q("#container-found")}.textContent)`, "the look-up of a lamp");
+  check("into a single thing: refused on the page", /not a container/.test(await foundText()) && writesSince(mark).length === 0, await foundText());
+  const grandchild = await post("/api/boxes", { kind: "bag", content_summary: "teaspoons", parent_code: bag.code });
+  await into("#container-code");
+  await evaluate(`${q("#container-code")}.select()`);
+  await type(grandchild.code);
+  await press("Enter");
+  await waitFor(`${q("#container-found")} && !${q("#container-found")}.hidden`, "the look-up of a grandchild");
+  check("two levels down the page cannot know, so it offers", (await foundText()) === `${grandchild.code}: teaspoons bag.`);
+  await click("#container-put");
+  await waitFor(`${q("#container .autosave")}.classList.contains("warn")`, "the server's refusal");
+  line = await lineOf("container");
+  check("the server refuses the loop; its reason is on the line, no dialog, and it stays where it was",
+        /^Not saved — /.test(line.text) && /inside/.test(line.text) && !(await dialogOpen()) && (await record()).parent === null
+          && (await insideOf()) === "Not inside anything.", JSON.stringify(line));
+  sent = writesSince(mark);
+  check("and it is not retried", sent.length === 1 && sent[0].status === 422, show(sent));
+  await sleep(2600);
+  check("still not retried a moment later", writesSince(mark).length === 1);
+  await click("#container .undo");
+  await waitFor(`!${q("#container .autosave")}.classList.contains("warn")`, "giving the refused move up");
+  check("Undo beside the refusal gives it up, sending nothing", writesSince(mark).length === 1 && (await lineOf("container")).text === "Undone");
+
   // === 13. the server rewrites a pristine summary: not an edit to save back =========
   if (vision) {
     const quiet = await post("/api/boxes", { content_summary: "" });
