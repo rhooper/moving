@@ -29,7 +29,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from . import db, kinds, search, store, summarise
+from . import db, kinds, search, spend, store, summarise
 from .config import Config
 from .vision import base
 
@@ -103,7 +103,9 @@ def enqueue(
             photo["box_id"],
             photo_id,
             config.vision_provider,
-            config.vision_detail_model if detail else config.vision_model,
+            # The model *tried first*. With a hybrid the one that answers may
+            # be the local stand-in, and the worker writes that back.
+            config.vision_model_for(detail=detail),
             base.PROMPT_VERSION,
             int(detail),
         ),
@@ -173,6 +175,12 @@ def state_of(conn: sqlite3.Connection, photo_id: int) -> dict[str, Any] | None:
         "items_found": None,
         # Whether this was the closer look rather than the quick read.
         "detail": bool(job["detail"]),
+        # Which model actually read it. With a cloud tier and a local model
+        # behind it, these are written back when the job finishes and are not
+        # necessarily what it named when it was queued -- which is the point:
+        # a wrong item is traceable to the model that wrote it.
+        "provider": job["provider"],
+        "model": job["model"],
         # What was seen in *this* photo -- not the record's merged list, which
         # may hold more (other photos, things typed) or less (items since
         # renamed or removed). The photo viewer shows these beside the picture.
@@ -410,9 +418,18 @@ class Analyst(threading.Thread):
         code = target["code"]
         self._publish(PHOTOS_CHANGED, code)  # pending -> running
 
+        provider = self._provider_factory()
+        # The cap is checked here, per job, rather than when the provider was
+        # built: a queue of photos can cross it halfway down. Past it the
+        # cloud tier is withdrawn and the local model reads the photo, which
+        # is what makes it a cap and not a number on a screen.
+        if hasattr(provider, "local_only") and spend.over_cap(conn, self.config):
+            log.info("photo analysis is over its budget; reading locally")
+            provider = provider.local_only()
+
         started = time.monotonic()
         try:
-            draft = self._provider_factory().draft([path.read_bytes()], model=job["model"])
+            draft = provider.draft([path.read_bytes()], model=job["model"])
         except Exception as failure:  # noqa: BLE001 - every provider fails differently
             conn.execute(
                 """
@@ -422,6 +439,8 @@ class Analyst(threading.Thread):
                 """,
                 (str(failure) or type(failure).__name__, _since(started), job["id"]),
             )
+            # A call that reached a model and then failed still cost money.
+            spend.record(conn, job["id"], getattr(provider, "last", None))
             self._publish(PHOTOS_CHANGED, code)
             return
 
@@ -433,6 +452,9 @@ class Analyst(threading.Thread):
             """,
             (json.dumps(dataclasses.asdict(draft)), _since(started), job["id"]),
         )
+        # Who *answered*, which with a fallback is not necessarily the model
+        # the job named when it was queued -- and what it cost.
+        spend.record(conn, job["id"], getattr(provider, "last", None))
 
         # The record may have been deleted while the model was thinking.
         if store.get_box(conn, code) is not None:

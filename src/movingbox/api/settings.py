@@ -11,8 +11,9 @@ import sqlite3
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from .. import codes, kinds, prefs
-from .app import get_conn
+from .. import codes, kinds, prefs, spend
+from ..config import Config
+from .app import get_config, get_conn
 from .schemas import CodeFormat, KindCopies, KindPrefix, NextNumber
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -41,6 +42,23 @@ def list_kinds(conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
         }
         for key in kinds.KINDS
     ]
+
+
+@router.get("/spend")
+def photo_reading_spend(
+    conn: sqlite3.Connection = Depends(get_conn),
+    config: Config = Depends(get_config),
+) -> dict:
+    """What reading photos has cost, against the cap that stops it costing more.
+
+    Config rather than the database, unlike everything else here: which models
+    are used and how much may be spent belong to the machine and the person
+    paying, not to the move. A cap somebody could raise from a phone at
+    midnight would not be much of a cap.
+
+    Carries whether there *is* a key, never the key.
+    """
+    return spend.status(conn, config)
 
 
 @router.put("/kind-prefix")

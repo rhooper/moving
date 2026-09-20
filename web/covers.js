@@ -221,9 +221,12 @@ export function seenIn(analysis, { readable = true } = {}) {
   // when it should not be there -- while a read is queued or running (it would
   // only queue a second behind the first), and on a record that is a single
   // thing, whose photos are never read and which the server would refuse.
+  // `by`: which model actually read it. Worth saying out loud now that two
+  // can -- the cloud tier or the local model that stands in when it cannot be
+  // reached -- because this panel is where a wrong item gets traced.
   const base = {
     state: "none", heading: "Seen in this photo", summary: "", items: [], note: "",
-    closer: null, rerun: null,
+    closer: null, rerun: null, by: "",
   };
   if (!readable) {
     return {
@@ -262,5 +265,78 @@ export function seenIn(analysis, { readable = true } = {}) {
     note: items.length ? "" : "Nothing was recognised in this photo.",
     closer: analysis.detail ? "done" : "offer",
     rerun: "Read again",
+    by: analysis.model ? `Read by ${analysis.model}` : "",
+  };
+}
+
+// --- what reading photos costs --------------------------------------------
+//
+// Settings shows this because a budget nobody can see is a budget that gets
+// exceeded. Pure, so the wording and the arithmetic are tested directly; the
+// panel only puts the strings on the page.
+
+/** Dollars, never rounded down to a flat "$0.00" while money has been spent. */
+export function money(amount) {
+  const value = Number(amount) || 0;
+  if (value > 0 && value < 0.01) return "less than $0.01";
+  return `$${value.toFixed(2)}`;
+}
+
+/**
+ * What the Settings panel says about photo reading.
+ *
+ * The one thing somebody wants from this panel is "is the good model reading
+ * my photos right now, or not" -- so that is the first line, and when it is
+ * not, the line says why and what to do about it.
+ */
+export function readingWith(spend) {
+  const s = spend || {};
+  const local = s.local_model || "the local model";
+  const spent = Number(s.spent_usd) || 0;
+  const cap = Number(s.cap_usd) || 0;
+  const bar = {
+    spent: money(spent),
+    cap: money(cap),
+    // Clamped: over the cap the bar is full, not overflowing.
+    fraction: cap > 0 ? Math.min(1, spent / cap) : 1,
+  };
+
+  if (s.provider !== "claude") {
+    return {
+      ...bar, state: "local",
+      now: `Photos are read on this machine, by ${local}.`,
+      why: "Nothing is spent. Set MOVING_VISION_PROVIDER=claude to use the cloud tier.",
+    };
+  }
+  if (!s.key) {
+    return {
+      ...bar, state: "nokey",
+      now: `Photos are read on this machine, by ${local}.`,
+      why: "There is no API key, so nothing is spent. Put ANTHROPIC_API_KEY in .env and restart.",
+    };
+  }
+  if (s.over) {
+    return {
+      ...bar, state: "over",
+      now: `The budget is spent, so photos are read on this machine, by ${local}.`,
+      why: `Raise MOVING_VISION_BUDGET_USD above ${money(spent)} and restart to carry on.`,
+    };
+  }
+  // Configured for the cloud, a key set, and still reading locally: something
+  // is wrong that no amount of budget will fix -- a refused key, or nothing
+  // answering. Said here because otherwise it only shows up in a log, and the
+  // items quietly get worse.
+  if (s.recent_reads && s.recent_local === s.recent_reads) {
+    return {
+      ...bar, state: "failing",
+      now: `${s.model} is configured, but the last ${s.recent_reads}
+            ${s.recent_reads === 1 ? "photo was" : "photos were"} read on this machine by ${local}.`,
+      why: "The key may have been refused, or nothing answered. See var/log/moving.err.log.",
+    };
+  }
+  return {
+    ...bar, state: "cloud",
+    now: `Photos are read by ${s.model}.`,
+    why: `Look closer uses ${s.detail_model}. If either cannot be reached, ${local} reads it instead.`,
   };
 }

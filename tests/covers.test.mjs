@@ -504,3 +504,105 @@ test("a flag nobody has drawn a mark for gets none, rather than a broken one", (
   assert.equal(flagIcon("wobbly"), "");
   assert.equal(flagIcon(undefined), "");
 });
+
+test("a read photo says which model read it", async () => {
+  const { seenIn } = await import("../web/covers.js");
+
+  // Two models can answer now -- the cloud tier, or the local one that stands
+  // in when it cannot be reached -- so this panel, where a wrong item gets
+  // traced, has to say which one did.
+  const cloud = seenIn({ status: "done", summary: "tea things", items: [], model: "claude-sonnet-5" });
+  const local = seenIn({ status: "done", summary: "tea things", items: [], model: "qwen3-vl:4b-instruct" });
+
+  assert.equal(cloud.by, "Read by claude-sonnet-5");
+  assert.equal(local.by, "Read by qwen3-vl:4b-instruct");
+});
+
+test("an older server that does not say which model is not a blank line", async () => {
+  const { seenIn } = await import("../web/covers.js");
+
+  assert.equal(seenIn({ status: "done", summary: "x", items: [] }).by, "");
+  assert.equal(seenIn({ status: "running", items: null }).by, "");
+});
+
+test("money never reads as nothing while money has been spent", async () => {
+  const { money } = await import("../web/covers.js");
+
+  assert.equal(money(0), "$0.00");
+  assert.equal(money(0.0075), "less than $0.01");
+  assert.equal(money(0.75), "$0.75");
+  assert.equal(money(30), "$30.00");
+});
+
+test("settings says which model is reading photos, and why when it is the local one", async () => {
+  const { readingWith } = await import("../web/covers.js");
+
+  const cloud = readingWith({
+    provider: "claude", key: true, over: false, spent_usd: 0.75, cap_usd: 30,
+    model: "claude-sonnet-5", detail_model: "claude-opus-5", local_model: "qwen3-vl:4b-instruct",
+  });
+
+  assert.equal(cloud.state, "cloud");
+  assert.match(cloud.now, /claude-sonnet-5/);
+  assert.match(cloud.why, /qwen3-vl:4b-instruct reads it instead/);
+  assert.equal(cloud.spent, "$0.75");
+  assert.equal(cloud.fraction, 0.025);
+});
+
+test("no key reads as local-only rather than as a fault", async () => {
+  const { readingWith } = await import("../web/covers.js");
+
+  const seen = readingWith({ provider: "claude", key: false, local_model: "qwen3-vl:4b-instruct" });
+
+  assert.equal(seen.state, "nokey");
+  assert.match(seen.now, /on this machine/);
+  assert.match(seen.why, /ANTHROPIC_API_KEY in .env/);
+});
+
+test("past the cap the bar is full, not overflowing, and says how to carry on", async () => {
+  const { readingWith } = await import("../web/covers.js");
+
+  const seen = readingWith({
+    provider: "claude", key: true, over: true, spent_usd: 42, cap_usd: 30,
+    local_model: "qwen3-vl:4b-instruct",
+  });
+
+  assert.equal(seen.state, "over");
+  assert.equal(seen.fraction, 1);
+  assert.match(seen.why, /MOVING_VISION_BUDGET_USD above \$42\.00/);
+});
+
+test("a local-only setup is not described as out of budget", async () => {
+  const { readingWith } = await import("../web/covers.js");
+
+  const seen = readingWith({ provider: "ollama", local_model: "qwen3-vl:4b-instruct", cap_usd: 30 });
+
+  assert.equal(seen.state, "local");
+  assert.match(seen.why, /Nothing is spent/);
+});
+
+test("a key that is set but not working is said out loud, not left in a log", async () => {
+  const { readingWith } = await import("../web/covers.js");
+
+  const seen = readingWith({
+    provider: "claude", key: true, over: false, spent_usd: 0, cap_usd: 30,
+    model: "claude-sonnet-5", detail_model: "claude-opus-5", local_model: "qwen3-vl:4b-instruct",
+    recent_reads: 6, recent_local: 6,
+  });
+
+  assert.equal(seen.state, "failing");
+  assert.match(seen.now, /read on this machine/);
+  assert.match(seen.why, /refused/);
+});
+
+test("one local read among several cloud ones is the fallback working, not a fault", async () => {
+  const { readingWith } = await import("../web/covers.js");
+
+  const seen = readingWith({
+    provider: "claude", key: true, over: false, spent_usd: 1, cap_usd: 30,
+    model: "claude-sonnet-5", detail_model: "claude-opus-5", local_model: "qwen3-vl:4b-instruct",
+    recent_reads: 6, recent_local: 1,
+  });
+
+  assert.equal(seen.state, "cloud");
+});

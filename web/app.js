@@ -2,7 +2,9 @@
 // /#/b/CODE without needing server-side routes for every view.
 
 import { Autosaver, lineFor, policyFor, retryAfter } from "/autosave.js";
-import { analysisView, coverUrl, flagIcon, kindIcon, rowStatus, seenIn, stripFor } from "/covers.js";
+import {
+  analysisView, coverUrl, flagIcon, kindIcon, money, readingWith, rowStatus, seenIn, stripFor,
+} from "/covers.js";
 import {
   LiveChannel,
   SETTLE_MS,
@@ -1299,6 +1301,7 @@ function viewPhoto(photo, { readable = true } = {}) {
       <p class="meta summary" hidden></p>
       <ul class="items"></ul>
       <p class="meta note" hidden></p>
+      <p class="meta by" hidden></p>
       <p class="reads" hidden>
         <button type="button" class="btn quiet" data-rerun hidden></button>
         <button type="button" class="btn quiet" data-closer hidden>Look closer</button>
@@ -1319,6 +1322,9 @@ function viewPhoto(photo, { readable = true } = {}) {
     const note = dialog.querySelector(".note");
     setText(note, seen.note);
     note.hidden = !seen.note;
+    const by = dialog.querySelector(".by");
+    setText(by, seen.by);
+    by.hidden = !seen.by;
     // Built with DOM calls and textContent: the names are the model's words.
     const list = dialog.querySelector(".items");
     list.replaceChildren(...seen.items.map((item) => {
@@ -3141,12 +3147,15 @@ const live = new LiveChannel({
 });
 
 async function viewSettings() {
-  const [shape, press, rooms, allKinds] = await Promise.all([
+  const [shape, press, rooms, allKinds, spend] = await Promise.all([
     api("/settings/code-format"),
     api("/printer").catch(() => null),
     api("/rooms"),
     api("/settings/kinds"),
+    // An older server has no such route; the section simply stays off.
+    api("/settings/spend").catch(() => null),
   ]);
+  const reading = spend ? readingWith(spend) : null;
 
   show(`
     <h1 class="code">Settings</h1>
@@ -3201,6 +3210,27 @@ async function viewSettings() {
          more than one face, a chair does not. You can still change the number
          for a single print. A stub always prints one.</p>
     </div>
+
+    ${!reading ? "" : `
+    <div class="section" data-reading="${escape(reading.state)}">
+      <h2>Reading photos</h2>
+      <p>${escape(reading.now)}</p>
+      <p class="meta">${escape(reading.why)}</p>
+      <p class="spend"><span class="spent">${escape(reading.spent)}</span>
+         <span class="meta">of ${escape(reading.cap)} spent on ${escape(spend.photos)}
+         ${spend.photos === 1 ? "photo" : "photos"}</span></p>
+      <div class="gauge" role="img"
+           aria-label="${escape(reading.spent)} of ${escape(reading.cap)}">
+        <span style="width:${(reading.fraction * 100).toFixed(1)}%"></span>
+      </div>
+      ${!spend.by_model.length ? "" : `<ul class="items">${spend.by_model.map((m) => `
+        <li><span>${escape(m.model)}</span>
+            <span class="qty">${escape(money(m.spent_usd))} &middot; ${escape(m.photos)}</span></li>`).join("")}</ul>`}
+      <p class="meta">Past the cap nothing more is spent: photos are read on
+         this machine instead, and the list keeps filling itself in. The cap
+         and the models are set in <code>.env</code>, not here — a budget you
+         could raise by brushing a field would not be much of a budget.</p>
+    </div>`}
 
     <div class="section">
       <h2>Rooms</h2>

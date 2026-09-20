@@ -12,6 +12,7 @@ PORT ?= 8788
 CHECK_PORT ?= 8797
 CDP_PORT ?= 9340
 
+
 .DEFAULT_GOAL := help
 .PHONY: help setup run test lint fmt check ui-check browser-check proof version version-minor version-major deploy install uninstall status labels backup
 
@@ -25,6 +26,7 @@ setup:  ## install dependencies: Python (uv), the JS/CSS linters (npm), and the 
 
 run: setup  ## dev server with reload on :8788 (make run PORT=xxxx to change)
 	uv run moving serve --port $(PORT) --reload
+
 
 test:  ## run the test suite (printer forced to fake)
 	uv run pytest -q

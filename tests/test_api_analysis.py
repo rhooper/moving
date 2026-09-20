@@ -24,6 +24,8 @@ ANALYSIS_KEYS = {
     "items",
     "summary",
     "detail",
+    "provider",
+    "model",
 }
 
 
