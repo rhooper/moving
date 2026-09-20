@@ -791,8 +791,9 @@ word from the generated comment; they are escaped now.
   every browser check against it: `ui_check` and `wedge_check` (read-only, and
   they assert they wrote nothing -- these two also run against the live service
   after a deploy), and the ones that write -- `autosave_check` (real typing,
-  pauses, blur, Undo, failed saves made at the network layer), `copies_check`
-  and `viewer_check` -- which **refuse port 8787 and any non-loopback host**.
+  pauses, blur, Undo, failed saves made at the network layer), `copies_check`,
+  `viewer_check` and `nesting_check` -- which **refuse port 8787 and any
+  non-loopback host**.
   All drive headless Chrome over CDP with Node's built-in WebSocket, no npm.
   The static guards cannot see an undefined variable inside a click handler;
   these can, and have caught: a stale element reference left by a merge, a
@@ -908,15 +909,97 @@ house. It sits in the app's own top-left corner as the origin, and it also
 reads as a home packed in a box. One evenodd path on a 16-unit grid with every
 coordinate even (ring 2, gap 2, house 8), so it is pixel-exact at 16, 24 and
 32 px -- which is why it is drawn at 32 on a phone and 24 in the desktop bar,
-never 28. Inline SVG so `currentColor` follows the theme; true black, no
-radius, no accent. Chosen over "the label as an object" (read as a dashboard,
+never 28. Inline SVG so `currentColor` follows the theme; true black, hard
+corners, no accent. Chosen over "the label as an object" (read as a dashboard,
 or as "print") and the ISO this-way-up arrows (read as "upload"). Not yet used
 as the PWA icon, which is still a white bar on black and reads as a minus sign.
 
+**The icon family is the home mark's grid, and ships in three places only**
+(source, the rejected sketches and the reasoning in `docs/design/icons/`; the
+marks are inlined as one `<symbol>` sprite at the top of `<body>` in
+`index.html` and drawn as `<svg class="i"><use href="#i-...">`). One evenodd
+path each, no radius, no accent, no icon font, nothing from `node_modules`.
+
+- **The nav bar**: the mark over the word at 24 px on a phone (which is why
+  the bar is `--bar`, 56 px, and everything floating above it -- `#live`, the
+  version -- measures from `--bar` and not from `--tap`), beside the word at
+  20 px on a desktop. **Never a mark without its word**: "Items" and "New"
+  are not guessable from a list glyph and a plus.
+- **The list row's empty thumbnail**: the record's own kind at 26 px
+  (`--kind-icon`), where one generic open box used to be drawn on every row.
+  It sits *under* the photo, as the old placeholder did, so nothing decides
+  which of the two shows. `kindIcon()` in `covers.js`, beside `rowStatus`.
+- **The three handling flags** at 16 px, in the `.chip` toggles and the
+  `.flag` badges. Fragile and heavy are the printed label's own glyphs, which
+  is the whole argument for them; open-first (a 1) is the one invented mark.
+
+Four traps, each of which fails silently:
+
+- **`fill` must be set on the referencing element, not on the sprite.** A
+  `<use>` clones the symbol into a shadow tree whose ancestors are the
+  referencing `<svg>` -- the sprite's own root is not among them, so its
+  `fill="currentColor"` never reaches the paths. That is the `.i` rule; miss
+  it and every mark is black, which in dark mode is black on black. It is
+  also what makes a chip's `on` state carry its glyph: the colour is the
+  chip's state, never the icon's.
+- **A `<use>` at a symbol that is not there draws nothing, in silence** -- no
+  console error, no broken-image box. `tests/test_web_icons.py` checks every
+  id against the sprite; `ui_check` resolves and measures them for real.
+- **`document.createElement("svg")` makes an HTMLUnknownElement** that
+  renders nothing. `iconNode()` uses `createElementNS`; `iconMarkup()` is the
+  template-literal form, and `setIcon()` lets a row change kind in place.
+- **The marks are decoration**: every one is `aria-hidden`, the word beside
+  it is the accessible name, and nothing labelled lost its name.
+
+**Drawn, tried and turned down** (NOTES.md 4-6; putting them back is a
+regression, not a gap): the status track (open and unpacked are the same open
+box; the track already says done / now / next in words), the nesting buttons
+and the breadcrumb `›` (arrows into and out of a tray read as download and
+upload; the separator is typographic), the section headings, Delete (a bin
+icon invites the tap the danger section exists to prevent), "Look closer" (a
+magnifier promises zoom) and the size row (there is no honest picture of
+"medium").
+
+**`--radius: 4px` -- the box-like surfaces are slightly rounded** (asked for
+2026-09-20, reversing the earlier "no radius"). Through the token and never a
+literal, and a test walks every `border-radius` in the stylesheet and allows
+only `var(--radius)`, `50%` (the spinner and the countdown ring) and `0`.
+Rounded: the form controls (one rule, so every button, field, chip and status
+step), the pushbutton rows (*every* button in a row, not the ends only -- the
+row wraps), the list row's thumbnail, dialogs and the viewer's image, the
+live-refresh banner, `.say`, and the photo figure as one card whose parts keep
+square corners. **The printed label is untouched** -- it is rendered in Python
+onto tape and a thermal printer's corners are square. Two on-screen elements
+mirror the tape most directly and are rounded anyway, so they are the two to
+change if that is ever regretted: the room band and the flag badges (on a
+phone the band bleeds past both screen edges, so its radius shows only on a
+desktop). Square on purpose: `.section` and `.err` are a rule, not a box; the
+printer badge is a slice of the bar; and the icons and the home mark are
+glyphs -- type, not surfaces.
+
+**A container's contents are drawn at half again a list row's size**
+(`#inside { --thumb: 66px; --kind-icon: 40px; }`, overriding the tokens rather
+than restating sizes). The list is an index; what is inside the crate in your
+hands is the thing you are looking at. 40 rather than the arithmetic 39
+because multiples of 8 land every edge of a 16-unit glyph on a pixel.
+
+**The way out of a nested record is a tap target, not a caption.** The
+breadcrumb links and the link in "What it is inside" are one rule (`.trail a,
+#inside-of a`): body size, bold, and padded to a full `--tap` on the touch
+dimension -- horizontal padding stays at about a space, so the sentence still
+reads as one. `#inside-of` keeps that height **whether or not there is a link
+in it**, because a move redraws it in place and the section below must not
+jump. It is a flex row, which is why `showInside()` wraps its sentence in a
+span: a flex container turns each text run into an anonymous item and drops
+the spaces around it, so "Inside B-0012 (crate)." would arrive unspaced.
+`#goes-with` carries the same link and is deliberately left at caption size --
+it is a statement about where the record is going, not the way out.
+
 Design note: the PWA deliberately mirrors the printed label — Inter (served from
 the package, not duplicated), the code set huge as the hero, room in the same
-black knockout band, true black rather than a tinted near-black. The point is
-that after scanning a physical object the screen confirms it is the same one.
+black knockout band, true black rather than a tinted near-black. The corners
+are the one deliberate departure. The point is that after scanning a physical
+object the screen confirms it is the same one.
 
 **Every phase of the plan is built.** Schema, store, REST API, search, label
 rendering, three printer backends, CLI, PWA with scanner, exports, manifest,
@@ -935,6 +1018,12 @@ Since then (2026-09-18, 422 tests): box/item/tub kinds with per-prefix
 configurable codes, cover photos, soft delete with a bin, handling-flag
 toggles (fragile/heavy/open-first) that print as icon chips, the printer badge
 in the nav bar, the auto-power-off watcher, and the 3-inch label redesign.
+
+And since that (2026-09-20, 703 tests): things inside things, and then a pass
+over the look -- the icon family in the bar, the list row and the handling
+flags; `--radius: 4px` on the box-like surfaces; a container's contents drawn
+half again the size of a list row; and the way out of a nested record made a
+tap target. All four are written up above, under the home mark.
 Remote: **github.com/rhooper/moving (private)** — push after merging to main.
 
 Known limitations that are real, not decisions:

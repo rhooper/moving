@@ -169,6 +169,44 @@ export function rowStatus(box) {
   };
 }
 
+// --- which mark stands for a thing -------------------------------------
+//
+// The icon family (docs/design/icons; inlined as a <symbol> sprite in
+// index.html) is referenced by fragment id. A <use> pointing at a symbol that
+// is not there draws nothing at all and says nothing about it, so the two
+// mappings that come from data live here, beside rowStatus, with tests: an
+// unknown kind has to land on a mark that exists rather than on a made-up id.
+
+const KIND_ICONS = {
+  box: "i-box",
+  tub: "i-tub",
+  crate: "i-crate",
+  bag: "i-bag",
+  item: "i-item",
+  furniture: "i-furniture",
+};
+
+/** The mark for a record's kind -- what its empty thumbnail draws. */
+export function kindIcon(box) {
+  // The same fallback rowStatus makes, so the mark and the word agree.
+  return KIND_ICONS[(box && box.kind) || "box"] || KIND_ICONS.box;
+}
+
+// fragile and heavy are the printed label's own glyphs, redrawn on this grid:
+// the app mirrors the tape, and that is the whole argument for them. There is
+// no glyph for open-first on the label (it is a double rule round the whole
+// thing), so the 1 is the one invented mark.
+const FLAG_ICONS = {
+  fragile: "i-fragile",
+  heavy: "i-heavy",
+  open_first: "i-open-first",
+};
+
+/** The mark for a handling flag, or "" for one nothing was drawn for. */
+export function flagIcon(flag) {
+  return FLAG_ICONS[flag] || "";
+}
+
 // What the photo viewer says beside a picture: what the model saw in *this*
 // photo. Not the record's contents list, which is merged from every photo and
 // from whatever people typed -- this is the evidence for one picture, so a
