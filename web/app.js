@@ -2827,7 +2827,10 @@ async function route() {
     const match = hash.match(pattern);
     if (match) {
       for (const link of document.querySelectorAll(".bar a")) {
-        link.toggleAttribute("aria-current", link.getAttribute("href") === hash);
+        // Not toggleAttribute: it writes aria-current="", and both the
+        // stylesheet and assistive tech ask for the token "page".
+        if (link.getAttribute("href") === hash) link.setAttribute("aria-current", "page");
+        else link.removeAttribute("aria-current");
       }
       try { return await handler(...match.slice(1)); }
       catch (error) { return showError(error.message); }

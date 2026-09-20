@@ -523,6 +523,18 @@ const IN_NEW = async () => {
         Math.round(mark.width) === (desktop ? 20 : 24), String(mark.width));
   check("stacking it did not push the word out of the bar",
         tabs.every((a) => a.getBoundingClientRect().bottom <= bar.bottom + 1));
+  // Which tab you are on. `toggleAttribute` wrote aria-current="" here for
+  // months, and the stylesheet asks for [aria-current="page"] -- so the bar
+  // never marked the current page and nobody noticed until the marks arrived.
+  const here = tabs.filter((a) => a.getAttribute("aria-current") === "page");
+  check("the bar says which page you are on",
+        here.length === 1 && here[0].getAttribute("href") === location.hash,
+        `at ${location.hash}: ` + tabs.map((a) => `${a.getAttribute("href")}=${a.getAttribute("aria-current")}`).join(" "));
+  const other = tabs.find((a) => a !== here[0]);
+  check("and it is drawn differently from the others",
+        Boolean(here[0]) && getComputedStyle(here[0]).backgroundColor !== getComputedStyle(other).backgroundColor,
+        here[0] ? `${getComputedStyle(here[0]).backgroundColor} vs ${getComputedStyle(other).backgroundColor}`
+                : "no tab is marked current");
 
   const buttons = Array.from(document.querySelectorAll("#new button[type=submit]"));
   const form = document.getElementById("new");
