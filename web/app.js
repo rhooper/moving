@@ -309,6 +309,16 @@ function confirmed({ title, message, action, dismiss = "Cancel" }) {
 // the undo history, a save still in flight and any text the server has not
 // got yet all have to survive that. So there is one session per open record,
 // kept here, and each draw of the page plugs itself into it (`session.page`).
+//
+// *Per record*, not one at a time. This was a single `editing` variable while
+// only one record could be on screen; a sub-item's modal over its container's
+// page puts two in play at once, and everything a session holds -- the undo
+// stack, what is still owed the server, which field the server refused and
+// why -- belongs to one record and to nothing else. So they are keyed by code.
+// Two consequences worth stating: Undo in the modal names the child's field
+// and Undo on the page behind it names the container's, because the stacks
+// were never shared; and a map has to be told when to let go, where
+// overwriting a variable did it silently (see `retire`).
 
 // The fields that save themselves, by `name`, and what Undo calls each one.
 const AUTOSAVED = new Map([
@@ -342,21 +352,18 @@ const AUTOSAVE_LINE = `
     <button type="button" class="undo" hidden>Undo</button>
   </p>`;
 
-let editing = null;
+const sessions = new Map();   // code -> the session editing that record
 
 function editSession(code) {
   // Coming back to a record after leaving it starts afresh: an Undo offered
   // an hour later would put back a value somebody else may have changed
   // since. Unless something is still unsaved -- that must not be dropped.
-  const resumable = editing && editing.code === code
-    && !(editing.left && !editing.auto.unsaved());
-  if (resumable) {
-    editing.left = false;
-    return editing;
+  const open = sessions.get(code);
+  if (open && !(open.left && !open.auto.unsaved())) {
+    open.left = false;
+    return open;
   }
-  // A different record. Whatever the old one still owes the server it goes on
-  // owing: its saver keeps its own retries going with no page attached.
-  leaveRecord();
+  if (open) retire(open, { force: true });
 
   const session = {
     code,
@@ -375,14 +382,26 @@ function editSession(code) {
         session.refused.delete(key);
       }
       session.page?.heard(key, state);
+      // Nothing left owing, and nothing on screen: let the session go.
+      retire(session);
     },
     // Retry a server that could not be reached; do not pester one that
     // understood the request and refused it.
     retryDelay: (failures, error) =>
       (error?.status >= 400 && error.status < 500 ? null : retryAfter(failures)),
   });
-  editing = session;
+  sessions.set(code, session);
   return session;
+}
+
+// A session is kept while something on screen is attached to it *or* while it
+// still owes the server -- a save that failed retries on its own with no page
+// in sight, and must be able to land. Once it is neither, it is dropped: the
+// single variable this replaced was swept by being overwritten, and a map has
+// to be told. `force` is for starting afresh on a record that was left clean.
+function retire(session, { force = false } = {}) {
+  if (!force && (!session.left || session.auto.unsaved())) return;
+  if (sessions.get(session.code) === session) sessions.delete(session.code);
 }
 
 // One field per save, through the endpoints that were always there. The
@@ -402,18 +421,26 @@ async function saveField(session, key, value) {
 
 // Going somewhere else, or the screen going dark, inside the pause: save now.
 // Up to 1.2 s of typing is otherwise sitting in a timer that may never fire.
-function leaveRecord() {
-  if (!editing) return;
-  editing.auto.commitAll();
-  editing.page = null;
-  editing.left = true;
+function leaveRecord(session) {
+  session.auto.commitAll();
+  session.page = null;
+  session.left = true;
+  retire(session);
 }
 
+// Over a snapshot: retiring a session deletes it from the map underneath.
+const everySession = (what) => { for (const session of Array.from(sessions.values())) what(session); };
+
+// Navigating abandons the page and anything open over it, so every session
+// goes. Each still owes what it owes: a left session with unsaved work stays
+// in the map, with no page attached, until its retries land.
+const leaveEveryRecord = () => everySession(leaveRecord);
+
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) editing?.auto.commitAll();
+  if (document.hidden) everySession((session) => session.auto.commitAll());
 });
-addEventListener("pagehide", () => editing?.auto.commitAll());
-addEventListener("online", () => editing?.auto.retryFailed());
+addEventListener("pagehide", () => everySession((session) => session.auto.commitAll()));
+addEventListener("online", () => everySession((session) => session.auto.retryFailed()));
 
 // --- fragile climbs ------------------------------------------------------------
 //
@@ -1279,9 +1306,10 @@ async function viewBox(code, options) {
   // still on its way would show the old text as if it were current, and then
   // adopt it as the baseline. What could not be saved at all is put back into
   // its field by the new page (see "carried over" in drawBox).
-  if (editing?.code === code) {
-    editing.auto.commitAll();
-    await editing.auto.idle();
+  const open = sessions.get(code);
+  if (open) {
+    open.auto.commitAll();
+    await open.auto.idle();
   }
   drawing += 1;
   try {
@@ -2781,7 +2809,7 @@ async function route() {
   forgetParts();
   // Leaving a record inside the pause autosave waits out: send it now. (If
   // this is the same record being opened again, the session is picked up.)
-  leaveRecord();
+  leaveEveryRecord();
   for (const [pattern, handler] of routes) {
     const match = hash.match(pattern);
     if (match) {
