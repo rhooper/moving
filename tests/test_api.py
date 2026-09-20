@@ -147,7 +147,8 @@ class TestDeployedRevision:
         monkeypatch.setattr(app_module, "REVISION_FILE", recorded)
 
         with TestClient(create_app(config)) as c:
-            assert c.get("/health").json() == {"status": "ok", "revision": "0d302631c0ffee"}
+            health = c.get("/health").json()
+        assert (health["status"], health["revision"]) == ("ok", "0d302631c0ffee")
 
     def test_a_missing_file_is_unknown_rather_than_an_error(self, config, tmp_path, monkeypatch):
         monkeypatch.setattr(app_module, "REVISION_FILE", tmp_path / "nope")

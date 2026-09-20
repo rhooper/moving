@@ -14,6 +14,8 @@ from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnect
 
+import movingbox
+
 from .. import analysis, db, store
 from ..config import ROOT, Config, from_env
 from ..labels import printer as printing
@@ -168,7 +170,7 @@ def create_app(config: Config | None = None) -> FastAPI:
             if app.state.analyst is not None:
                 app.state.analyst.stop()
 
-    app = FastAPI(title="Moving Box Tracker", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Moving Box Tracker", version=movingbox.__version__, lifespan=lifespan)
     app.state.config = settings
     app.state.revision = deployed_revision()
     app.state.events = events.Hub()
@@ -186,7 +188,13 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     @app.get("/health")
     def health() -> dict[str, str]:
-        return {"status": "ok", "revision": app.state.revision}
+        # revision says which commit is running; version is for a human
+        # reading a bug report ("saw it on 0.4.2").
+        return {
+            "status": "ok",
+            "revision": app.state.revision,
+            "version": movingbox.__version__,
+        }
 
     @app.websocket("/api/events")
     async def changes(socket: WebSocket) -> None:
