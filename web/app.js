@@ -14,8 +14,8 @@ import {
   reconcile,
 } from "/live.js";
 import {
-  addedInside, addInsideRequest, blockedDelete, describe, inheritedRoom, kindsToAddInside, mayHold,
-  notYetFragile, trail,
+  addedInside, addInsideRequest, blockedDelete, describe, editorSections, inheritedRoom,
+  kindsToAddInside, mayHold, notYetFragile, trail,
 } from "/nesting.js";
 import { choose, chosen, restrict, segmented } from "/segmented.js";
 import { splitItems } from "/text.js";
@@ -793,6 +793,335 @@ function tell({ text, warn }, code) {
   line.replaceChildren(text, " ", link);
   line.classList.toggle("warn", warn);
   line.hidden = false;
+}
+
+// --- editing something inside, without leaving the container --------------------
+//
+// "pop open the subitem editor as a modal, rather than changing page." Tapping
+// a row in "Inside this crate" opens that record's editor over the container,
+// for the same reason the add dialog exists: somebody standing at an open
+// crate should be able to correct three things in it without losing their
+// place. It is the child's *own* record being edited -- its session, its undo
+// stack, its status line -- while the container's page stays attached to its
+// own session underneath (see "per record, not one at a time" above).
+//
+// The child's page is untouched and still the whole truth: a scan or a QR
+// opens it, and so does the link in here. This is a shortcut from the parent,
+// not a replacement.
+//
+// Sections with nothing in them are folded away (`editorSections`), and the
+// fold is a native <details>: keyboard-operable and announced correctly with
+// no script, which suits a project with no build step.
+
+// One at a time: a second would edit a second record over the first, and the
+// row that opened it is behind this one.
+let openEditor = null;
+
+async function editSubitem(code, { kinds, rooms, onSaved }) {
+  if (openEditor) return;
+  const path = `/boxes/${encodeURIComponent(code)}`;
+  let child;
+  let items;
+  try {
+    [child, items] = await Promise.all([api(path), api(`${path}/items`)]);
+  } catch (error) { failed(error.message, "Could not open it"); return; }
+
+  const dialog = document.createElement("dialog");
+  dialog.className = "editor";
+  document.body.append(dialog);
+  openEditor = dialog;
+
+  const session = editSession(code);
+  const auto = session.auto;
+  const shapeOf = () => kinds.find((k) => k.kind === child.kind) || kinds[0];
+  let contents = null;   // the items part, rebuilt with the body
+  let lines = () => {};  // the status line, until there is one
+
+  // The whole body, from the record as it stands. Called again only when the
+  // kind changes, which changes which sections exist -- the same rule the
+  // page follows, and the reason the old form is thrown away rather than
+  // patched: its listeners go with it, and the new one is wired afresh from
+  // the same session, which still holds the undo stack and anything unsaved.
+  function render() {
+    const shape = shapeOf();
+    const sections = editorSections(child, items, shape);
+    const fold = (section) => `
+      <details class="fold" data-fold="${escape(section.key)}"${section.open ? " open" : ""}>
+        <summary>${escape(section.legend)}</summary>
+        <div class="fold-body" data-body="${escape(section.key)}"></div>
+      </details>`;
+    // Every section in the one form, so the status line that follows them
+    // belongs to all of them and sits at the end where it reads as the
+    // record's. (Which is why adding an item below is a button and not a
+    // form of its own: a form inside a form is invalid.)
+    dialog.innerHTML = `
+      <h2>${escape(child.code)}</h2>
+      <p class="meta" id="child-where"></p>
+      <form id="child-edit">
+        ${sections.map(fold).join("")}
+        ${AUTOSAVE_LINE}
+      </form>
+      <p class="meta" id="child-links">
+        <a href="#/b/${escape(encodeURIComponent(child.code))}" id="child-full">Open its whole page</a>
+      </p>
+      <div class="row">
+        <button class="btn" type="button" id="child-close" autofocus>Close</button>
+      </div>`;
+
+    const body = (key) => dialog.querySelector(`[data-body="${key}"]`);
+    // A row carries its own <legend> as the group's name for a screen reader;
+    // the <summary> above it already shows those words, so it is not shown
+    // twice.
+    const quiet = (row) => { row.querySelector("legend").classList.add("vh"); return row; };
+
+    const what = document.createElement("textarea");
+    what.id = "child-what";
+    what.name = "content_summary";
+    what.rows = 2;
+    what.value = child.content_summary || "";
+    what.setAttribute("aria-label", sections.find((s) => s.key === "summary").legend);
+    what.placeholder = shape.contents ? "pots, baking pans, stand mixer" : "Bicycle (Trek hybrid, blue)";
+    body("summary").append(what);
+
+    body("kind").append(quiet(segmented({
+      name: "kind", legend: "Kind", options: kindChoices(kinds), value: child.kind })));
+    if (body("size")) {
+      body("size").append(quiet(segmented({
+        name: "size", legend: "How big", options: sizeChoices(shape.sizes),
+        value: child.size, optional: true, empty: "No size" })));
+    }
+    body("source").append(quiet(segmented({
+      name: "source_room_id", legend: "Packed from", options: roomChoices(forSource(rooms)),
+      value: child.source_room_id, optional: true, empty: "Not recorded" })));
+    const where = document.createElement("input");
+    where.id = "child-source-location";
+    where.name = "source_location";
+    where.value = child.source_location || "";
+    where.placeholder = "shelf 3, under the desk";
+    where.setAttribute("aria-label", "Where in that room");
+    body("source").append(where);
+
+    // The handling flags, as on the page: each PATCHes on its own rather than
+    // going through the saver, and marking one fragile offers the climb.
+    const flags = document.createElement("div");
+    flags.className = "flags-set";
+    for (const [key, label] of [["fragile", "Fragile"], ["heavy", "Heavy"], ["open_first", "Open first"]]) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "chip";
+      chip.dataset.childFlag = key;
+      chip.textContent = label;
+      chip.addEventListener("click", () => toggleFlag(chip));
+      flags.append(chip);
+    }
+    body("handling").append(flags);
+
+    if (body("items")) {
+      const list = document.createElement("ul");
+      list.className = "items";
+      list.id = "child-items";
+      body("items").append(list);
+      const add = document.createElement("div");
+      add.className = "row";
+      add.innerHTML = `<input id="child-add" aria-label="Add items" placeholder="kettle, toaster, three mugs">
+        <button class="btn" type="button" id="child-add-go">Add</button>`;
+      body("items").append(add);
+      contents = itemsPart(list, {
+        path,
+        stale: () => {},   // the modal was closed or rebuilt under it
+        changed(now) {
+          items = now;
+          unfoldFilled();
+        },
+      });
+      contents.draw(items);
+      const typed = document.getElementById("child-add");
+      const addItems = async (button) => {
+        const names = splitItems(typed.value);
+        if (!names.length) return;
+        try {
+          await busy(button, `Adding ${names.length}…`, async () => {
+            for (const name of names) {
+              await api(`${path}/items`, { method: "POST", body: JSON.stringify({ name }) });
+            }
+          });
+          typed.value = "";
+        } catch (error) { failed(error.message); }
+        try { await contents.refresh(); } catch (error) { failed(error.message); }
+        onSaved();
+      };
+      const addButton = document.getElementById("child-add-go");
+      addButton.addEventListener("click", () => addItems(addButton));
+      // Return here means "add this", not "commit the fields" -- which is what
+      // the form's own submit would otherwise make of it.
+      typed.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" || event.isComposing) return;
+        event.preventDefault();
+        addItems(addButton);
+      });
+    }
+
+    const childForm = document.getElementById("child-edit");
+    const wired = autosaveFields({
+      root: dialog,
+      session,
+      forms: [childForm],
+      undoLabel: (key) => (key === "content_summary" && !shape.contents ? "name" : AUTOSAVED.get(key)),
+      onLanded(key, value, fresh) {
+        child = { ...child, ...fresh };
+        // The container's row for this record is drawn from its own fetch of
+        // the container; ask for it, so the row behind is right before this
+        // closes. The page's own socket echo is dropped as its own doing.
+        onSaved();
+      },
+      onKindSaved: redrawForKind,
+    });
+    lines = wired.drawLines;
+    childForm.addEventListener("submit", wired.onReturn);
+    document.getElementById("child-close").addEventListener("click", () => dismiss());
+    showWhere();
+    drawFlags();
+    lines();
+  }
+
+  // The kind decides which sections there are, so it is the one save that
+  // rebuilds the body. Whatever had the focus gets it back.
+  async function redrawForKind() {
+    const active = document.activeElement;
+    const selector = active?.id ? `#${CSS.escape(active.id)}`
+      : active?.type === "radio" ? `[name="${CSS.escape(active.name)}"]:checked`
+      : active?.name ? `[name="${CSS.escape(active.name)}"]` : null;
+    try {
+      [child, items] = await Promise.all([api(path), api(`${path}/items`)]);
+    } catch (error) { failed(error.message); return; }
+    render();
+    const again = selector && dialog.querySelector(selector);
+    if (again) again.focus();
+  }
+
+  // Nothing with content stays folded. Only ever opens: closing one would
+  // take away a section somebody had opened for themselves. This is what
+  // keeps the rule true after the record changes under the modal -- a photo
+  // being read writes a summary and a list of items by itself.
+  function unfoldFilled() {
+    for (const section of editorSections(child, items, shapeOf())) {
+      const fold = dialog.querySelector(`[data-fold="${section.key}"]`);
+      if (fold && section.open) fold.open = true;
+    }
+  }
+
+  function showWhere() {
+    const shape = shapeOf();
+    const line = document.getElementById("child-where");
+    const inside = child.parent;
+    const room = inheritedRoom(child.path);
+    const said = [`A ${shape.label.toLowerCase()}`, inside ? `inside ${inside.code}` : null].filter(Boolean).join(" ");
+    line.textContent = room?.room
+      ? `${said}, going where ${room.code} goes.`
+      : `${said}.`;
+  }
+
+  function drawFlags() {
+    for (const chip of dialog.querySelectorAll("[data-child-flag]")) {
+      const on = Boolean(child[chip.dataset.childFlag]);
+      chip.classList.toggle("on", on);
+      chip.setAttribute("aria-pressed", String(on));
+    }
+  }
+
+  async function toggleFlag(chip) {
+    const key = chip.dataset.childFlag;
+    try {
+      const fresh = await busy(chip, chip.textContent, () =>
+        api(path, { method: "PATCH", body: JSON.stringify({ [key]: !child[key] }) }));
+      child = { ...child, ...fresh };
+      drawFlags();
+      onSaved();
+      // Fragile climbs from here too: this record is inside something by
+      // definition, and that is exactly what the climb is for.
+      if (key === "fragile" && fresh.fragile) {
+        const marked = await offerFragileClimb(fresh);
+        // A container of this one was marked: the page behind shows its own
+        // chips, and only a redraw of it can say so.
+        if (marked.length) requestRefresh();
+      }
+    } catch (error) { failed(error.message); }
+  }
+
+  // A change to this record from anywhere else -- another phone, or the model
+  // finishing with a photo of it. Taken in place: nothing is rebuilt under
+  // the hands of whoever is typing, and no field that is being edited or is
+  // still owed to the server is touched.
+  async function absorb() {
+    let fresh;
+    let freshItems;
+    try {
+      [fresh, freshItems] = await Promise.all([api(path), api(`${path}/items`)]);
+    } catch { return; }   // a background refresh that fails leaves it alone
+    if (!dialog.isConnected) return;
+    const wasKind = child.kind;
+    child = { ...child, ...fresh };
+    items = freshItems;
+    for (const [key, field] of [["content_summary", "child-what"], ["source_location", "child-source-location"]]) {
+      const input = document.getElementById(field);
+      if (!input || auto.state(key) !== "clean" || document.activeElement === input) continue;
+      input.value = fresh[key] || "";
+      input.dataset.initial = input.value;
+      auto.track(key, tidy(input));
+    }
+    for (const key of ["kind", "size", "source_room_id"]) {
+      const row = dialog.querySelector(`.seg[data-name="${key}"]`);
+      if (!row || auto.state(key) !== "clean" || row.contains(document.activeElement)) continue;
+      choose(row, fresh[key] ?? "");
+      for (const radio of row.querySelectorAll("input[type=radio]")) radio.dataset.initial = String(radio.checked);
+      auto.track(key, chosen(row));
+    }
+    contents?.draw(items);
+    unfoldFilled();
+    showWhere();
+    drawFlags();
+    lines();
+    // The kind decides which sections exist. Rebuilding takes the focus with
+    // it, so it waits for a moment when nobody is mid-anything.
+    if (fresh.kind !== wasKind && !auto.unsaved() && !dialog.contains(document.activeElement)) {
+      await redrawForKind();
+    }
+  }
+
+  const watching = (event) => {
+    // The same rule the views use, including dropping this device's own echo.
+    if (affects(event, { name: "box", code, clientId })) absorb();
+  };
+  alsoWatching.add(watching);
+
+  // Closing commits what is waiting and *waits for it*, so the row behind is
+  // right by the time this is out of the way -- the same rule as leaving a
+  // record, which is what this is.
+  let closing = false;
+  async function dismiss() {
+    if (closing) return;
+    closing = true;
+    auto.commitAll();
+    await auto.idle();
+    leaveRecord(session);
+    dialog.close();
+  }
+  // Escape would close it before any of that, so it is taken over.
+  dialog.addEventListener("cancel", (event) => { event.preventDefault(); dismiss(); });
+  dialog.addEventListener("click", (event) => { if (event.target === dialog) dismiss(); });
+  // Following the link to the whole page, or a scan landing somewhere else.
+  const leaving = () => dismiss();
+  addEventListener("hashchange", leaving);
+  dialog.addEventListener("close", () => {
+    alsoWatching.delete(watching);
+    removeEventListener("hashchange", leaving);
+    if (openEditor === dialog) openEditor = null;
+    dialog.remove();
+    onSaved();
+  });
+
+  render();
+  dialog.showModal();
 }
 
 // --- looking at one photo ------------------------------------------------------
@@ -1887,6 +2216,25 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
     addInside({ parent: box, kinds: allKinds, rooms, shape });
   });
 
+  // Tapping one of the things inside opens its editor over this page rather
+  // than going to it -- three corrections without losing your place. The row
+  // stays a real link, so a middle click or a long press still opens the whole
+  // page, and so does anything holding a modifier (same rule as a photo).
+  // Delegated, so rows redrawn by `reconcile` need no rebinding.
+  document.getElementById("inside")?.addEventListener("click", (event) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const link = event.target.closest("a[href^='#/b/']");
+    if (!link) return;
+    event.preventDefault();
+    editSubitem(decodeURIComponent(link.getAttribute("href").slice(4)), {
+      kinds: allKinds,
+      rooms,
+      // What is inside this container, and the rows that draw it, come from
+      // the container's own record: one fetch, the one already in place.
+      onSaved: () => requestPart("summary"),
+    });
+  });
+
   // (the barcode reader types and presses Return, which submits), looked up,
   // and shown -- what it is, and whether it may hold this -- before anything
   // is saved. Saving is the autosaver's, with Undo, like every other field:
@@ -2606,9 +2954,15 @@ function socketUrl() {
   return `${scheme}//${location.host}/api/events${key ? `?key=${encodeURIComponent(key)}` : ""}`;
 }
 
+// Things that watch the socket but are not the view: the sub-item modal
+// follows its own record while the page behind it follows the container's.
+// Each does its own `affects` check, so each drops its own echoes.
+const alsoWatching = new Set();
+
 const live = new LiveChannel({
   url: socketUrl,
   onEvent: (event) => {
+    for (const watcher of Array.from(alsoWatching)) watcher(event);
     // Also drops this device's own echo: whoever made a change here has
     // already redrawn the part it touched.
     if (!affects(event, view)) return;

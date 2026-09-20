@@ -456,6 +456,42 @@ dialog.viewer .reads .meta { flex: 1 1 100%; margin: 0; }
 
 dialog .row > * { flex: 1; }
 
+/* Editing something inside a container, over the container's page. Taller
+   than the questions: it is a record, and it scrolls as a whole on a phone. */
+dialog.editor { width: min(32rem, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); overflow: auto; border-radius: var(--radius); }
+dialog.editor h2 { margin-bottom: 0.2rem; }
+dialog.editor #child-where { margin-bottom: 0.5rem; }
+dialog.editor form { margin: 0; }
+dialog.editor #child-links { margin: 0.75rem 0 0.5rem; }
+
+/* A section with nothing in it starts folded; one with something in it starts
+   open, and nothing with content is ever folded away. Native <details>, so it
+   is keyboard-operable and announced with no script of ours.
+
+   The marker is drawn here rather than inherited: the default triangle
+   differs between browsers, and the phone this is used on is Firefox. Three
+   ways of removing it, because each browser has its own: Firefox stops
+   drawing it once the summary is not a list-item, Safari needs the pseudo,
+   and list-style covers the rest. */
+.fold { border-top: 1px solid var(--line); }
+.fold > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: var(--tap);
+  list-style: none;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+.fold > summary::-webkit-details-marker { display: none; }
+.fold > summary::before { content: ">"; width: 1ch; color: var(--ink); font-weight: 800; }
+.fold[open] > summary::before { content: "v"; }
+.fold > summary:focus-visible { outline: 3px solid var(--signal); outline-offset: -3px; }
+.fold-body { padding-bottom: 0.75rem; }
+.fold-body > .seg:first-child { margin-top: 0; }
+
 /* Adding something inside a container, without leaving its page: the kind, a
    photo, where it came from. The photo is the point, so its button is the
    filled one; Cancel keeps the safe focus as every question here does. */
