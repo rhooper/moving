@@ -442,6 +442,202 @@ document.addEventListener("visibilitychange", () => {
 addEventListener("pagehide", () => everySession((session) => session.auto.commitAll()));
 addEventListener("online", () => everySession((session) => session.auto.retryFailed()));
 
+/**
+ * Wire a set of forms to a record's session: which control holds which key,
+ * what the status lines say, the listeners that save, and Undo.
+ *
+ * One copy for the record page and the sub-item modal, which do the same
+ * thing to different records at the same time. What varies is only what is
+ * passed: `root` scopes every lookup (the page's `app`, or a dialog -- which
+ * also keeps the modal's fields out of the live-refresh hold, since that
+ * walks `app`), `forms` are the forms that carry autosaved fields and a
+ * status line, `undoLabel` names a key for the Undo button, `onLanded` is
+ * what the drawing does with a save that reached the server, and
+ * `onKindSaved` redraws for a kind change -- the one save that changes which
+ * fields exist.
+ *
+ * Returns the handles the drawing needs afterwards; `onReturn` is handed back
+ * rather than attached, because a form may have a submit of its own (the
+ * container look-up) that must not also commit every field.
+ */
+function autosaveFields({ root, session, forms, undoLabel, onLanded, onKindSaved }) {
+  const auto = session.auto;
+  const groupOf = (key) => root.querySelector(`.seg[data-name="${key}"]`);
+  const fieldOf = (key) => root.querySelector(`[name="${key}"]`);
+  const keysOf = (form) => Array.from(AUTOSAVED.keys()).filter((key) => fieldOf(key)?.form === form);
+  const readKey = (key) => { const group = groupOf(key); return group ? chosen(group) : tidy(fieldOf(key)); };
+  const showKey = (key, value) => {
+    const group = groupOf(key);
+    if (group) choose(group, value);
+    else fieldOf(key).value = value;
+  };
+  // The key's control is pristine at `value`: what the live-refresh hold
+  // compares against. For a row that is every button's checkedness -- as it
+  // stands if the row still shows `value`, and as it would be if it has been
+  // pressed again since (then the press is the edit still owed).
+  const savedKey = (key, value) => {
+    const group = groupOf(key);
+    if (group) {
+      const asShown = chosen(group) === String(value ?? "");
+      for (const radio of group.querySelectorAll("input[type=radio]")) {
+        radio.dataset.initial = String(asShown ? radio.checked : radio.value === String(value));
+      }
+      return;
+    }
+    const field = fieldOf(key);
+    // If the field still holds what was sent (give or take the spaces that
+    // were not), it is pristine as it stands. If it has been typed in since,
+    // what was sent is the baseline and the rest is still an edit.
+    field.dataset.initial = tidy(field) === value ? field.value : value;
+  };
+
+  // Carried over: a field the saver still owes the server -- a save in
+  // flight, one that failed, a pause not yet run out when something redrew
+  // the page -- gets its text back rather than the server's older value. Its
+  // `dataset.initial` stays the server's, so it reads as unsaved to the
+  // live-refresh hold, which is the truth. Everything else starts from here.
+  for (const form of forms) {
+    for (const key of keysOf(form)) {
+      const owed = auto.state(key);
+      if (owed && owed !== "clean") showKey(key, auto.value(key));
+      else auto.track(key, readKey(key));
+    }
+  }
+
+  // What Undo would take back if pressed now. An edit that is on its way to
+  // being saved will be the newest save by the time an undo can run (pressing
+  // Undo sends it first), so it is what the button names -- not the older
+  // save underneath it.
+  const owing = () => Array.from(AUTOSAVED.keys())
+    .filter((key) => ["unsaved", "saving"].includes(auto.state(key)));
+  // An edit that failed to save is newer still than anything that did save.
+  const stuck = () => Array.from(AUTOSAVED.keys()).filter((key) => auto.state(key) === "failed");
+  const undoTarget = () => owing()[0] || stuck()[0] || auto.canUndo();
+
+  function drawLines() {
+    const target = undoTarget();
+    for (const form of forms) {
+      const states = keysOf(form).map((key) => ({
+        state: auto.state(key),
+        policy: policyFor(fieldOf(key)),
+        refused: session.refused.get(key),
+      }));
+      const { text, warn } = lineFor(states, session.last.get(form.id));
+      const line = form.querySelector(".autosave");
+      setText(line.querySelector(".autosave-state"), text);
+      line.classList.toggle("warn", warn);
+
+      // One Undo on the page, on the line of the form last edited, and named
+      // for what it will put back -- the history is one stack across all three
+      // forms, so the next step may belong to a different one. It stays put
+      // while a save is under way rather than blinking out and back on every
+      // pause in typing, which also keeps it one Tab from the field.
+      const undo = line.querySelector(".undo");
+      undo.hidden = !(target && session.undoAt === form.id);
+      if (!undo.hidden && !undo.classList.contains("working")) {
+        setText(undo, `Undo ${undoLabel(target)}`);
+      }
+    }
+  }
+
+  session.page = {
+    // A save reached the server. Nothing is redrawn -- the caret is in one of
+    // these fields -- so the page's own idea of the record is brought up to
+    // date by hand: `box` (the print button reads it), the room band, and the
+    // field's `dataset.initial`, which is how the live-refresh hold knows the
+    // field is no longer half-edited.
+    landed(key, value, fresh) {
+      onLanded(key, value, fresh);
+      if (fieldOf(key)) savedKey(key, value);
+      // A refresh held back behind this edit may be able to go now.
+      fieldClosed();
+    },
+    heard(key, state) {
+      const form = fieldOf(key)?.form;
+      if (state === "saved" && form) {
+        session.last.set(form.id, "saved");
+        session.undoAt = form.id;
+      }
+      if (state === "saved" && key === "kind") { onKindSaved(); return; }
+      drawLines();
+    },
+  };
+
+  const onEdit = (event) => {
+    const field = event.target;
+    if (!AUTOSAVED.has(field.name)) return;
+    auto.edit(field.name, readKey(field.name), policyFor(field));
+    session.undoAt = field.form.id;
+    drawLines();
+  };
+  const onLeave = (event) => {
+    const field = event.target;
+    if (!AUTOSAVED.has(field.name)) return;
+    // Out of the field, so its stray spaces can go without moving a caret.
+    if (field.tagName !== "SELECT" && field.type !== "radio" && field.value !== tidy(field)) {
+      if (field.dataset.initial === field.value) field.dataset.initial = tidy(field);
+      field.value = tidy(field);
+    }
+    auto.commit(field.name);
+    drawLines();
+  };
+  // Return in a single-line field. For the location this is one of the two
+  // ways it ever saves.
+  const onReturn = (event) => {
+    event.preventDefault();
+    for (const key of keysOf(event.currentTarget)) auto.commit(key);
+    drawLines();
+  };
+  for (const form of forms) {
+    // Both: a picker fires "change" everywhere but "input" only in newer
+    // browsers, and the second of the two finds nothing new to save.
+    form.addEventListener("input", onEdit);
+    form.addEventListener("change", onEdit);
+    form.addEventListener("focusout", onLeave);
+    form.querySelector(".undo").addEventListener("click", (event) => undoLast(event.currentTarget));
+  }
+
+  // Step back the most recent save, whichever form it was in. A deliberate
+  // press, not typing, so a failure here may say so in a dialog.
+  //
+  // Anything still on its way is sent first and waited for, so that Undo
+  // pressed straight after typing takes back the typing. An undo racing the
+  // save it is meant to follow could reach the server in either order.
+  async function undoLast(button) {
+    try {
+      const step = await busy(button, "Undoing…", async () => {
+        // One more try for anything that failed, too: if the network is back
+        // it lands, and is then undone like any other save. Not for a save
+        // the server understood and refused -- asking again gets the same
+        // answer, and Undo beside "Not saved" means "give that up".
+        for (const key of AUTOSAVED.keys()) {
+          if (auto.state(key) !== "clean" && !session.refused.has(key)) auto.commit(key);
+        }
+        await auto.idle();
+        // Still not there. The newest thing to take back is then the unsaved
+        // edit itself, and the server never had it: give it up here, and send
+        // nothing. undo() would reach past it to the save beneath.
+        const [lost] = stuck();
+        if (lost) return { key: lost, value: auto.revert(lost) };
+        return auto.undo();
+      });
+      if (!step) { drawLines(); return; }
+      session.refused.delete(step.key);
+      const field = fieldOf(step.key);
+      if (field) {
+        // Shown as well as recorded: for a row, the right button lights again.
+        showKey(step.key, step.value);
+        savedKey(step.key, step.value);
+      }
+      if (field?.form) session.last.set(field.form.id, "undone");
+      if (step.key === "kind") await onKindSaved();
+      else drawLines();
+    } catch (error) { failed(error.message, "Not undone"); }
+  }
+
+  return { drawLines, fieldOf, groupOf, keysOf, readKey, showKey, savedKey, onReturn };
+}
+
 // --- fragile climbs ------------------------------------------------------------
 //
 // "fragile should percolate up to the parent and set that (prompt to set if
@@ -1581,86 +1777,8 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
   // which is several radios sharing the name. Everything below reads and
   // writes a key through these rather than through `.value`, of which a row
   // has one per button, none of them the answer.
-  const groupOf = (key) => app.querySelector(`.seg[data-name="${key}"]`);
-  const fieldOf = (key) => app.querySelector(`[name="${key}"]`);
-  const keysOf = (form) => Array.from(AUTOSAVED.keys()).filter((key) => fieldOf(key)?.form === form);
-  const readKey = (key) => { const group = groupOf(key); return group ? chosen(group) : tidy(fieldOf(key)); };
-  const showKey = (key, value) => {
-    const group = groupOf(key);
-    if (group) choose(group, value);
-    else fieldOf(key).value = value;
-  };
-  // The key's control is pristine at `value`: what the live-refresh hold
-  // compares against. For a row that is every button's checkedness -- as it
-  // stands if the row still shows `value`, and as it would be if it has been
-  // pressed again since (then the press is the edit still owed).
-  const savedKey = (key, value) => {
-    const group = groupOf(key);
-    if (group) {
-      const asShown = chosen(group) === String(value ?? "");
-      for (const radio of group.querySelectorAll("input[type=radio]")) {
-        radio.dataset.initial = String(asShown ? radio.checked : radio.value === String(value));
-      }
-      return;
-    }
-    const field = fieldOf(key);
-    // If the field still holds what was sent (give or take the spaces that
-    // were not), it is pristine as it stands. If it has been typed in since,
-    // what was sent is the baseline and the rest is still an edit.
-    field.dataset.initial = tidy(field) === value ? field.value : value;
-  };
-
   const session = editSession(code);
   const auto = session.auto;
-
-  // Carried over: a field the saver still owes the server -- a save in
-  // flight, one that failed, a pause not yet run out when something redrew
-  // the page -- gets its text back rather than the server's older value. Its
-  // `dataset.initial` stays the server's, so it reads as unsaved to the
-  // live-refresh hold, which is the truth. Everything else starts from here.
-  for (const form of savingForms) {
-    for (const key of keysOf(form)) {
-      const owed = auto.state(key);
-      if (owed && owed !== "clean") showKey(key, auto.value(key));
-      else auto.track(key, readKey(key));
-    }
-  }
-
-  // What Undo would take back if pressed now. An edit that is on its way to
-  // being saved will be the newest save by the time an undo can run (pressing
-  // Undo sends it first), so it is what the button names -- not the older
-  // save underneath it.
-  const owing = () => Array.from(AUTOSAVED.keys())
-    .filter((key) => ["unsaved", "saving"].includes(auto.state(key)));
-  // An edit that failed to save is newer still than anything that did save.
-  const stuck = () => Array.from(AUTOSAVED.keys()).filter((key) => auto.state(key) === "failed");
-  const undoTarget = () => owing()[0] || stuck()[0] || auto.canUndo();
-
-  function drawLines() {
-    const target = undoTarget();
-    for (const form of savingForms) {
-      const states = keysOf(form).map((key) => ({
-        state: auto.state(key),
-        policy: policyFor(fieldOf(key)),
-        refused: session.refused.get(key),
-      }));
-      const { text, warn } = lineFor(states, session.last.get(form.id));
-      const line = form.querySelector(".autosave");
-      setText(line.querySelector(".autosave-state"), text);
-      line.classList.toggle("warn", warn);
-
-      // One Undo on the page, on the line of the form last edited, and named
-      // for what it will put back -- the history is one stack across all three
-      // forms, so the next step may belong to a different one. It stays put
-      // while a save is under way rather than blinking out and back on every
-      // pause in typing, which also keeps it one Tab from the field.
-      const undo = line.querySelector(".undo");
-      undo.hidden = !(target && session.undoAt === form.id);
-      if (!undo.hidden && !undo.classList.contains("working")) {
-        setText(undo, `Undo ${target === "content_summary" && !shape.contents ? "name" : AUTOSAVED.get(target)}`);
-      }
-    }
-  }
 
   // Where this record is going. Inside a container it goes where the container
   // goes -- the nearest one with a room -- and its own row is put away; the
@@ -1840,18 +1958,19 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
     try { if (caret?.[0] != null) again.setSelectionRange(...caret); } catch { /* a picker */ }
   }
 
-  session.page = {
-    // A save reached the server. Nothing is redrawn -- the caret is in one of
-    // these fields -- so the page's own idea of the record is brought up to
-    // date by hand: `box` (the print button reads it), the room band, and the
-    // field's `dataset.initial`, which is how the live-refresh hold knows the
-    // field is no longer half-edited.
-    landed(key, value, fresh) {
+  // Everything else the wiring needs it keeps to itself: the page's own code
+  // reaches its fields by name where it needs them.
+  const { drawLines, onReturn } = autosaveFields({
+    root: app,
+    session,
+    forms: savingForms,
+    // What it is, not what is in it, for something with no contents.
+    undoLabel: (key) => (key === "content_summary" && !shape.contents ? "name" : AUTOSAVED.get(key)),
+    onLanded(key, value, fresh) {
       box = {
         ...box, [key]: fresh[key], summary_source: fresh.summary_source, updated_at: fresh.updated_at,
         parent: fresh.parent, path: fresh.path, children: fresh.children,
       };
-      if (fieldOf(key)) savedKey(key, value);
       if (key === "destination_room_id") showRoom();
       if (key === "parent_code") {
         showInside();
@@ -1860,94 +1979,12 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
         // containers are not asked about again.
         if (box.fragile && box.parent) offerFragileClimb(box).catch((error) => failed(error.message));
       }
-      // A refresh held back behind this edit may be able to go now.
-      fieldClosed();
     },
-    heard(key, state) {
-      const form = fieldOf(key)?.form;
-      if (state === "saved" && form) {
-        session.last.set(form.id, "saved");
-        session.undoAt = form.id;
-      }
-      if (state === "saved" && key === "kind") { redrawForKind(); return; }
-      drawLines();
-    },
-  };
-
-  const onEdit = (event) => {
-    const field = event.target;
-    if (!AUTOSAVED.has(field.name)) return;
-    auto.edit(field.name, readKey(field.name), policyFor(field));
-    session.undoAt = field.form.id;
-    drawLines();
-  };
-  const onLeave = (event) => {
-    const field = event.target;
-    if (!AUTOSAVED.has(field.name)) return;
-    // Out of the field, so its stray spaces can go without moving a caret.
-    if (field.tagName !== "SELECT" && field.type !== "radio" && field.value !== tidy(field)) {
-      if (field.dataset.initial === field.value) field.dataset.initial = tidy(field);
-      field.value = tidy(field);
-    }
-    auto.commit(field.name);
-    drawLines();
-  };
-  // Return in a single-line field. For the location this is one of the two
-  // ways it ever saves.
-  const onReturn = (event) => {
-    event.preventDefault();
-    for (const key of keysOf(event.currentTarget)) auto.commit(key);
-    drawLines();
-  };
+    onKindSaved: redrawForKind,
+  });
   summaryForm.addEventListener("submit", onReturn);
   destinationForm.addEventListener("submit", onReturn);
   locationForm.addEventListener("submit", onReturn);
-  for (const form of savingForms) {
-    // Both: a picker fires "change" everywhere but "input" only in newer
-    // browsers, and the second of the two finds nothing new to save.
-    form.addEventListener("input", onEdit);
-    form.addEventListener("change", onEdit);
-    form.addEventListener("focusout", onLeave);
-    form.querySelector(".undo").addEventListener("click", (event) => undoLast(event.currentTarget));
-  }
-
-  // Step back the most recent save, whichever form it was in. A deliberate
-  // press, not typing, so a failure here may say so in a dialog.
-  //
-  // Anything still on its way is sent first and waited for, so that Undo
-  // pressed straight after typing takes back the typing. An undo racing the
-  // save it is meant to follow could reach the server in either order.
-  async function undoLast(button) {
-    try {
-      const step = await busy(button, "Undoing…", async () => {
-        // One more try for anything that failed, too: if the network is back
-        // it lands, and is then undone like any other save. Not for a save
-        // the server understood and refused -- asking again gets the same
-        // answer, and Undo beside "Not saved" means "give that up".
-        for (const key of AUTOSAVED.keys()) {
-          if (auto.state(key) !== "clean" && !session.refused.has(key)) auto.commit(key);
-        }
-        await auto.idle();
-        // Still not there. The newest thing to take back is then the unsaved
-        // edit itself, and the server never had it: give it up here, and send
-        // nothing. undo() would reach past it to the save beneath.
-        const [lost] = stuck();
-        if (lost) return { key: lost, value: auto.revert(lost) };
-        return auto.undo();
-      });
-      if (!step) { drawLines(); return; }
-      session.refused.delete(step.key);
-      const field = fieldOf(step.key);
-      if (field) {
-        // Shown as well as recorded: for a row, the right button lights again.
-        showKey(step.key, step.value);
-        savedKey(step.key, step.value);
-      }
-      if (field?.form) session.last.set(field.form.id, "undone");
-      if (step.key === "kind") await redrawForKind();
-      else drawLines();
-    } catch (error) { failed(error.message, "Not undone"); }
-  }
 
   drawLines();
   wireDictation(app);
