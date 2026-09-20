@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
-from collections.abc import Callable
+from collections.abc import Mapping
 from pathlib import Path
 
 from . import secrets
@@ -55,8 +55,8 @@ class Config:
     vision_cloud_model: str = "claude-sonnet-5"
     #: The closer look, run only when asked for.
     vision_cloud_detail_model: str = "claude-opus-5"
-    #: Read once at startup from ANTHROPIC_API_KEY, else the login keychain
-    #: (see secrets.py). None is not an error: the hybrid reads locally.
+    #: Read once at startup from ANTHROPIC_API_KEY, else the project root's
+    #: .env (see secrets.py). None is not an error: the hybrid reads locally.
     anthropic_api_key: str | None = dataclasses.field(default=None, repr=False)
     #: Dollars, cumulative over every cloud job ever run. Past it the cloud
     #: tier is not offered and reading falls back to the local model, which is
@@ -103,23 +103,34 @@ class Config:
         }
 
 
+def env_file_path(e: Mapping[str, str], *, real: bool) -> Path | None:
+    """Which `.env` to read, if any.
+
+    `MOVING_ENV_FILE` names one -- that is how a test or a throwaway server
+    points at a fixture. Otherwise it is the project root's own `.env`, which
+    `ROOT` makes per-checkout: **a worktree has its own**, and should, since a
+    dev server in a worktree must not quietly pick up the main checkout's key.
+
+    A *dict* of variables is not this machine, so `from_env({...})` reads no
+    file unless it names one. That is what keeps the suite from ever finding a
+    real key, in the same spirit as `auto_analyse` being off by default.
+    """
+    named = e.get("MOVING_ENV_FILE")
+    if named:
+        return Path(named)
+    return ROOT / ".env" if real else None
+
+
 def from_env(
     env: dict[str, str] | None = None,
     *,
-    api_key_lookup: Callable[[], str | None] | None = None,
+    env_file: Path | None = None,
 ) -> Config:
-    """Configuration for a running process.
-
-    `from_env()` -- the real environment, the service or the CLI -- consults
-    the login keychain for the Anthropic key. `from_env({...})` -- a test, a
-    script building a throwaway config -- **never does**: a dict of variables
-    is not this machine, and a test that read the keychain would be a test that
-    could spend money. Pass `api_key_lookup` to say otherwise.
-    """
+    """Configuration for a running process."""
     real = env is None
     e = os.environ if real else env
-    if api_key_lookup is None:
-        api_key_lookup = secrets.from_keychain if real else (lambda: None)
+    if env_file is None:
+        env_file = env_file_path(e, real=real)
     var = ROOT / "var"
     return Config(
         db_path=Path(e.get("MOVING_DB_PATH", var / "moving.db")),
@@ -138,7 +149,7 @@ def from_env(
         vision_detail_model=e.get("MOVING_VISION_DETAIL_MODEL", "qwen3-vl:8b-instruct"),
         vision_cloud_model=e.get("MOVING_VISION_CLOUD_MODEL", "claude-sonnet-5"),
         vision_cloud_detail_model=e.get("MOVING_VISION_CLOUD_DETAIL_MODEL", "claude-opus-5"),
-        anthropic_api_key=secrets.anthropic_api_key(e, lookup=api_key_lookup),
+        anthropic_api_key=secrets.anthropic_api_key(e, env_file=env_file),
         vision_budget_usd=float(e.get("MOVING_VISION_BUDGET_USD", "30")),
         # The hybrid is the default for a running service: cloud first, the
         # local model whenever the cloud cannot answer. MOVING_VISION_PROVIDER

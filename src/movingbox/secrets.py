@@ -1,98 +1,107 @@
-"""Where the Anthropic API key comes from, and where it must never go.
+"""The `.env` file: where the Anthropic API key comes from, and where it must
+never go.
 
-Resolution order, most specific first:
+Two sources, most specific first:
 
-1. ``ANTHROPIC_API_KEY`` in the environment. This is the **primary** path and
-   it needs no code here at all: ``make run-cloud`` puts a 1Password secret
-   reference in the variable and lets ``op run`` replace it with the real
-   value for that child process only. The secret never touches disk, never
-   goes in a config file, and is synced between Macs by 1Password. Exporting
-   the variable by hand works identically, which is what a throwaway server, a
-   one-off script or a test does -- and what somebody without 1Password does.
-2. The **login keychain**, item ``moving-anthropic`` / account ``moving``,
-   read through ``/usr/bin/security``. The fallback, and the only path that
-   needs no interaction at all -- ``security`` is the item's own trusted
-   application, so reading it back raises no prompt. That is what lets the
-   service reach the cloud tier while it still runs under launchd. The owner
-   puts it there once, in their own terminal (never through a Claude session,
-   which would put the literal key in a transcript)::
+1. ``ANTHROPIC_API_KEY`` in the environment -- a test, a throwaway server, or
+   anyone who would rather export it by hand.
+2. **`.env` in the project root**, parsed for ``ANTHROPIC_API_KEY=...``.
+3. Neither, which is **not an error**: the hybrid falls back to the local
+   model, so an absent key degrades the *reading* rather than breaking the
+   app. Somebody who starts the service before putting the key in place gets
+   working local analysis, not an outage. This is the design, not an error
+   path, and it is the most important line in this module.
 
-       security add-generic-password -s moving-anthropic -a moving -w
+`.env` rather than a keychain, a plist variable or a secret manager, because
+the hazard list for this project is short and `.env` is already off all of it:
+`.gitignore` lists it under "Local secrets", so it cannot be committed by
+accident; backups use SQLite's online backup API against the database alone
+and never sweep the working tree; and `export.py` writes database contents,
+not files.
 
-   Omitting the value makes it prompt without echoing.
-3. **No key at all, which is not an error.** The hybrid falls back to the
-   local model, so an absent key degrades the *reading* rather than breaking
-   the app. Somebody who starts the app before authenticating gets working
-   local analysis, not an outage. This is the design, not an error path.
+The grammar is `KEY=VALUE`, `#` comments and blank lines, with surrounding
+quotes stripped -- parsed here rather than by adding python-dotenv, because
+this project keeps a deliberately thin dependency list and that is the whole
+of it. Keys the app does not know are ignored, since the file will grow other
+settings.
 
-Deliberately **not** the launchd plist: ``launchctl print`` renders a
-service's environment, so a variable there is readable by anything that can
-run launchctl. ``install-service.sh`` knows nothing about the key and its
-heredoc is left alone. The 1Password CLI is deliberately **not** a dependency
-of the app or of the suite; it belongs to one Makefile target.
-
-The value is read once, at startup, into `Config`. It is never logged, never
-put in an exception message (`vision.claude.redact` scrubs any that a reply
-quotes back), never announced as an event, never served by a route, and never
-written to the database. `Config` keeps it out of its own `repr` so a traceback
-cannot spill it into var/log.
+The value is read **once, at startup**, into `Config`. It is never logged,
+never put in an exception message (`vision.claude.redact` scrubs any that a
+reply quotes back), never announced as an event, never served by a route, and
+never written to the database. `Config` keeps it out of its own `repr` so a
+traceback cannot spill it into var/log. Nothing here ever reports *part* of a
+value: a malformed file says the file is malformed, and a rejected key says
+the key was rejected.
 """
 
 from __future__ import annotations
 
-import subprocess
-from collections.abc import Callable, Mapping
+import logging
+import stat
+from collections.abc import Mapping
+from pathlib import Path
 
-#: The keychain item. Generic password, the owner's login keychain.
-SERVICE = "moving-anthropic"
-ACCOUNT = "moving"
-SECURITY = "/usr/bin/security"
+log = logging.getLogger(__name__)
 
-#: `security` can put up a keychain-access prompt, and this runs under launchd
-#: where nobody is there to answer it. A service that hangs at startup is worse
-#: than one reading photos locally, so the wait is short and a timeout is
-#: simply "no key".
-TIMEOUT = 5.0
+#: Names the app reads out of the file. Anything else is somebody else's
+#: setting and is left alone rather than warned about.
+KNOWN = ("ANTHROPIC_API_KEY",)
 
 
-def from_keychain(
-    *,
-    service: str = SERVICE,
-    account: str = ACCOUNT,
-    timeout: float = TIMEOUT,
-    run: Callable[..., object] = subprocess.run,
-) -> str | None:
-    """The stored key, or None. Never raises, never hangs, never prompts twice.
+def parse(text: str) -> dict[str, str]:
+    """`KEY=VALUE` lines, `#` comments, blank lines, optional quotes.
 
-    `run` is injected so the suite can exercise this without touching the real
-    keychain -- a test that read it would be a test that could spend money.
+    A line that is not one of those is skipped rather than fatal: half a file
+    of settings should not stop the app, and the one thing that matters --
+    whether there is a key -- answers itself.
     """
+    found: dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].lstrip()
+        name, sep, value = line.partition("=")
+        name = name.strip()
+        if not sep or not name:
+            continue
+        value = value.strip()
+        # A quoted value keeps its spaces; an unquoted one has none to keep.
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        found[name] = value
+    return found
+
+
+def read(path: Path) -> dict[str, str]:
+    """Settings from the file at `path`. An absent file is simply no settings."""
     try:
-        done = run(
-            [SECURITY, "find-generic-password", "-s", service, "-a", account, "-w"],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        # No `security` binary, no keychain, or a prompt nobody answered.
-        return None
-    if getattr(done, "returncode", 1) != 0:
-        return None
-    # stdout is the secret and nothing else; stderr is deliberately not read,
-    # because anything that went wrong is "no key" and quoting it risks
-    # putting part of the item in a log.
-    return (getattr(done, "stdout", "") or "").strip() or None
+        text = path.read_text()
+    except FileNotFoundError:
+        return {}
+    except OSError as unreadable:
+        # Named, never quoted: the reason can mention the path, not the file.
+        log.warning("could not read %s: %s", path, unreadable.strerror)
+        return {}
+
+    try:
+        mode = path.stat().st_mode
+    except OSError:
+        mode = 0
+    if mode & (stat.S_IRGRP | stat.S_IROTH):
+        # Not fatal -- refusing to start over a file mode would be worse than
+        # the exposure -- but nobody notices this until it matters.
+        log.warning("%s is readable by other users; run: chmod 600 %s", path, path)
+
+    return parse(text)
 
 
-def anthropic_api_key(
-    env: Mapping[str, str],
-    *,
-    lookup: Callable[[], str | None] = from_keychain,
-) -> str | None:
-    """The key for this process, or None."""
+def anthropic_api_key(env: Mapping[str, str], *, env_file: Path | None) -> str | None:
+    """The key for this process, or None. None is a working configuration."""
     named = (env.get("ANTHROPIC_API_KEY") or "").strip()
     if named:
         return named
-    return lookup()
+    if env_file is None:
+        return None
+    return (read(env_file).get("ANTHROPIC_API_KEY") or "").strip() or None
