@@ -400,6 +400,7 @@ const IN_NESTED = async () => {
   check("a row with no photo draws what the record is",
         rows.every((b) => $(`#boxlist li[data-key="${b.code}"] .t .tk use`)?.getAttribute("href") === `#i-${b.kind}`),
         rows.map((b) => `${b.kind}:${$(`#boxlist li[data-key="${b.code}"] .t .tk use`)?.getAttribute("href")}`).join(" "));
+  const listThumb = Math.round($("#boxlist li .t").getBoundingClientRect().width);
 
   const full = await fetch(`/api/boxes/${holder.code}`).then((r) => r.json());
   await open(`#/b/${holder.code}`, "#inside");
@@ -408,6 +409,15 @@ const IN_NESTED = async () => {
           const row = $(`#inside li[data-key="${k.code}"]`);
           return row && row.querySelector(".in").textContent === (k.child_count ? `${k.child_count} inside` : "");
         }), Array.from(document.querySelectorAll("#inside li .in")).map((i) => i.textContent).join(","));
+  // The things inside a container are the things in your hands; the list is
+  // the index. Measured, because --thumb is a token the nested list overrides
+  // and a typo there is silently the list's own size.
+  const insideThumb = Math.round($("#inside li .t").getBoundingClientRect().width);
+  check("a row inside a container is drawn half again the size of a list row",
+        insideThumb === Math.round(listThumb * 1.5), `${insideThumb} vs ${listThumb}`);
+  check("and the kind's mark in it grows to match, on whole pixels",
+        Math.round($("#inside li .t .tk").getBoundingClientRect().width) === 40,
+        String($("#inside li .t .tk")?.getBoundingClientRect().width));
   check("Delete is not offered while things are inside; why is said instead",
         $("#delete-row").hidden && /Move the .*inside it out first/.test($("#delete-blocked").textContent), $("#delete-blocked")?.textContent);
   const singles = Array.from(document.querySelectorAll('.seg[data-name="kind"] input:disabled')).map((r) => r.value).sort();

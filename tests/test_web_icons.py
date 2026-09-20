@@ -185,3 +185,37 @@ def test_no_site_hard_codes_the_number():
     values = re.findall(r"border-radius:\s*([^;]+);", stylesheet())
     stray = [v.strip() for v in values if v.strip() not in {"var(--radius)", "50%", "0"}]
     assert not stray, stray
+
+
+# --- the rows inside a container -----------------------------------------
+
+
+def px(text: str, name: str) -> int:
+    found = re.search(rf"{re.escape(name)}:\s*(\d+)px", text)
+    assert found, f"{name} is not a plain px value in {text!r}"
+    return int(found.group(1))
+
+
+def test_a_nested_row_s_thumbnail_is_half_again_the_size_of_a_list_row_s():
+    root = rule(":root")
+    inside = rule("#inside")
+    assert px(inside, "--thumb") == round(px(root, "--thumb") * 1.5)
+
+
+def test_the_kind_mark_in_it_grows_to_match_and_lands_on_whole_pixels():
+    root = rule(":root")
+    inside = rule("#inside")
+    grown = px(inside, "--kind-icon")
+    # 26 x 1.5 is 39; 40 is the kinder number -- multiples of 8 land every
+    # edge on a pixel (docs/design/icons/NOTES.md).
+    assert grown % 8 == 0
+    assert round(px(root, "--kind-icon") * 1.5) <= grown <= round(px(root, "--kind-icon") * 1.6)
+
+
+def test_the_sizes_the_marks_are_drawn_at_are_the_ones_that_were_approved():
+    css = stylesheet()
+    assert "width: 16px" in rule(".i"), "the base mark is 16px (a chip's text size)"
+    assert "width: 24px" in rule(".bar a .i"), "24px stacked over the word on a phone"
+    # 20px beside the word in the desktop bar, inside the wide-screen block.
+    wide = css[css.index("@media (min-width: 46rem)") :]
+    assert re.search(r"\.bar a \.i\s*\{[^}]*width:\s*20px", wide)

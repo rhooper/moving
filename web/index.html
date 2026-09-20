@@ -274,6 +274,14 @@ ul.items li.renaming .ai { display: none; }
 }
 .boxlist .t img { width: 100%; height: 100%; object-fit: cover; display: block; position: relative; }
 
+/* A container's contents ("Inside this crate") are drawn with the list's own
+   rows, at half again the size: these are the things in your hands, and the
+   list is the index. One token does it -- the frame, the mark inside it and
+   the "in B-0012" line under it are all measured from --thumb. 66 is 44 + 50%;
+   40 rather than 39 for the mark, because multiples of 8 land every edge on a
+   whole pixel (docs/design/icons/NOTES.md). */
+#inside { --thumb: 66px; --kind-icon: 40px; }
+
 .boxlist .c { font-weight: 800; letter-spacing: -0.02em; }
 .boxlist .s { flex: 1; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .boxlist .w {
