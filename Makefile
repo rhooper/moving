@@ -12,8 +12,14 @@ PORT ?= 8788
 CHECK_PORT ?= 8797
 CDP_PORT ?= 9340
 
+# The Anthropic key as a 1Password secret reference, resolved by `op run` into
+# the child process only. The secret never touches disk, never appears in a
+# config file, and is synced between Macs by 1Password itself. Override to
+# point at a different item.
+OP_ANTHROPIC_REF ?= op://<vault>/<item>/credential
+
 .DEFAULT_GOAL := help
-.PHONY: help setup run test lint fmt check ui-check browser-check proof version version-minor version-major deploy install uninstall status labels backup
+.PHONY: help setup run run-cloud test lint fmt check ui-check browser-check proof version version-minor version-major deploy install uninstall status labels backup
 
 help:  ## list targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -25,6 +31,23 @@ setup:  ## install dependencies: Python (uv), the JS/CSS linters (npm), and the 
 
 run: setup  ## dev server with reload on :8788 (make run PORT=xxxx to change)
 	uv run moving serve --port $(PORT) --reload
+
+# The app's contract is simply ANTHROPIC_API_KEY in the environment, so this
+# target is the whole of the cloud-tier setup: no secret-reading code, nothing
+# on disk, nothing in a plist. `op run` replaces the op:// reference with the
+# real value for the child process and for nothing else.
+#
+# Both guards are here so the failure is a sentence rather than an op error or
+# a hang: this runs in the foreground and `op` may want to authenticate. Plain
+# `make run` is unaffected and reads photos with the local model.
+run-cloud: setup  ## dev server with the Claude tier, key from 1Password (needs `op signin`)
+	@command -v op >/dev/null 2>&1 || { \
+	  echo "The 1Password CLI is not installed:  brew install 1password-cli"; \
+	  echo "Or export ANTHROPIC_API_KEY yourself and use 'make run'."; exit 1; }
+	@op whoami >/dev/null 2>&1 || { \
+	  echo "1Password is not signed in.  Run:  eval \"\$$(op signin)\"  then try again."; \
+	  echo "Or export ANTHROPIC_API_KEY yourself and use 'make run'."; exit 1; }
+	ANTHROPIC_API_KEY="$(OP_ANTHROPIC_REF)" op run -- uv run moving serve --port $(PORT)
 
 test:  ## run the test suite (printer forced to fake)
 	uv run pytest -q

@@ -2,25 +2,34 @@
 
 Resolution order, most specific first:
 
-1. ``ANTHROPIC_API_KEY`` in the environment -- what a throwaway server, a
-   one-off script or a test uses, and what must keep working.
+1. ``ANTHROPIC_API_KEY`` in the environment. This is the **primary** path and
+   it needs no code here at all: ``make run-cloud`` puts a 1Password secret
+   reference in the variable and lets ``op run`` replace it with the real
+   value for that child process only. The secret never touches disk, never
+   goes in a config file, and is synced between Macs by 1Password. Exporting
+   the variable by hand works identically, which is what a throwaway server, a
+   one-off script or a test does -- and what somebody without 1Password does.
 2. The **login keychain**, item ``moving-anthropic`` / account ``moving``,
-   read through ``/usr/bin/security``. The owner puts it there once, in their
-   own terminal (never through a session, which would put the literal key in a
-   transcript):
+   read through ``/usr/bin/security``. The fallback, and the only path that
+   needs no interaction at all -- ``security`` is the item's own trusted
+   application, so reading it back raises no prompt. That is what lets the
+   service reach the cloud tier while it still runs under launchd. The owner
+   puts it there once, in their own terminal (never through a Claude session,
+   which would put the literal key in a transcript)::
 
        security add-generic-password -s moving-anthropic -a moving -w
 
    Omitting the value makes it prompt without echoing.
-3. **No key at all, which is not an error.** The hybrid falls back to the local
-   model, so an absent key degrades the *reading* rather than breaking the app.
-   Somebody restarting the service before they have authenticated gets working
+3. **No key at all, which is not an error.** The hybrid falls back to the
+   local model, so an absent key degrades the *reading* rather than breaking
+   the app. Somebody who starts the app before authenticating gets working
    local analysis, not an outage. This is the design, not an error path.
 
-Deliberately **not** the launchd plist: ``launchctl print`` renders a service's
-environment, so a variable there is readable by anything that can run
-launchctl. ``install-service.sh`` knows nothing about the key and its heredoc
-is left alone.
+Deliberately **not** the launchd plist: ``launchctl print`` renders a
+service's environment, so a variable there is readable by anything that can
+run launchctl. ``install-service.sh`` knows nothing about the key and its
+heredoc is left alone. The 1Password CLI is deliberately **not** a dependency
+of the app or of the suite; it belongs to one Makefile target.
 
 The value is read once, at startup, into `Config`. It is never logged, never
 put in an exception message (`vision.claude.redact` scrubs any that a reply
