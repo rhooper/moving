@@ -148,6 +148,21 @@ class TestWhatTheParentShows:
         assert codes(path) == [crate, box]
         assert path[0]["content_summary"] == "kitchen"
 
+    def test_each_step_out_says_where_it_is_going_and_whether_it_is_fragile(self, client):
+        # A nested record goes where its container goes, and a fragile thing
+        # makes its containers fragile: the page needs both from the path.
+        room = client.post("/api/rooms", json={"name": "Kitchen"}).json()["id"]
+        crate = made(client, kind="crate", destination_room_id=room, fragile=True)
+        box = made(client, kind="box", parent_code=crate)
+        bag = made(client, kind="bag", parent_code=box)
+
+        path = client.get(f"/api/boxes/{bag}").json()["path"]
+
+        assert [(s["code"], s["destination_room_id"], s["fragile"]) for s in path] == [
+            (crate, room, 1),
+            (box, None, 0),
+        ]
+
     def test_a_top_level_record_has_no_way_out_and_nothing_inside(self, client):
         box = client.get(f"/api/boxes/{made(client)}").json()
 
