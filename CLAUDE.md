@@ -519,8 +519,9 @@ and `parent`. The store keeps the pointer honest since it has no foreign key:
 a parent must exist, be a container (`holds_contents`), not be binned, and not
 be inside the thing being moved; **a container holding things can neither be
 deleted (409) nor become a single thing**. Browsing shows the top level only
-(`parent_id IS NULL`); **search looks everywhere** and each row carries
-`parent_code` to say where. What is inside counts as contents for the print
+(`parent_id IS NULL`); **search looks everywhere**, and brings back the
+containers its results are inside so the page can group them
+(`store.search_with_containers`). What is inside counts as contents for the print
 gate. Moves announce `box.updated` for both containers. Nested records keep a
 code -- they are opened and scanned like any other -- but nothing prints unless
 asked; "generally won't have a label". Deleting a nested record and restoring
@@ -538,11 +539,53 @@ its own child, a single thing, the bin) so the 422 is the exception, and a
 refused move is not retried by Undo either -- it was, once. Delete is withdrawn
 and the single-thing kinds greyed (`segmented.restrict()`, real `disabled`,
 arrow keys skip) while things are inside. `#/new/in/CODE` is the new-record
-form pre-set inside a container, plain Create first. The list says "3 inside";
-a nested search result says "in B-0012" on a line *above* the row's rule, which
-is why that rule moved from the `<a>` to the `<li>`. The record carries `parent`
+form pre-set inside a container, plain Create first. The list says "3 inside".
+The record carries `parent`
 (a step) but no `parent_code` field; the page keeps a hidden `parent_code` input
 for the autosaver and reads `fresh.parent` on landing.
+
+**Search results are drawn as groups: the container first, then what was found
+inside it, indented** (asked for as "in search results, put the parent box
+first. indent subitems. then we don't need in B-xxxx"). This *replaced* the
+"in B-0012" line that used to sit under a nested result -- its `.at` markup and
+styling are gone, and so is the reason the row's bottom rule sat on the `<li>`
+rather than on its `<a>`; it is back on the link, where it starts at the row's
+indent so a group reads as one thing.
+
+- **The server sends what the grouping needs, in one request.** Every row of
+  `/api/search` carries `matched` (false for a container brought along as
+  context) and `ancestry` (the codes it is inside, outermost first). Ancestry
+  per row rather than a parent per row plus a list of groups: `parent_code` is
+  one level and cannot group a bag in a box in a crate, and a chain on each row
+  is everything the rule needs to run in one pass over what it was given. Two
+  queries whatever the depth -- one `WITH RECURSIVE` walking *up* from every
+  match at once, the mirror of `subtree`, then one pass for the context rows.
+  Matches lead, in relevance order.
+- **`groupMatches` in `web/nesting.js` is the rule, and it is pure.** It walks
+  the rows in the order search returned them and places each one's containers
+  in front of it, so a group takes the place of the first match inside it.
+  Depth counts only the containers *present in the results*, so a chain the
+  server did not send cannot indent a row off the edge of a phone. Two things
+  it must not do, both pinned by tests: lose a match, and draw a record twice
+  when it is both a result and the place another result lives. A row with no
+  `matched` flag counts as a match, which is what lets browsing and a
+  container's contents go through the same one path, flat.
+- **The indent is capped in the stylesheet, not in the rule** (three steps of
+  0.85rem, `--depth` on the `<li>`): the number stays honest however deep the
+  nesting goes while the picture stops walking right. Photographed at 320 px
+  with a chain five deep -- it reads, and the last two rows sit at the same
+  inset. What it costs is the summary column, which ellipsises a few characters
+  earlier the deeper a row is; two levels is the realistic case and loses
+  almost nothing.
+- **A container that did not itself match is still a real row**, marked
+  `data-context` with its code quieted so the eye lands on the matches. Nothing
+  else about it changes. Search is the one view that looks inside containers,
+  and it must never hide, drop or double what it found.
+- **`viewBoxes` no longer writes the rows out as a template.** It draws an
+  empty `<ul>` and lets `rowFor`/`fillRow` fill it through `patchBoxList`, so
+  the first draw and every live refresh are literally the same code. The
+  template had to match them element for element, and a list built two ways is
+  a list that ends up disagreeing with itself.
 
 Two more, asked for as "subitems should hide the destination input" and
 "fragile should percolate up to the parent and set that (prompt to set if it's
@@ -976,7 +1019,15 @@ word from the generated comment; they are escaped now.
   (`rowStatus` in `covers.js`). One function on purpose: the first draw used to
   show the kind while the live-update path overwrote it with the location, and
   the two disagreed silently. The current location is no longer in the list; it
-  hid the status, and it has the whole record page.
+  hid the status, and it has the whole record page. **A row inside a container
+  shows no packing status at all** -- asked for as "if its a subitem of a box,
+  don't show the packing status, since we can assume they're closed", and
+  generalised to nested inside *anything*, because the reasoning does not turn
+  on what kind the container is. The cell was repeating the container's state
+  rather than saying anything of its own. `parent_code` on the row is the
+  signal, which is why a container's contents are no longer drawn with it
+  nulled; a test drives a row into a container and out again, because that is
+  the transition the one-function rule exists for.
 - **`node --check web/app.js` proves nothing.** On a `.js` file containing
   `import`, Node 23.3 exits 0 without parsing it as a module, so a missing brace
   passes. It was the syntax guard for a day of patches before a subagent
