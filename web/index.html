@@ -9,9 +9,8 @@
 <link rel="icon" href="/icon-192.png">
 <link rel="apple-touch-icon" href="/icon-192.png">
 <style>
-/* The printed label is the design. Inter is the label's typeface, true black
-   is what a thermal printer actually puts on tape, and the knockout band that
-   carries the room name on the label carries it here too. */
+/* The printed label is the design: its typeface, true black, and the room's
+   knockout band. */
 @font-face {
   font-family: "Inter";
   src: url("/Inter.ttf") format("truetype-variations");
@@ -30,11 +29,7 @@
   --bar: 56px;     /* the nav bar: a 24px mark stacked over its word */
   --thumb: 44px;   /* the cover square on a list row */
   --kind-icon: 26px;   /* the kind's mark in that square, while there is no photo */
-  /* Slightly rounded corners on the box-like surfaces, asked for on
-     2026-09-20. Only through this token, so "slightly rounded" stays one
-     decision rather than a dozen. It does not reach the printed label: that
-     is rendered in Python onto tape, and a thermal printer's corners are
-     square. Glyphs keep their hard edges -- an icon is type, not a box. */
+  /* Box-like surfaces only, and only through this token. Glyphs stay square. */
   --radius: 4px;
 }
 
@@ -50,11 +45,9 @@
 
 * { box-sizing: border-box; }
 
-/* The JS toggles visibility with el.hidden, and the browser's own
-   `[hidden] { display: none }` loses to any author display rule -- which is
-   how the printer badge (display: flex) showed "Printer offline" forever
-   while the printer sat there online. Author-level and !important so no
-   display rule can re-defeat it. */
+/* The JS hides things with el.hidden, and the browser's own rule for it loses
+   to any author display rule (a display: flex badge would never hide).
+   Author-level and !important, so no display rule can defeat it. */
 [hidden] { display: none !important; }
 
 body {
@@ -71,16 +64,15 @@ main { max-width: 34rem; margin: 0 auto; padding: 0.25rem 1rem 6rem; }
 
 /* --- the way home: top left, on every page --- */
 .home {
-  /* A 48 px target around a 32 px mark, pulled left so the *mark* -- not its
-     padding -- lines up with the text below it. 32 because the mark is drawn
-     on a 16-unit grid: multiples of 8 land every edge on a whole pixel. */
+  /* A 48px target around a 32px mark, pulled left so the *mark* lines up with
+     the text below. The mark's 16-unit grid lands on whole pixels at multiples
+     of 8. */
   display: flex;
   align-items: center;
   gap: 0.6rem;
   width: max-content;
   min-height: var(--tap);
-  /* <main> is a centred 34rem column with 1rem of padding; this follows its
-     left edge, less the link's own 0.5rem, and never leaves the screen. */
+  /* Follows <main>'s left edge, less the link's own 0.5rem, never off screen. */
   margin: 0.25rem 0 0 max(0.5rem, calc((100vw - 34rem) / 2 + 0.5rem));
   padding: 0 0.5rem;
   color: var(--ink);
@@ -90,24 +82,16 @@ main { max-width: 34rem; margin: 0 auto; padding: 0.25rem 1rem 6rem; }
 .home span { display: none; font-weight: 800; letter-spacing: -0.02em; text-transform: uppercase; }
 .home:focus-visible { outline: 3px solid var(--signal); outline-offset: -3px; }
 
-/* --- the icon family: the home mark's grid, one sprite, no font ---------
-   Every mark is one evenodd path on the same 16-unit grid as the mark above
-   (source and rationale in docs/design/icons/). They are inlined once as
-   <symbol>s at the top of <body> and drawn as <svg class="i"><use href="#i-…">.
-
-   `fill` is set *here*, on the referencing element, and not on the sprite:
-   a <use> clones the symbol into a shadow tree whose ancestors are this
-   <svg>, so the fill="currentColor" on the sprite's own root never reaches
-   the paths. Without this rule every mark is black, which in dark mode is
-   black on black. currentcolor also means a chip's `on` state carries its
-   glyph with it -- the colour is the chip's state, never the icon's.
-
-   16px is the base: the size beside chip text. Everywhere else says so. */
+/* --- the icon family: symbols in the sprite at the top of <body> ---------
+   `fill` is set here, on the referencing element, not on the sprite: a <use>
+   clone's ancestors are this <svg>, so the sprite's own fill never reaches the
+   paths, and every mark would be black on black in dark mode. 16px is the
+   base; anywhere else sets its own size. */
 .i { flex: none; width: 16px; height: 16px; fill: currentcolor; }
 
 a { color: inherit; }
 
-/* --- the box identity: the hero, mirroring the tape in your hand --- */
+/* --- the box identity, mirroring the tape --- */
 .code {
   font-size: clamp(3.25rem, 17vw, 5.5rem);
   font-weight: 800;
@@ -129,8 +113,6 @@ a { color: inherit; }
 }
 
 .flags { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.75rem; }
-/* The label's own glyphs, beside the word: these two chips are printed on the
-   tape, which is the whole argument for drawing them here. */
 .flag {
   display: inline-flex;
   align-items: center;
@@ -208,14 +190,11 @@ ul.items .qty { color: var(--muted); font-variant-numeric: tabular-nums; }
 ul.items .ai { color: var(--muted); font-size: 0.75rem; }
 ul.items button { width: auto; min-height: 2rem; padding: 0.2rem 0.5rem; border: 0; background: none; color: var(--muted); cursor: pointer; }
 
-/* An item's name is a button: tap it and it becomes a field. It is set as
-   the text it stands for, not as a control -- the list is for reading first.
-   The field that replaces it is exactly as tall as the Remove button beside
-   it, so opening one does not move the rows below under a thumb. */
+/* An item's name is a button that becomes a field when tapped. The field is
+   exactly as tall as the Remove button beside it, so opening one does not move
+   the rows below. */
 ul.items .what { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 0.5rem; min-width: 0; }
-/* Beside a name that can be edited, the count takes only the room it needs.
-   Sharing the row half and half left a name 40% of a phone's width, which
-   pushed "autogenerated" onto a second line and the field down to a stub. */
+/* Beside an editable name the count takes only the room it needs. */
 ul.items .what ~ .qty { flex: 0 0 auto; }
 ul.items .what .ai { flex: 0 0 auto; }
 ul.items .name {
@@ -231,20 +210,12 @@ ul.items .rename { flex: 1; min-width: 0; min-height: 2rem; height: 2rem; paddin
 ul.items li.renaming .ai { display: none; }
 
 .boxlist { list-style: none; margin: 0; padding: 0; }
-/* Rows alternate backgrounds rather than sitting on a rule (asked for as
-   "remove the <hr> between list items, and instead use alternating
-   dark/slightly less dark backgrounds"). --sunk is exactly that pair against
-   --paper in both themes, so there is no new colour. The stripe is on the
-   link, whose indent is *padding* -- inside the background -- so every stripe
-   spans the full row while an indented row's content still steps in. It is
-   :nth-child, so a row added or removed by a live refresh re-stripes by
-   itself with nothing to keep in step. Square on purpose: a stripe replaces a
-   rule, and a rule is not a box.
+/* Striped rows. The stripe is on the link, whose indent is padding, so it spans
+   the full row while an indented row's content steps in; :nth-child re-stripes
+   itself on a live refresh. Square: a stripe is a rule, not a box.
 
-   --depth is how many containers of a search result are on screen above it
-   (groupMatches in nesting.js). Capped at three steps here rather than in the
-   rule, so the number stays honest however deep the nesting goes while the
-   picture stops walking off a 320px screen. */
+   --depth (groupMatches) is capped at three steps here, so deep nesting cannot
+   walk off a 320px screen. */
 .boxlist li > a {
   display: flex;
   align-items: baseline;
@@ -255,11 +226,9 @@ ul.items li.renaming .ai { display: none; }
 }
 .boxlist li:nth-child(even) > a { background: var(--sunk); }
 
-/* The cover thumbnail, so a box is recognisable by sight rather than by
-   reading its code. The frame is drawn on every row whether or not there is a
-   picture -- fixed size, never derived from the image -- so a row without one
-   is the same height as its neighbours, and a photo arriving on a live
-   refresh fills the gap instead of pushing the list down under your thumb. */
+/* The cover thumbnail frame, on every row at a fixed size and never sized from
+   the image, so a photo arriving on a live refresh fills its gap rather than
+   pushing the list down under a thumb. */
 .boxlist .t {
   flex: 0 0 var(--thumb);
   width: var(--thumb);
@@ -271,11 +240,8 @@ ul.items li.renaming .ai { display: none; }
   overflow: hidden;
   position: relative;
 }
-/* No cover yet: what the record *is*, quietly, in the gap the photo would
-   fill. It was the same open box on every row, which said nothing; the kind's
-   own mark says something and costs nothing. Drawn under the photo rather
-   than instead of it, so a picture simply paints over it and no JS decides
-   when it shows. currentcolor via `color`, so it follows the theme. */
+/* The kind's mark, under the photo, so a picture paints over it and no JS
+   decides when it shows. */
 .boxlist .t .tk {
   position: absolute;
   inset: 0;
@@ -287,12 +253,8 @@ ul.items li.renaming .ai { display: none; }
 }
 .boxlist .t img { width: 100%; height: 100%; object-fit: cover; display: block; position: relative; }
 
-/* A container's contents ("Inside this crate") are drawn with the list's own
-   rows, at half again the size: these are the things in your hands, and the
-   list is the index. One token does it -- the frame and the mark inside it
-   are both measured from --thumb. 66 is 44 + 50%;
-   40 rather than 39 for the mark, because multiples of 8 land every edge on a
-   whole pixel (docs/design/icons/NOTES.md). */
+/* "Inside this crate": the list's rows at half again the size. 40, not 39, for
+   the mark: multiples of 8 land every edge on a whole pixel. */
 #inside { --thumb: 66px; --kind-icon: 40px; }
 
 .boxlist .c { font-weight: 800; letter-spacing: -0.02em; }
@@ -310,37 +272,23 @@ ul.items li.renaming .ai { display: none; }
 .boxlist .w .k { color: var(--ink); font-weight: 650; }
 .boxlist .w .in { color: var(--ink); }
 
-/* A container that did not match, shown because something inside it did. Its
-   code is quieted so the eye lands on the matches under it -- everything else
-   about the row is unchanged, because it is still a record you can tap, and a
-   search must never hide what it found. */
+/* A container shown because something inside it matched: quieted, still tappable. */
 .boxlist li[data-context] .c { color: var(--muted); font-weight: 650; }
 
-/* The way out of a nested record: the path, outermost first, above the code.
-   One line on a desktop; on a phone it may wrap. */
+/* The path out of a nested record, outermost first, above the code. */
 .trail { display: flex; flex-wrap: wrap; align-items: center; gap: 0 0.15rem; margin: 0.25rem 0 -0.25rem; font-size: 1rem; color: var(--muted); }
 .trail .sep { user-select: none; }
 @media (min-width: 46rem) { .trail { flex-wrap: nowrap; white-space: nowrap; } }
 
-/* Both links to the containing record -- the breadcrumb above the code and
-   the line in "What it is inside" -- in one rule, so they cannot drift apart.
-   Asked for as "make the parent container font larger to make it easy to
-   click": this is the link a thumb reaches for while the other hand is
-   holding the box, and it was set as a caption. Body size now, and padded to
-   a full --tap on the touch dimension.
-
-   The padding is what makes the target, so it must not be what makes the
-   layout: the line it sits in keeps the same height whether or not there is
-   a link in it (see #inside-of below), and the first crumb is pulled back by
-   its own padding so the row still starts on the column's edge. A tap target
-   that moves between the press and the release is a bug this project has
-   already had once, on Undo. */
+/* Both links to the containing record, in one rule so they cannot drift apart:
+   body size, and a full --tap tall. The line holding one keeps its height with
+   or without it (#inside-of), and the first crumb is pulled back by its padding
+   so the row starts on the column's edge. */
 .trail a, #inside-of a {
   display: inline-flex;
   align-items: center;
   min-height: var(--tap);
-  /* Vertical is what makes the target; horizontal only has to keep the
-     sentence reading as a sentence, so it stays at the width of a space. */
+  /* A space wide, so the sentence still reads as one. */
   padding-inline: 0.25rem;
   border-radius: var(--radius);
   font-size: 1rem;
@@ -348,16 +296,13 @@ ul.items li.renaming .ai { display: none; }
   color: var(--ink);
 }
 .trail a:first-child { margin-left: -0.25rem; }
-/* The last step of the breadcrumb is the page you are on -- not a link, but
-   spaced like one, so the separators sit evenly between the steps. */
+/* The current page: not a link, but spaced like one so separators sit evenly. */
 .trail [aria-current] { padding-inline: 0.25rem; }
 .trail a:focus-visible, #inside-of a:focus-visible { outline: 3px solid var(--signal); outline-offset: -3px; }
 
-/* The line that says what this record is inside. It holds its height whether
-   it carries the link out or says "Not inside anything.", so a move -- which
-   redraws it in place, under a finger -- never shifts the section below it.
-   One flex item: the sentence is wrapped in a span by showInside(), because a
-   flex container would otherwise swallow the spaces around the link. */
+/* Holds its height with or without the link, so a move, redrawn in place under
+   a finger, never shifts the section below. showInside() wraps the sentence in
+   a span: a flex container would swallow the spaces around the link. */
 #inside-of { display: flex; flex-wrap: wrap; align-items: center; min-height: var(--tap); margin: 0; font-size: 1rem; }
 
 .empty { color: var(--muted); padding: 2rem 0; }
@@ -372,10 +317,8 @@ ul.items li.renaming .ai { display: none; }
   border-top: 1px solid var(--line);
   padding-bottom: env(safe-area-inset-bottom);
 }
-/* The mark over the word, never instead of it: "Items" and "New" are not
-   guessable from a list glyph and a plus, and the bar has the room. Stacking
-   the two grows the bar from --tap to --bar, which is why everything that
-   sits above the bar measures itself from --bar rather than from --tap. */
+/* The mark over the word, never instead of it. That grows the bar from --tap to
+   --bar, so whatever sits above the bar measures from --bar. */
 .bar a {
   flex: 1;
   min-height: var(--bar);
@@ -392,18 +335,13 @@ ul.items li.renaming .ai { display: none; }
 .bar a .i { width: 24px; height: 24px; }
 .bar a[aria-current="page"] { background: var(--ink); color: var(--paper); }
 
-/* On a phone the nav sits at the bottom, where your thumb is. On a desktop
-   there is no thumb and the bottom of a tall window is the furthest point
-   from the content, so it moves to the top and stops spanning the full
-   width. */
+/* Desktop: the nav moves to the top, one row, the mark beside the word. */
 @media (min-width: 46rem) {
-  /* No thumb up here, and the bar is one row again: the mark sits beside the
-     word at 20px and the bar is back to a tap's height. */
   :root { --bar: var(--tap); }
 
   main { padding-top: 4.5rem; padding-bottom: 3rem; }
 
-  /* On a desktop the top-left corner is the corner of the bar. */
+  /* The top-left corner is the corner of the bar. */
   .home {
     position: fixed;
     top: 0;
@@ -415,9 +353,7 @@ ul.items li.renaming .ai { display: none; }
   .home svg { width: 24px; height: 24px; }
   .home span { display: inline; }
 
-  /* The room band runs edge to edge on a phone, mirroring the printed label.
-     On desktop the column *is* the page, so it aligns to the column instead
-     of hanging 1rem off each side. */
+  /* Edge to edge on a phone; aligned to the column here. */
   .band { margin-inline: 0; }
 
   .bar {
@@ -437,8 +373,8 @@ ul.items li.renaming .ai { display: none; }
     font-size: 0.9375rem;
   }
   .bar a .i { width: 20px; height: 20px; }
-  /* .bar .version, not .version: the phone rule above is written later in
-     this file than this block, and at equal specificity later wins. */
+  /* .bar .version, not .version: the phone rule comes later in this file, and
+     at equal specificity later wins. */
   .bar .version {
     position: static;
     display: flex;
@@ -449,9 +385,7 @@ ul.items li.renaming .ai { display: none; }
   }
 }
 
-/* Shown only when a change arrived while someone was mid-edit or mid-tap, so
-   the screen could not simply redraw itself. It sits above the nav rather
-   than inside the page, because the page is exactly what must not move. */
+/* A held refresh. Above the nav, not in the page: the page must not move. */
 #live {
   position: fixed;
   left: 0; right: 0;
@@ -477,20 +411,15 @@ ul.items li.renaming .ai { display: none; }
 .say { border-left: 3px solid var(--ink); padding: 0.5rem 0.75rem; margin: 0 0 1rem; background: var(--sunk); border-radius: var(--radius); }
 .say.warn { border-left-color: var(--signal); }
 
-/* What reading photos has cost, against the cap. Not .bar -- that is the
-   navigation. Ink on sunk, like everything else that is a quantity here; the
-   signal colour is kept for the one state that needs acting on. */
+/* Photo reading spend against the cap. Not .bar, which is the navigation. */
 .spend { margin: 0.75rem 0 0.25rem; }
 .spend .spent { font-weight: 600; }
 .gauge { height: 6px; background: var(--sunk); border: 1px solid var(--line); margin: 0 0 0.75rem; }
 .gauge span { display: block; height: 100%; background: var(--ink); }
 [data-reading="over"] .gauge span { background: var(--signal); }
 
-/* The record page saves itself; this line under each of its forms says how
-   that is going, and carries Undo. It is always there and as tall as the
-   button it sometimes holds, so "Saved" arriving -- every few seconds, while
-   somebody types -- never moves the page. A failure is marked the way every
-   other one is: ink text, a signal rule down the side. */
+/* The autosave line, with Undo. Always there and as tall as the button it may
+   hold, so "Saved" arriving while somebody types never moves the page. */
 .autosave {
   display: flex;
   align-items: center;
@@ -501,10 +430,8 @@ ul.items li.renaming .ai { display: none; }
   font-size: 0.8125rem;
   line-height: 1.3;
 }
-/* The text takes the room and Undo sits at the far end, so the button does
-   not slide sideways when "Saving…" becomes "Not saved yet — will retry". It
-   did, at first: pressing Undo blurs the field, which changes the text, which
-   moved the button out from under the finger between press and release. */
+/* Undo sits at the far end so it cannot slide when the text changes: pressing
+   it blurs the field, which changes the text between press and release. */
 .autosave-state { flex: 1; min-width: 0; }
 .autosave.warn .autosave-state {
   color: var(--ink);
@@ -524,9 +451,6 @@ ul.items li.renaming .ai { display: none; }
   cursor: pointer;
 }
 
-/* The override for printing an empty box: present only when it applies, and
-   never pre-ticked. */
-/* An action failed; the page behind it is still good. */
 dialog {
   width: min(28rem, calc(100vw - 2rem));
   padding: 1.25rem;
@@ -540,8 +464,7 @@ dialog h2 { margin: 0 0 0.5rem; font-size: 1.125rem; font-weight: 800; letter-sp
 /* pre-line: a confirmation may run to two paragraphs. */
 dialog p { margin: 0 0 1rem; overflow-wrap: anywhere; white-space: pre-line; }
 dialog form { margin: 0; }
-/* One photo, large, with what the model saw in it. Wider than the question
-   dialogs, and it scrolls as a whole on a phone rather than clipping the list. */
+/* The photo viewer scrolls as a whole on a phone rather than clipping the list. */
 dialog.viewer {
   width: min(64rem, calc(100vw - 1rem));
   max-height: calc(100dvh - 1rem);
@@ -560,7 +483,7 @@ dialog.viewer .seen { padding: 0.75rem 0.25rem 0.25rem; }
 dialog.viewer .seen h2 { margin-bottom: 0.35rem; }
 dialog.viewer .seen p { margin: 0 0 0.6rem; }
 dialog.viewer ul.items { margin-bottom: 0.75rem; }
-/* No Remove button here to hold the count at the edge, as the main list has. */
+/* No Remove button here to hold the count at the edge. */
 dialog.viewer ul.items .qty { flex: 0 0 auto; }
 dialog.viewer[data-state="error"] .note { color: var(--signal); }
 dialog.viewer .reads { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; }
@@ -574,23 +497,17 @@ dialog.viewer .reads .meta { flex: 1 1 100%; margin: 0; }
 
 dialog .row > * { flex: 1; }
 
-/* Editing something inside a container, over the container's page. Taller
-   than the questions: it is a record, and it scrolls as a whole on a phone. */
+/* The sub-item editor scrolls as a whole on a phone. */
 dialog.editor { width: min(32rem, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); overflow: auto; border-radius: var(--radius); }
 dialog.editor h2 { margin-bottom: 0.2rem; }
 dialog.editor #child-where { margin-bottom: 0.5rem; }
 dialog.editor form { margin: 0; }
 dialog.editor #child-links { margin: 0.75rem 0 0.5rem; }
 
-/* A section with nothing in it starts folded; one with something in it starts
-   open, and nothing with content is ever folded away. Native <details>, so it
-   is keyboard-operable and announced with no script of ours.
-
-   The marker is drawn here rather than inherited: the default triangle
-   differs between browsers, and the phone this is used on is Firefox. Three
-   ways of removing it, because each browser has its own: Firefox stops
-   drawing it once the summary is not a list-item, Safari needs the pseudo,
-   and list-style covers the rest. */
+/* Folding sections (<details>). The marker is drawn here, since the default
+   differs between browsers, and removing the default takes three rules:
+   Firefox stops once the summary is not a list-item, Safari needs the
+   pseudo-element, and list-style covers the rest. */
 .fold { border-top: 1px solid var(--line); }
 .fold > summary {
   display: flex;
@@ -610,16 +527,10 @@ dialog.editor #child-links { margin: 0.75rem 0 0.5rem; }
 .fold-body { padding-bottom: 0.75rem; }
 .fold-body > .seg:first-child { margin-top: 0; }
 
-/* The viewfinder, live in the add dialog, and the still it takes. One fixed
-   shape for both, so the dialog does not jump when the stream arrives and
-   again when the photo replaces it. Put away altogether when there is neither
-   -- a dead grey rectangle says nothing about why there is no camera. */
+/* One fixed shape for the viewfinder and its still, so the dialog does not jump. */
 .shotbox { aspect-ratio: 4 / 3; margin-top: 0.5rem; background: var(--sunk); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .shotbox video, .shotbox img { display: block; width: 100%; height: 100%; object-fit: cover; }
 
-/* Adding something inside a container, without leaving its page: the kind, a
-   photo, where it came from. The photo is the point, so its button is the
-   filled one; Cancel keeps the safe focus as every question here does. */
 dialog.adder { width: min(30rem, calc(100vw - 2rem)); }
 dialog.adder .nb { white-space: nowrap; }
 #goes-with { margin-top: 0.5rem; }
@@ -631,9 +542,8 @@ dialog.adder .meta.warn { color: var(--ink); border-left: 3px solid var(--signal
 #inside-said.warn { color: var(--ink); border-left: 3px solid var(--signal); padding-left: 0.5rem; }
 .btn.danger { background: var(--signal); border-color: var(--signal); color: #fff; }
 
-/* The running version. On a phone it sits just above the bar, at the right,
-   out of the bar's flex flow so it takes no tap-sized slot; on a desktop it is
-   an item of the bar, beside the menu (see the wide-screen rules below). */
+/* The running version: above the bar on a phone, out of its flex flow so it
+   takes no tap-sized slot; an item of the bar on a desktop. */
 .version {
   position: fixed;
   right: 0.75rem;
@@ -659,26 +569,16 @@ dialog.adder .meta.warn { color: var(--ink); border-left: 3px solid var(--signal
   white-space: nowrap;
 }
 
-/* A row of joined pushbuttons, [ Box | Tub | Crate ], in place of a dropdown
-   (segmented.js). Real radios underneath, each hidden inside the <label>
-   drawn as its button. Every button carries its own border and overlaps its
-   neighbour's by a pixel, so the row reads as one bar and, when it wraps,
-   as a grid -- no half-borders at the ends of a wrapped line. A button is as
-   wide as its words need, so a long room name is never cut short, and the
-   buttons on a full line share what is left over so the line ends flush. The
-   last line does not: an invisible item after the last button soaks up the
-   slack there. Without it a lone "Extra large" stretched into a bar the full
-   width of the phone, and looked like a different kind of control. The chosen
-   one is ink on paper inverted, like .step.now; the signal colour is for the
-   focus ring only. */
+/* Joined pushbuttons over real radios (segmented.js). Each button has its own
+   border and overlaps its neighbour by a pixel, so a wrapped row reads as a
+   grid. Buttons are as wide as their words and share a full line's slack; the
+   ::after item soaks up the last line's, or a lone button would stretch into a
+   full-width bar. */
 .seg { border: 0; padding: 0; margin: 0.75rem 0 0; min-width: 0; }
 .seg legend { padding: 0; }
-/* One control, so the rounding belongs to the row and not to its buttons: the
-   seams where they meet stay square. It is on the row rather than on the first
-   and last button because the row wraps on a phone -- a six-kind row is two or
-   three lines at 320px -- and those two buttons are mid-line as often as not.
-   `overflow: hidden` is what squares the inside and rounds the outside in one
-   go; the focus ring is inset (outline-offset: -3px) so clipping cannot eat it. */
+/* Rounded as one control, seams square. On the row rather than the end buttons,
+   because it wraps. `overflow: hidden` does both; the focus ring is inset so
+   clipping cannot eat it. */
 .seg-row { display: flex; flex-wrap: wrap; padding: 0 1px 1px 0; border-radius: var(--radius); overflow: hidden; }
 .seg-row::after { content: ""; flex: 1000 0 0; }
 .seg-row label { display: flex; flex: 1 1 auto; margin: 0 -1px -1px 0; position: relative; }
@@ -707,23 +607,19 @@ dialog.adder .meta.warn { color: var(--ink); border-left: 3px solid var(--signal
 .seg-row input:checked + span { background: var(--ink); border-color: var(--ink); color: var(--paper); z-index: 1; }
 .seg-row input:focus-visible + span { outline: 3px solid var(--signal); outline-offset: -3px; z-index: 2; }
 .seg-hint { min-height: 1.1rem; margin: 0.3rem 0 0; font-size: 0.8125rem; line-height: 1.3; }
-/* A button the server would refuse: greyed, and skipped by the arrow keys
-   since the radio under it is really disabled. The reason is under the row. */
+/* A choice the server would refuse; its radio is really disabled. */
 .seg-row label.off span { color: var(--muted); background: var(--sunk); cursor: not-allowed; }
 .seg-why { margin: 0.3rem 0 0; font-size: 0.8125rem; line-height: 1.3; }
 
 /* Read by a screen reader, not seen. */
 .vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
-/* Labels per kind, in Settings: a name and a small number, in a row. */
+/* Labels per kind, in Settings. */
 ul.items.copies li label { flex: 1; }
 ul.items.copies li input { flex: 0 0 4.5rem; width: 4.5rem; min-height: 2.75rem; padding: 0.2rem; text-align: center; }
 
-/* Handling flags: on or off, and they print on the label. */
 .flags-set { display: flex; flex-wrap: wrap; gap: 0.5rem; }
-/* The glyph is currentColor and follows the chip: `on` is white on the signal
-   colour, and the mark goes white with the word. The colour says the state;
-   the icon never does. */
+/* The glyph is currentColor, so it follows the chip's state. */
 .chip {
   display: inline-flex;
   align-items: center;
@@ -740,8 +636,6 @@ ul.items.copies li input { flex: 0 0 4.5rem; width: 4.5rem; min-height: 2.75rem;
 }
 .chip.on { background: var(--signal); border-color: var(--signal); color: #fff; }
 
-/* Destructive, and irreversible: marked, at the bottom, and not a thing you
-   land on by accident. */
 .section.danger { border-top-color: var(--signal); }
 .section.danger h2 { color: var(--signal); }
 
@@ -764,15 +658,11 @@ button.working::before {
 }
 
 .shots { display: flex; flex-wrap: wrap; gap: 0.5rem; }
-/* The photo and the strip of buttons welded under it are one card, so the
-   corners are the card's: the parts inside keep square ones and the card
-   clips them. */
+/* The photo and its buttons are one card: the card is rounded and clips them. */
 .shots figure { margin: 0; width: calc(50% - 0.25rem); border-radius: var(--radius); overflow: hidden; }
 .shots .acts > *, .shots .mark, .shots .analysis button { border-radius: 0; }
 .shots img { width: 100%; height: auto; display: block; background: var(--sunk); }
-/* Sized to their text, sharing what is left over, and never wrapping: at
-   320px "Make cover" on two lines made one figure taller than the one beside
-   it and left the strip ragged along the bottom. */
+/* Never wrapping, so one figure cannot grow taller than its neighbour. */
 .shots .acts { display: flex; }
 .shots .acts > * { flex: 1 1 auto; white-space: nowrap; }
 .shots button {
@@ -781,10 +671,8 @@ button.working::before {
   background: transparent; color: var(--muted); font-size: 0.8125rem; cursor: pointer;
 }
 
-/* Which photo the box is shown by in the list. The outline is drawn inside
-   the image's own box so marking one does not resize it or reflow the strip
-   when the cover moves. Monochrome, like the label: the signal colour is
-   reserved for warnings and for Fragile. */
+/* The cover photo. The outline is inside the image's box, so moving the cover
+   never reflows the strip. */
 .shots .is-cover img { outline: 3px solid var(--ink); outline-offset: -3px; }
 .shots .mark {
   display: flex; align-items: center; justify-content: center;
@@ -794,10 +682,8 @@ button.working::before {
   font-size: 0.8125rem; font-weight: 650;
 }
 
-/* A photo being read by the vision model. The ring sits on the photo it
-   belongs to and fills as the server's estimate runs down; its colours are
-   fixed rather than from the palette because it is drawn over a photograph,
-   not over the page, in either theme. */
+/* The reading countdown ring. Fixed colours, not the palette: it is drawn over
+   a photograph in either theme. */
 .shots .pic { position: relative; }
 .shots .ring {
   position: absolute;
@@ -811,25 +697,21 @@ button.working::before {
 }
 .shots .ring svg { display: block; width: 100%; height: 100%; }
 .ring-track { fill: none; stroke: rgb(255 255 255 / 0.28); stroke-width: 3; }
-/* pathLength="100" on the circle, so the offset is simply the percentage not
-   yet done. app.js sets it inline while there is an honest number to show. */
+/* pathLength="100", so the offset is the percentage not yet done; app.js sets
+   it inline while there is an honest number. */
 .ring-arc { fill: none; stroke: #fff; stroke-width: 3; stroke-dasharray: 100; stroke-dashoffset: 100; }
-/* Past the estimate and still not done: a spinner, which claims nothing,
-   rather than a full ring, which claims it has finished. */
+/* Past the estimate: a spinner, since a full ring would claim it had finished. */
 .ring.spin .ring-arc { stroke-dashoffset: 75; }
 @media (prefers-reduced-motion: no-preference) {
   .ring-arc { transition: stroke-dashoffset 200ms linear; }
   .ring.spin svg { animation: spin 0.9s linear infinite; }
 }
-/* No spin. A broken ring reads as "working, no idea how long" while standing
-   still, and cannot be mistaken for a quarter-full countdown. */
+/* A still, broken ring: cannot be mistaken for a quarter-full countdown. */
 @media (prefers-reduced-motion: reduce) {
   .ring.spin .ring-arc { stroke-dasharray: 6.25; stroke-dashoffset: 0; }
 }
 
-/* What came of it, under the photo's own buttons. The line keeps its height
-   when it has nothing to say, so a strip of read and unread photos stays
-   level along the bottom. */
+/* Keeps its height when empty, so read and unread photos stay level. */
 .shots .analysis {
   display: flex;
   align-items: center;
@@ -842,8 +724,7 @@ button.working::before {
   font-variant-numeric: tabular-nums;  /* the seconds tick without the text shuffling */
 }
 .shots .analysis .state { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-/* An error is a sentence, and half a phone's width less a button is no room
-   for one: the text takes the whole line and Retry goes underneath. */
+/* An error takes the whole line, with Retry underneath. */
 .shots .analysis[data-analysis="error"] { flex-wrap: wrap; }
 .shots .analysis[data-analysis="error"] .state {
   flex: 1 1 100%;
@@ -855,10 +736,8 @@ button.working::before {
 
 .dlabel { display: block; font-size: 0.8125rem; color: var(--muted); margin: 0.5rem 0 0.25rem; }
 
-/* A <label> or an <a> wearing .btn needs the border drawn for it: the hairline
-   every control has comes from the `input, textarea, button, select` rule, and
-   neither of these is one of those. A filled .btn matched its background so it
-   never showed; .btn.quiet is transparent, and read as floating text. */
+/* A <label> or <a> wearing .btn needs its border drawn: the form-control rule
+   that gives every control its hairline does not match them. */
 label.btn, a.btn { display: inline-flex; align-items: center; justify-content: center; cursor: pointer; text-decoration: none; border: 1px solid var(--ink); }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -867,21 +746,16 @@ label.btn, a.btn { display: inline-flex; align-items: center; justify-content: c
 </style>
 </head>
 <body>
-<!-- The icon family, inlined once (docs/design/icons/sprite.svg). One evenodd
-     path each on the home mark's 16-unit grid, referenced below and from
-     app.js by fragment id. Inline because a <use> cannot cross
-     documents, and 2.4 KB in the shell beats sixteen requests or a font. The
-     referencing element sets the fill -- see the .i rule above. -->
+<!-- The icon sprite (docs/design/icons/sprite.svg), inlined because a symbol
+     reference cannot cross documents. The referencing element sets the fill:
+     see the .i rule. -->
 <svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" style="display:none" aria-hidden="true"><symbol id="i-items" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M0 0h4v4H0zM6 0h10v4H6zM0 6h4v4H0zM6 6h10v4H6zM0 12h4v4H0zM6 12h10v4H6z"/></symbol><symbol id="i-scan" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M0 0h6v2H2v4H0zM10 0h6v6h-2V2h-4zM0 10h2v4h4v2H0zM14 10h2v6h-6v-2h4zM5 5h6v6H5zM7 7v2h2V7z"/></symbol><symbol id="i-new" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M7 2h2v5h5v2H9v5H7V9H2V7h5z"/></symbol><symbol id="i-settings" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M2 0h4v4H2zM0 1h2v2H0zM6 1h10v2H6zM10 6h4v4h-4zM0 7h10v2H0zM14 7h2v2h-2zM6 12h4v4H6zM0 13h6v2H0zM10 13h6v2h-6z"/></symbol><symbol id="i-box" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M2 8h12v8H2zM2 8L0 2h2l2 6zM14 8l2-6h-2l-2 6z"/></symbol><symbol id="i-parts" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M0 3h16v12H0zM2 5h3v3H2zM7 5h2v3H7zM11 5h3v3h-3zM2 10h5v3H2zM9 10h5v3H9z"/></symbol><symbol id="i-tub" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M0 4h16v2H0zM1 8h14l-1 8H2z"/></symbol><symbol id="i-crate" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M0 2h2v14H0zM14 2h2v14h-2zM2 2h12v3H2zM2 7h12v3H2zM2 12h12v4H2z"/></symbol><symbol id="i-bag" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M4 0h8v6H4zM6 2v4h4V2zM0 6h16v10H0z"/></symbol><symbol id="i-item" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M2 2h10l4 6-4 6H2zM10 7v2h2V7zM0 7h2v2H0z"/></symbol><symbol id="i-furniture" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M2 0h3v16H2zM5 8h9v3H5zM12 11h2v5h-2z"/></symbol><symbol id="i-fragile" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M2 1h12l-4 7H6zM7 8h2v5H7zM4 13h8v2H4zM11 2l-2.6 2.4 1.8 1.6-1.2 1.4 2.8-2.2-1.8-1.6z"/></symbol><symbol id="i-heavy" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M5 1h6v6H5zM7 3v3h2V3zM5 6h6l3 9H2z"/></symbol><symbol id="i-open-first" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M10 0v16H6V5L2 7V3l4-3z"/></symbol><symbol id="i-scan-qr" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M0 0h6v6H0zM2 2v2h2V2zM10 0h6v6h-6zM12 2v2h2v-2zM0 10h6v6H0zM2 12v2h2v-2zM8 8h2v2H8zM12 8h2v2h-2zM10 10h2v2h-2zM14 10h2v2h-2zM8 12h2v2H8zM12 12h2v2h-2zM10 14h2v2h-2zM14 14h2v2h-2z"/></symbol><symbol id="i-crate-lid" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M0 2h16v2H0zM1 6h14v10H1zM1 9v2h2V9zM13 9v2h2V9z"/></symbol><symbol id="i-open-first-rule" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M0 2h16v12H0zM2 4v8h12V4zM3 5h10v6H3zM4 6v4h8V6z"/></symbol></svg>
-<!-- The home mark: the label's QR finder pattern -- the square a scanner uses
-     to find a code's corner and know which way is up -- with its core cut as a
-     house. It sits in the app's own top-left corner, as the origin. Inline so
-     currentColor follows the theme; 160 bytes is not worth a request. -->
+<!-- The home mark: the label's QR finder pattern with its core cut as a house.
+     Inline so currentColor follows the theme. -->
 <a href="#/" class="home" aria-label="Home"><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false"><path fill-rule="evenodd" d="M0 0h16v16H0zM2 2v12h12V2zM8 4l4 4v4H4V8z"/></svg><span>Moving</span></a>
 <main id="app">Loading…</main>
 <button type="button" id="live" hidden>Changed on another device — tap to refresh</button>
-<!-- The mark over the word on a phone, beside it on a desktop; never alone.
-     The word is the accessible name, so every mark is aria-hidden. -->
+<!-- Never a mark without its word; the word is the accessible name. -->
 <nav class="bar">
   <a href="#/" id="nav-boxes"><svg class="i" aria-hidden="true"><use href="#i-items"/></svg><span>Items</span></a>
   <a href="#/scan" id="nav-scan"><svg class="i" aria-hidden="true"><use href="#i-scan"/></svg><span>Scan</span></a>

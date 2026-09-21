@@ -1,47 +1,30 @@
-// Autosave with undo, in place of Save and Cancel buttons.
-//
-// Pure logic: no DOM, time injected, and "save" is whatever async function the
-// page hands in -- so it is tested in tests/autosave.test.mjs without a
-// browser. app.js owns the fields; this owns *when* they are saved, what is
-// still unsaved, and how to take a save back.
-//
-// Values are compared as strings, which is what form fields hold.
+// Autosave with undo. No DOM and time injected, so it is tested without a
+// browser: app.js owns the fields, this owns when they save, what is unsaved,
+// and Undo. Values are compared as strings, as form fields hold them.
 
 // When a field should be saved:
 //
-//   "change"  the moment it changes -- a picker or a tick box; there is no
-//             half-made choice to wait out.
+//   "change"  the moment it changes: a picker or a tick box.
 //   "pause"   after a pause in typing, and on leaving the field.
-//   "commit"  only on leaving the field or pressing Return. For a field whose
-//             every save is recorded somewhere: the current location writes to
-//             the box's history, and saving mid-word would log "garage st" as
-//             a place it had been.
+//   "commit"  only on leaving the field or pressing Return, for a field whose
+//             every save is recorded: the location's history would otherwise
+//             log "garage st" as a place it had been.
 export function policyFor(field) {
   const asked = field.dataset?.autosave;
   if (asked) return asked;
-  // A radio is one button of a pushbutton row (segmented.js): a picker with
-  // every option showing. Pressing one is a whole choice, as with a <select>.
+  // A radio is one button of a pushbutton row: pressing it is a whole choice.
   if (field.tagName === "SELECT" || field.type === "checkbox" || field.type === "radio") return "change";
   return "pause";
 }
 
-/**
- * What the status line under a form says.
- *
- * `fields` are `{ state, policy, refused? }` for each field behind the line --
- * `state` as `Autosaver.state()` reports it -- and `last` is what last happened in
- * this form: "saved", "undone", or nothing. A function of those and nothing
- * else, so the line can be drawn again from scratch after the page is.
- *
- * Typing reads as "Saving…" from the first keystroke: the pause is part of
- * the save, and a line that said "Saved" over text the server has not got
- * would be a small lie told every few seconds.
- */
+// The status line under a form. `fields` are `{ state, policy, refused? }` for
+// each field behind it; `last` is "saved", "undone" or null. Typing reads as
+// "Saving…" from the first keystroke: the pause is part of the save.
 export function lineFor(fields, last = null) {
   const states = fields || [];
   const failed = states.filter((f) => f.state === "failed");
-  // `refused` is the server's reason for a failure that will not be retried.
-  // Said plainly, and first: it is the one state that needs a person.
+  // `refused` is the server's reason for a failure that will not be retried:
+  // shown first, as the one state that needs a person.
   const refused = failed.find((f) => f.refused);
   if (refused) return { text: `Not saved — ${refused.refused}`, warn: true };
   if (failed.length) return { text: "Not saved yet — will retry", warn: true };
@@ -49,18 +32,14 @@ export function lineFor(fields, last = null) {
   const waiting = states.filter((f) => f.state === "unsaved");
   if (waiting.some((f) => f.policy !== "commit")) return { text: "Saving…", warn: false };
   if (waiting.length) {
-    // Return saves it too, but this sits beside Undo on a phone 320 px wide:
-    // the longer sentence wrapped to three lines and outgrew the line.
+    // Return saves it too, but this must fit beside Undo at 320 px.
     return { text: "Saves when you leave the field", warn: false };
   }
   const said = { saved: "Saved", undone: "Undone" }[last] || "";
   return { text: said, warn: false };
 }
 
-// How long to wait before retrying a save that failed, given how many have
-// failed in a row before it (0-based). Doubling and capped: quick enough that a
-// blip is over before anybody notices, slow enough that a phone out of range
-// for an hour is not hammering a server it cannot reach.
+// Delay before a retry, given the failures in a row so far (0-based).
 const RETRY_BASE_MS = 2000;
 const RETRY_CAP_MS = 30000;
 export const retryAfter = (attempt) => Math.min(RETRY_CAP_MS, RETRY_BASE_MS * 2 ** attempt);
@@ -88,9 +67,8 @@ export class Autosaver {
     this.undoable = [];         // [{ key, from }], oldest first
   }
 
-  // Start (or restart) tracking a field at the value the server holds. Also
-  // how a live update lands: a pristine field rewritten by the server has a
-  // new baseline, not an edit to save back.
+  // Tracks a field at the server's value. Also how a live update lands: a new
+  // baseline, not an edit to save back.
   track(key, value) {
     const field = this.fields.get(key);
     if (field) this._stopTimers(field);
@@ -110,15 +88,12 @@ export class Autosaver {
     if (field.retry) { this.clearTimer(field.retry); field.retry = null; }
   }
 
-  // The field's value changed.
   edit(key, value, policy = "pause") {
     const field = this.fields.get(key);
     if (!field) return;
     field.value = String(value ?? "");
-    // A waiting retry goes too. Every policy has its own next moment to save,
-    // and for a field that saves only when it is left, a retry coming round
-    // mid-word would do exactly what that policy exists to prevent. The field
-    // stays "failed" until a save lands, so the page keeps saying so.
+    // A waiting retry goes too: on a "commit" field it would save mid-word. The
+    // field stays "failed" until a save lands.
     this._stopTimers(field);
 
     if (policy === "change") {
@@ -129,8 +104,7 @@ export class Autosaver {
     // "commit": nothing until commit() is called.
   }
 
-  // The field was left, or Return was pressed in it: save now if there is
-  // anything to save. Also the retry after a failure.
+  // The field was left or Return pressed; also the retry after a failure.
   commit(key) {
     const field = this.fields.get(key);
     if (!field) return;
@@ -138,22 +112,20 @@ export class Autosaver {
     this._flush(key);
   }
 
-  // Everything that is waiting, now: the page is being left, hidden or
-  // redrawn, and a pause that has not run out yet must not cost the edit.
+  // The page is being left, hidden or redrawn: a pause not yet run out must
+  // not cost the edit.
   commitAll() {
     for (const key of this.fields.keys()) this.commit(key);
   }
 
-  // The network came back. Only what failed: a half-typed field that saves
-  // on being left has not been left just because the wifi reconnected.
+  // Only what failed: a "commit" field has not been left because the network
+  // came back.
   retryFailed() {
     for (const [key, field] of this.fields) if (field.failed) this.commit(key);
   }
 
-  // Give up whatever the field holds that the server has not got, and say
-  // what the server does have. For an edit that failed to save: taking *that*
-  // back needs no request, since it never arrived -- and undo() would reach
-  // past it to the save beneath, which is a step further than was asked.
+  // Drops what the server has not got and returns what it has. Taking back a
+  // failed edit needs no request; undo() would reach past it.
   revert(key) {
     const field = this.fields.get(key);
     if (!field) return undefined;
@@ -164,10 +136,9 @@ export class Autosaver {
     return field.saved;
   }
 
-  // Resolves when no save is in flight -- landed or failed, either will do.
-  // For whatever must come *after* the saves that are out: a redraw from the
-  // server, which fetched a moment too early shows old text as current; an
-  // undo, which racing a save can reach the server first.
+  // Resolves when no save is in flight, landed or failed. For what must come
+  // after them: a redraw fetched too early shows old text as current, and an
+  // undo racing a save can reach the server first.
   async idle() {
     for (;;) {
       const out = [...this.fields.values()].map((field) => field.flight).filter(Boolean);
@@ -176,10 +147,8 @@ export class Autosaver {
     }
   }
 
-  // One word for where a field stands, for a page drawn after the events
-  // that would have told it: "clean", "unsaved" (edited, waiting for its
-  // moment), "saving", or "failed" (kept, and being retried). Failed outlives
-  // further typing -- only a save that lands clears it. null if not tracked.
+  // "clean", "unsaved", "saving" or "failed" (kept and retried; only a save
+  // that lands clears it), or null if not tracked.
   state(key) {
     const field = this.fields.get(key);
     if (!field) return null;
@@ -188,15 +157,13 @@ export class Autosaver {
     return field.value === field.saved ? "clean" : "unsaved";
   }
 
-  // What the field was last known to hold. The saver outlives the fields (the
-  // page is redrawn under it), so this is how unsaved text gets back into a
-  // field that was redrawn from a server that never received it.
+  // The saver outlives redraws, so this is how unsaved text gets back into a
+  // redrawn field.
   value(key) {
     return this.fields.get(key)?.value;
   }
 
-  // Whether a field (or, with no key, any field) holds something the server
-  // does not have yet. The page uses this to hold back a redraw.
+  // Whether a field (with no key, any field) holds what the server has not got.
   unsaved(key) {
     if (key === undefined) return [...this.fields.keys()].some((k) => this.unsaved(k));
     const field = this.fields.get(key);
@@ -208,10 +175,8 @@ export class Autosaver {
     return this.undoable.length ? this.undoable.at(-1).key : null;
   }
 
-  // Take back the most recent save. Resolves to { key, value } so the page
-  // can put the value back in the field, or null if there is nothing to undo.
-  // Not itself undoable: a redo stack is one more thing to get wrong for a
-  // case -- "undo my undo" -- that retyping covers.
+  // Takes back the most recent save, resolving to { key, value } or null. An
+  // undo is not itself undoable.
   async undo() {
     const step = this.undoable.at(-1);
     if (!step) return null;
@@ -219,8 +184,7 @@ export class Autosaver {
     if (field?.timer) { this.clearTimer(field.timer); field.timer = null; }
 
     await this.save(step.key, step.from);   // throws -> the step stays put
-    // Only now: had the undo failed, a retry still waiting for a newer edit
-    // of this field is still wanted.
+    // Only now: had the undo failed, a waiting retry of a newer edit is wanted.
     if (field) this._stopTimers(field);
     this.undoable.pop();
     if (field) {
@@ -236,8 +200,7 @@ export class Autosaver {
     const field = this.fields.get(key);
     if (!field || field.saving) return;   // the in-flight save re-checks when it lands
     if (field.value === field.saved) return;
-    // Kept so idle() has something to wait on. It never rejects: a failure is
-    // a state, not an exception.
+    // For idle() to wait on. Never rejects: a failure is a state.
     const flight = this._send(key, field).finally(() => {
       if (field.flight === flight) field.flight = null;
     });
@@ -257,11 +220,9 @@ export class Autosaver {
       // baseline from the server is not something to retry over.
       if (this.fields.get(key) !== field) return;
       field.failed = true;
-      // The edit stays. commit() or the next edit retries it, and so does
-      // this, so that "will retry" is true with nobody touching anything.
+      // The edit stays, and a timer retries it so "will retry" holds true.
       if (field.retry) { this.clearTimer(field.retry); field.retry = null; }
-      // null: the server understood and said no. Asking again will get the
-      // same answer, so it waits for a person instead of a timer.
+      // null: the server refused, and asking again gets the same answer.
       const wait = this.retryDelay(field.failures, error);
       if (wait !== null && wait !== undefined) {
         field.retry = this.setTimer(() => { field.retry = null; this._flush(key); }, wait);
@@ -279,9 +240,8 @@ export class Autosaver {
     if (this.undoable.length > this.depth) this.undoable.shift();
     this.onState(key, "saved");
 
-    // Typed on while that was in flight: what is in the field now is newer.
-    // (`saving` is already false, so this starts the next flight before this
-    // one is seen to end -- idle() finds it on its next look.)
+    // Typed on while in flight: send the newer text. idle() finds this next
+    // flight on its next look.
     if (field.value !== field.saved && !field.timer) this._flush(key);
   }
 }

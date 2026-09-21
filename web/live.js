@@ -1,19 +1,13 @@
-// Live updates: the socket that says a box changed, and the decisions about
-// when it is safe to act on that. Kept out of app.js so the decisions can be
-// tested directly -- app.js touches the DOM at import time and cannot be
-// loaded in isolation (same reason as text.js).
-//
-// Nothing here reads `document` or `WebSocket` at import time, so this module
-// loads under node.
+// Live updates: the socket that says a box changed, and when it is safe to act
+// on that. Nothing here reads `document` or `WebSocket` at import time, so the
+// decisions are tested under node.
 
 export const PING = "ping";
 export const RESYNC = "resync";
 
-// Kinds that change a row the box list shows. `label.printed` and
-// `photos.changed` only alter what a box *page* shows, so the list ignores
-// them rather than refetching every box in the house when a label comes out.
-// `items.changed` is in here because search matches on item text: a search
-// result set can change when nothing about the box row itself did.
+// Kinds that change what the list draws. `label.printed` does not.
+// `items.changed` does because search matches item text, and `photos.changed`
+// because a row shows its cover photo.
 const LIST_KINDS = new Set([
   "box.created",
   "box.updated",
@@ -21,35 +15,23 @@ const LIST_KINDS = new Set([
   "box.status",
   "box.location",
   "items.changed",
-  // A photo used to be invisible from the list, and was deliberately left out
-  // of this set. The cover thumbnail put it on the row, so a picture arriving,
-  // being deleted, or being swapped for another one now changes what the list
-  // draws -- and without this the other phone keeps showing the old picture,
-  // or an empty square, until something else happens to that box.
   "photos.changed",
 ]);
 
-/** How long after a tap the screen stays still. Covers pointerdown through
- *  click, plus enough slack that a slow thumb is not fighting a redraw. */
+// How long the screen stays still after a tap: pointerdown through click, plus
+// slack for a slow thumb.
 export const SETTLE_MS = 600;
 
 const BASE_DELAY_MS = 500;
 const MAX_DELAY_MS = 30000;
 const JITTER = 0.25;
 
-/** The fallback when a socket will not stay up. Deliberately lazy: this is
- *  the mode that costs battery. */
+// The fallback when a socket will not stay up; lazy, since it costs battery.
 const POLL_MS = 20000;
 const FALLBACK_AFTER = 2;
 
-/**
- * How long to wait before reconnect attempt `attempt` (0-based).
- *
- * Doubling, capped, and jittered. The cap matters because a phone that wakes
- * in a new place must not sit out a minute of backoff before it reconnects;
- * the jitter matters because every device in the house loses wifi at the same
- * moment when the router reboots, and they should not all come back together.
- */
+// Doubling, capped so a phone waking on a new network reconnects promptly, and
+// jittered so devices that lost wifi together do not all return together.
 export function backoffDelay(attempt, options = {}) {
   const {
     base = BASE_DELAY_MS,
@@ -61,22 +43,17 @@ export function backoffDelay(attempt, options = {}) {
   return Math.round(flat * (1 - jitter + 2 * jitter * random()));
 }
 
-/**
- * Whether `event` is worth refetching for, given the view on screen.
- *
- * `view` is `{ name, code, clientId }`. Views that are neither the list nor a
- * box page -- the new-box form, the scanner -- match nothing, which is how
- * the form a person is filling in never gets pulled out from under them.
- */
+// `view` is `{ name, code, clientId }`. Views other than the list and a box
+// page (the new-box form, the scanner) match nothing, so a form being filled in
+// is never refreshed.
 export function affects(event, view) {
   if (!event || typeof event.kind !== "string") return false;
   if (event.kind === PING) return false;
-  // The server gave up on queueing a backlog, so there is no knowing what was
-  // missed. Everything refetches.
+  // A backlog was dropped, so nobody knows what was missed.
   if (event.kind === RESYNC) return true;
   if (!view) return false;
-  // This device's own change, come back to it. It already redrew from the
-  // response it got; redrawing again is what discards half-typed text.
+  // This device's own change: it already redrew from the response, and
+  // redrawing again discards half-typed text.
   if (event.origin && view.clientId && event.origin === view.clientId) return false;
 
   if (view.name === "list") return LIST_KINDS.has(event.kind);
@@ -84,37 +61,21 @@ export function affects(event, view) {
   return false;
 }
 
-/**
- * Whether any field is mid-edit. `fields` are `{ value, initial, focused }`.
- *
- * A focused field counts even when its value still matches what was drawn:
- * redrawing takes the focus with it, which on a phone shuts the keyboard
- * mid-word.
- */
+// `fields` are `{ value, initial, focused }`. A focused field counts even when
+// unchanged: a redraw takes the focus, which shuts a phone's keyboard mid-word.
 export function hasUnsavedEdits(fields) {
   return (fields || []).some((field) => field.focused === true) || isDirty(fields);
 }
 
-/**
- * Whether any field differs from what it held when the page was drawn.
- *
- * Stricter than hasUnsavedEdits on purpose: that one protects a focused field
- * from a redraw, this one decides whether Cancel has anything to cancel --
- * and tapping into a field is not an edit.
- */
+// Whether any field differs from what it held when drawn; focus alone is not an edit.
 export function isDirty(fields) {
   return (fields || []).some(
     (field) => String(field.value ?? "") !== String(field.initial ?? "")
   );
 }
 
-/**
- * Whether a refresh must wait.
- *
- * The tap case is the one that actually bites: a list that re-renders between
- * pointerdown and click sends the tap to whichever box slid into that spot,
- * and you open the wrong box while looking at the right one.
- */
+// Whether a refresh must wait. A list re-rendered between pointerdown and click
+// sends the tap to whichever box slid into that spot.
 export function holdRefresh(state, now = Date.now()) {
   const {
     editing = false,
@@ -127,42 +88,28 @@ export function holdRefresh(state, now = Date.now()) {
 }
 
 // Events that change one self-contained part of a box page. Photo analysis
-// runs in the background and reports through exactly these three, usually
-// while somebody is typing into the very page it is updating -- so they are
-// applied to their own part in place instead of waiting, held, behind a
-// focused field for a whole-page redraw.
+// reports through these while somebody may be typing on that page, so each is
+// applied to its part in place rather than held for a whole-page redraw.
 const PARTS = new Map([
   ["items.changed", "items"],
   ["photos.changed", "photos"],
   ["box.updated", "summary"],
 ]);
 
-/**
- * Which part of an open box page `event` can be applied to on its own, or
- * null when only a whole refresh will do (a resync most of all: nobody knows
- * what was missed).
- */
+// null when only a whole refresh will do, as for a resync.
 export function partOf(event) {
   return (event && PARTS.get(event.kind)) || null;
 }
 
-// What `box.updated` may change without the rest of the page caring: the
-// summary, and what the record is inside and what is inside it, which the
-// record page draws in place from the same event. `updated_at` moves on every
-// write, so it says nothing about what changed.
+// What `box.updated` may change that the page draws in place: the summary and
+// the nesting. `updated_at` moves on every write.
 const SUMMARY_KEYS = new Set([
   "content_summary", "summary_source", "updated_at", "children", "path", "parent",
 ]);
 
-/**
- * Whether `after` differs from the box that was drawn in nothing but its
- * summary. `box.updated` covers the flags, the rooms and the kind as well;
- * when any of those moved, patching the summary alone would leave the page
- * quietly wrong, so the caller falls back to a whole refresh.
- *
- * Compares every key rather than a list of the ones the page draws today, so
- * a field added to the page later cannot be forgotten here.
- */
+// `box.updated` also covers flags, rooms and kind; if any moved, the caller
+// refreshes the whole page. Every key is compared, not a list, so a field added
+// to the page later cannot be forgotten here.
 export function onlySummaryChanged(before, after) {
   if (!before || !after) return false;
   const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
@@ -173,20 +120,10 @@ export function onlySummaryChanged(before, after) {
   return true;
 }
 
-/**
- * Bring `parent`'s children into line with `items`, reusing the element that
- * already stands for each key.
- *
- * This is the other half of not moving things under a thumb. Rebuilding a
- * list's markup destroys and recreates every row, so a tap that began on one
- * of them lands on whatever node took its place -- you open the wrong box
- * while looking at the right one. Reusing the node keeps the tap target, the
- * scroll position, and any gesture the browser is midway through.
- *
- * `create(item)` makes a new element, `update(element, item)` refreshes one.
- * Written against the DOM's own insertBefore/firstChild/nextSibling, so it is
- * exercised in tests against a stand-in for those four things.
- */
+// Brings `parent`'s children into line with `items`, reusing the element keyed
+// (`data-key`) to each. Rebuilding the markup would recreate every row, so a tap
+// that began on one would land on its replacement; reuse keeps the tap target,
+// the scroll position and any gesture under way.
 export function reconcile(parent, items, { key, create, update }) {
   const existing = new Map();
   for (const child of Array.from(parent.children)) existing.set(child.dataset.key, child);
@@ -199,14 +136,12 @@ export function reconcile(parent, items, { key, create, update }) {
       existing.delete(id);
     } else {
       element = create(item);
-      // Keyed here rather than left to every `create` to remember. One that
-      // forgot would never be found again: each update would draw a second
-      // copy of the list under the first.
+      // Keyed here rather than trusted to every `create`: an unkeyed row is
+      // never found again, and each update would draw a second copy.
       element.dataset.key = id;
     }
     update(element, item);
-    // Already in the right place? Then leave it completely alone: even
-    // re-inserting a node where it already is counts as a move.
+    // A node already in place is left alone: re-inserting it counts as a move.
     const wanted = previous ? previous.nextSibling : parent.firstChild;
     if (wanted !== element) parent.insertBefore(element, wanted);
     previous = element;
@@ -214,20 +149,14 @@ export function reconcile(parent, items, { key, create, update }) {
   for (const gone of existing.values()) gone.remove();
 }
 
-/**
- * The socket, with reconnection and a polling fallback.
- *
- * `onEvent` is called with every message, heartbeats included -- filtering is
- * `affects`'s job, in one place. The polling fallback synthesises a RESYNC so
- * that callers have exactly one path for "something may have changed".
- */
+// The socket, with reconnection and a polling fallback. `onEvent` gets every
+// message, heartbeats included (filtering is `affects`'s job); polling
+// synthesises RESYNC, so callers have one path for "something may have changed".
 export class LiveChannel {
   constructor({ url, onEvent, onOpen = () => {}, pollMs = POLL_MS, fallbackAfter = FALLBACK_AFTER }) {
     this.url = url;
     this.onEvent = onEvent;
-    // Every time a socket opens. A deploy restarts the service, which drops
-    // the socket, so the reconnect is the first sign that new code may be
-    // running -- the page checks its revision here (see reload.js).
+    // A deploy drops the socket, so an open is the first sign of new code.
     this.onOpen = onOpen;
     this.pollMs = pollMs;
     this.fallbackAfter = fallbackAfter;
@@ -242,8 +171,7 @@ export class LiveChannel {
   start() {
     if (this.running) return;
     this.running = true;
-    // A phone sleeps the moment it goes in a pocket and wakes on a different
-    // network. Either event means: stop waiting out a backoff and try now.
+    // A phone wakes on a different network: stop waiting out a backoff.
     addEventListener("online", this.wake);
     document.addEventListener("visibilitychange", this.wake);
     this.connect();
@@ -261,8 +189,8 @@ export class LiveChannel {
 
   wake() {
     if (!this.running || document.hidden) return;
-    // Whatever happened while the screen was off is unknown, and the socket
-    // may have died without either end noticing.
+    // What happened while hidden is unknown, and the socket may have died
+    // without either end noticing.
     this.onEvent({ kind: RESYNC });
     if (!this.socket) {
       clearTimeout(this.retryTimer);
@@ -329,10 +257,8 @@ export class LiveChannel {
   }
 
   startPolling() {
-    // Some proxies drop an Upgrade without saying so, and then the socket
-    // never connects however patiently we retry. Polling is worse in every
-    // way except that it works, so it starts only once the socket has really
-    // failed and stops the moment one connects.
+    // Some proxies silently drop an Upgrade, so the socket never connects.
+    // Polling starts only once it has really failed, and stops when one connects.
     if (this.pollTimer) return;
     this.pollTimer = setInterval(() => {
       if (!document.hidden) this.onEvent({ kind: RESYNC });

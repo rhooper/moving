@@ -1,15 +1,8 @@
-// Things inside things, as the page sees them: a bag in a box in a crate.
-//
-// The server keeps the pointer honest (a parent must exist, be a container, not
-// be binned, and not be inside the thing being moved) and says why when it
-// refuses. These are the same rules as the page knows them, decided before the
-// server is asked, so that a move is never offered that would be refused and
-// the reason is on the screen at once. The wording for what is inside a row
-// lives in covers.js with the rest of the row; the way out of a nested record
-// and the naming of a container live here. Pure: no DOM, tested under node.
+// Things inside things, as the page sees them. The server enforces the same
+// rules; deciding them here first means a move it would refuse is never
+// offered. No DOM, so it is tested under node.
 
-// The word for a kind, as the picker shows it. Only for the two that need a
-// longer name in a sentence; every other kind reads as its own key.
+// Only kinds that need a longer name in a sentence.
 const SPOKEN = { item: "loose item" };
 const spoken = (kind) => SPOKEN[kind] || kind || "box";
 
@@ -27,13 +20,8 @@ export function trail(path) {
   return (path || []).map((step) => ({ code: step.code, hint: describe(step) }));
 }
 
-/**
- * Whether `container` may hold `record` -- `record`'s direct children are
- * `children`, and `kinds` is what /api/settings/kinds says holds contents.
- *
- * Deeper descendants are not known here (a child's own children are only a
- * count); the server refuses those, and its reason is shown the same way.
- */
+// `children` are `record`'s direct children; deeper ones are unknown here, and
+// the server's refusal is shown the same way.
 export function mayHold(container, record, children, kinds) {
   if (!container) return { ok: false, why: "There is no record with that code." };
   const no = (why) => ({ ok: false, why });
@@ -49,12 +37,9 @@ export function mayHold(container, record, children, kinds) {
   return { ok: true, why: "" };
 }
 
-/**
- * Where a nested record goes: wherever its nearest container with a room goes.
- * `path` is outermost first, so the search runs from the end. Returns
- * `{ code, room }` -- the container whose room it is, or the nearest one with
- * `room: null` when none has chosen -- or null at the top level.
- */
+// Where a nested record goes: wherever its nearest container with a room goes.
+// Returns `{ code, room }` -- the container whose room it is, or the nearest
+// one with `room: null` when none has chosen -- or null at the top level.
 export function inheritedRoom(path) {
   const steps = path || [];
   if (!steps.length) return null;
@@ -63,38 +48,26 @@ export function inheritedRoom(path) {
   return { code: step.code, room: chosen ? chosen.destination_room_id : null };
 }
 
-/**
- * The containers a fragile record is inside that are not themselves marked
- * fragile, outermost first: the ones the page offers to mark. Fragile climbs;
- * it never descends, and clearing it never climbs.
- */
+// The containers not yet fragile, outermost first: the ones the page offers to
+// mark. Fragile climbs, never descends, and clearing it never climbs.
 export function notYetFragile(path) {
   return (path || []).filter((step) => !step.fragile);
 }
 
 // --- adding something inside, from the container's page --------------------------
-//
-// "Adding a subitem should pop up a dialog that asks for type and a photo and
-// an optional source. The rest of the activities can be done from the ui."
 
-/** The kinds the dialog offers: all of them. A crate can hold a bag or a lamp. */
+// All of them: a crate can hold a bag or a lamp.
 export function kindsToAddInside(kinds) {
   return [...(kinds || [])];
 }
 
-/**
- * What the dialog sends to make the record: the kind, the container, and the
- * source room or null. No summary (the photo names the contents), no
- * destination (it goes where the container goes), no size, no flags.
- */
+// No summary (the photo names the contents), no destination (it follows the
+// container), no size, no flags.
 export function addInsideRequest({ kind, parentCode, sourceRoom }) {
   return { kind, parent_code: parentCode, source_room_id: sourceRoom ? Number(sourceRoom) : null };
 }
 
-/**
- * What to say once it is made. A photo that did not upload is said, not
- * dropped: the record stands, and there is a page to add one from.
- */
+// A photo that did not upload is said, not dropped: the record stands.
 export function addedInside(made, photoError) {
   const named = `Added ${made.code} (${spoken(made.kind)})`;
   if (!photoError) return { text: `${named}.`, warn: false };
@@ -106,56 +79,38 @@ export function addedInside(made, photoError) {
 
 // --- search results, read as a tree ------------------------------------------------
 //
-// "in search results, put the parent box first. indent subitems. then we don't
-// need in B-xxxx." The position says what that line used to say -- and says it
-// better, since the line named one level however deep the thing really was.
-//
-// Search is the one view that looks inside containers (browsing shows the top
-// level only), so this arranges the view whose whole job is finding a thing
-// wherever it is: it must not hide a match, drop one, or show one twice when
-// both a record and its container matched.
-//
-// The server sends the matches *and* the containers they are in, each row
-// carrying `matched` and its `ancestry` (codes, outermost first). Arranging
-// them is the page's job, so how much chain to show and how deep to indent can
-// change without touching the API.
+// Each container first, its matches indented under it. The server sends the
+// matches and their containers, each row carrying `matched` and its `ancestry`
+// (codes, outermost first). No match may be hidden, dropped, or shown twice
+// when both a record and its container matched.
 export function groupMatches(rows) {
   const all = rows || [];
   const byCode = new Map(all.map((row) => [row.code, row]));
-  // Only ancestors actually in the results count. Depth is the number of steps
-  // *shown*, so a container missing from the set cannot indent a row off the
-  // right-hand edge of a phone.
+  // Only ancestors in the results count, so depth is the steps *shown*.
   const chainOf = (row) => (row.ancestry || []).filter((code) => byCode.has(code));
 
   const out = [];
   const placed = new Set();
   const place = (row) => {
-    // Marked before its containers are walked, so a cycle in the data -- which
-    // the store forbids, but this cannot assume -- stops rather than hangs.
+    // Marked before its containers are walked, so a cycle in the data stops.
     if (!row || placed.has(row.code)) return;
     placed.add(row.code);
     for (const code of chainOf(row)) place(byCode.get(code));
-    // `context` is the row's own flag, never how it came to be placed: a
-    // container that matched *and* holds a match is a match, shown once.
-    // Explicitly `=== false`, so a list that flags nothing at all --
-    // browsing, or a container's contents -- is all matches, and one
-    // path can draw every list there is.
+    // The row's own flag, not how it was placed: a container that matched and
+    // holds a match is a match. `=== false`, so a list that flags nothing
+    // (browsing, a container's contents) is all matches.
     out.push({ row, depth: chainOf(row).length, context: row.matched === false });
   };
-  // In the order search returned them, so the best match still leads -- and a
-  // group takes the place of the first match inside it.
+  // Search order, so the best match leads; a group takes its first match's place.
   for (const row of all) place(row);
   return out;
 }
 
 // --- the viewfinder in the add dialog ----------------------------------------------
 //
-// "can we use javascript to have a live camera immediately during adding a
-// subitem?" The camera is asked for when the dialog opens, and it can fail in
-// half a dozen ordinary ways. None of them is an error state: the file picker
-// is still there, and the line says which of them happened. (The insecure case
-// is checked *before* asking, because over a plain LAN address getUserMedia
-// rejects with nothing useful -- see the HTTPS note in CLAUDE.md.)
+// Every camera failure is ordinary: the file picker is still there, and the
+// line says which happened. Insecure is decided *before* asking, because on a
+// plain LAN address getUserMedia rejects with nothing useful.
 export function cameraTrouble(error, { secure = true } = {}) {
   const instead = "Choose a photo instead.";
   if (!secure) {
@@ -175,13 +130,8 @@ export function cameraTrouble(error, { secure = true } = {}) {
   }
 }
 
-/**
- * What a captured frame is drawn at: its own size, down to `limit` on the long
- * edge. The server downscales to 2048 and strips the metadata anyway, so
- * anything larger is a phone pushing a 4K frame through a house's wifi for
- * nothing -- and a frame is never blown up to meet it. null when the video has
- * no dimensions yet, which is how it is before it has data.
- */
+// Down to `limit` on the long edge (the server keeps no more) and never up;
+// null before the video has dimensions.
 export function frameSize(width, height, limit = 2048) {
   const w = Number(width);
   const h = Number(height);
@@ -192,17 +142,9 @@ export function frameSize(width, height, limit = 2048) {
 
 // --- the sub-item editor's sections -----------------------------------------------
 //
-// "pop open the subitem editor as a modal, rather than changing page. collapse
-// unused inputs using >v style expand/collapse indicators."
-//
-// The rule is about content, not about which field it is: a section with
-// something in it starts open, an empty one starts folded. **Nothing with
-// content is ever folded away** -- otherwise somebody edits a record without
-// seeing what is already on it. A section that does not apply at all (the size
-// of a lamp, the contents of a lamp) is not there in the first place.
-//
-// Deciding it here rather than in the markup keeps it one rule to extend: the
-// record page could fold the same way later without rewriting the reasoning.
+// A section with something in it starts open, an empty one folded. Nothing
+// with content is ever folded, or a record gets edited without seeing what is
+// on it. A section that does not apply (a lamp's size) is absent.
 const filled = (value) => String(value ?? "").trim() !== "";
 
 export function editorSections(box, items, shape, photos) {
@@ -210,8 +152,6 @@ export function editorSections(box, items, shape, photos) {
   const holds = Boolean(shape?.contents);
   const sections = [
     { key: "summary", legend: holds ? "What is in it" : "What it is", open: filled(record.content_summary) },
-    // A record is always something, so this one is always open: the rule
-    // decides it, not an exception to the rule.
     { key: "kind", legend: "Kind", open: filled(record.kind) },
     ...(holds ? [{ key: "size", legend: "How big", open: filled(record.size) }] : []),
     { key: "source", legend: "Where it came from",
@@ -219,12 +159,7 @@ export function editorSections(box, items, shape, photos) {
     { key: "handling", legend: "Handling",
       open: Boolean(record.fragile || record.heavy || record.open_first) },
     ...(holds ? [{ key: "items", legend: "Items", open: (items || []).length > 0 }] : []),
-    // "show image thumbs and show the full view on demand". Unlike every
-    // section above it this one is not an input, so there is nothing to fold
-    // *open* to: a record with no photos has no photo section at all, the way
-    // a lamp has no size. Photos are not about holding contents, so a single
-    // thing has them too. Last, because the fields are what you came to fix
-    // and the pictures are what you already have.
+    // Not an input, so nothing to fold open to: no photos, no section.
     ...((photos || []).length ? [{ key: "photos", legend: "Photos", open: true }] : []),
   ];
   return sections;

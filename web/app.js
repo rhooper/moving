@@ -1,5 +1,4 @@
-// Moving boxes -- phone-first PWA. Hash routing so a scanned label can land on
-// /#/b/CODE without needing server-side routes for every view.
+// Hash routing, so a scanned label lands on /#/b/CODE with no server route per view.
 
 import { Autosaver, lineFor, policyFor, retryAfter } from "/autosave.js";
 import {
@@ -30,10 +29,8 @@ import { KeyBuffer, entered } from "/wedge.js";
 const STATUSES = ["open", "packed", "loaded", "delivered", "unpacked"];
 const app = document.getElementById("app");
 
-// Who this tab is, for the lifetime of this page. It rides on every write as
-// X-Client-Id and comes back on the resulting notification, so this tab can
-// tell its own echo from somebody else's change. Uniqueness among the few
-// devices in one house is all that is needed, so Math.random is enough.
+// Sent as X-Client-Id on every write and returned as the event's `origin`, so
+// this tab can tell its own echo from another device's change.
 const clientId = `${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
 
 // --- api ------------------------------------------------------------------
@@ -47,10 +44,8 @@ const keyStore = {
   },
 };
 
-// The person's own writes still out -- an upload, a print, a new record. A
-// reload would abort one and lose its answer, so it waits them out
-// (reload.js, `busy`). Not the autosaver's: those are keepalive, so they
-// survive the page going, and a reload waits for them through idle() instead.
+// Writes in flight, which a reload waits out rather than abort. Autosaves are
+// keepalive, survive the page going, and are waited for through idle() instead.
 let writing = 0;
 
 async function request(url, options = {}) {
@@ -61,16 +56,13 @@ async function request(url, options = {}) {
     return await send(url, options);
   } finally {
     writing -= 1;
-    // A reload that was asked for and waited on this may go now.
     if (!writing) reloadIfAsked();
   }
 }
 
 async function send(url, options) {
   const headers = { ...options.headers };
-  // Only declare JSON for a string body. Setting it for FormData would
-  // override the multipart content-type and strip the boundary the browser
-  // generates, and the upload would arrive unparseable.
+  // Not for FormData: it would replace the multipart boundary the browser sets.
   if (typeof options.body === "string") headers["content-type"] = "application/json";
   const key = keyStore.get();
   if (key) headers["X-API-Key"] = key;
@@ -90,41 +82,32 @@ async function send(url, options) {
     let detail = `${response.status}`;
     try {
       const said = (await response.json()).detail;
-      // A validation failure's detail is a list of objects, which as a message
-      // reads "[object Object]". Its `msg` fields are the sentences.
+      // A 422's detail is a list of objects; their `msg` fields are the sentences.
       if (typeof said === "string" && said) detail = said;
       else if (Array.isArray(said)) detail = said.map((d) => d.msg).filter(Boolean).join("; ") || detail;
     } catch { /* not json */ }
-    // The status rides along: autosave retries a server it could not reach,
-    // and does not pester one that understood and said no.
+    // Autosave reads the status: it retries an unreachable server, never a 4xx.
     throw Object.assign(new Error(detail), { status: response.status });
   }
   return response.status === 204 ? null : response.json();
 }
 
-// Most endpoints live under /api. Photo files and /b/{code} do not, so those
-// callers use request() directly rather than faking a relative path.
 const api = (path, options) => request(`/api${path}`, options);
 
 // --- helpers --------------------------------------------------------------
 
-// Every value interpolated into markup goes through this. The rule is
-// absolute: no template literal below inserts a raw value, including ids and
-// counts, so there is no judgement call about which fields are "safe".
+// Every value interpolated into markup goes through this, ids and counts included.
 function escape(value) {
   if (value === null || value === undefined) return "";
   return String(value).replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-// A mark from the sprite inlined in index.html. Two forms, because this file
-// draws in two ways and they have to agree: markup for the pages built from
-// template literals, DOM for the rows reconcile keeps in place. Both are
-// aria-hidden -- the word beside a mark is what carries the meaning, and no
-// mark is ever drawn without one.
+// A mark from the sprite in index.html: as markup for template literals, as DOM
+// for rows reconcile keeps. aria-hidden: the word beside it carries the meaning.
 //
-// createElementNS, not createElement: `document.createElement("svg")` makes an
-// HTMLUnknownElement that renders nothing, in silence.
+// createElementNS, because `document.createElement("svg")` makes an
+// HTMLUnknownElement that silently renders nothing.
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 const iconMarkup = (name, cls = "i") =>
@@ -139,36 +122,25 @@ function iconNode(name, cls = "i") {
   return svg;
 }
 
-// A row is built once and updated in place, so the mark has to be able to
-// change without the element being rebuilt.
 function setIcon(svg, name) {
   const use = svg && svg.querySelector("use");
   if (use && use.getAttribute("href") !== `#${name}`) use.setAttribute("href", `#${name}`);
 }
 
-// Alphabetical, whatever order the server keeps them in: a row of nine
-// pushbuttons is scanned by name, and "Kitchen" is found faster between
-// "Guest Room" and "Living Room" than wherever it was added.
 const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
 const forDestination = (rooms) => rooms.filter((r) => r.kind !== "source").sort(byName);
 const forSource = (rooms) => rooms.filter((r) => r.kind !== "destination").sort(byName);
 
-// The room and kind pickers are rows of pushbuttons (segmented.js), built
-// after the page is drawn; these are what each row offers.
 const roomChoices = (rooms) => rooms.map((r) => ({ value: r.id, label: r.name }));
 const kindChoices = (allKinds) => allKinds.map((k) => ({ value: k.kind, label: k.label }));
 const sizeChoices = (sizes) => sizes.map((size) => ({ value: size, label: size[0].toUpperCase() + size.slice(1) }));
 
-// Put a built row where its placeholder is. The placeholder carries the row's
-// name so the markup says where each goes without the row being markup.
 function mount(row) {
   const slot = app.querySelector(`[data-seg="${row.dataset.name}"]`);
   slot.replaceWith(row);
   return row;
 }
 
-// The badges above the summary, in the order they read best. Each carries
-// its mark as well as its word: two of the three are printed on the tape.
 function flagsOf(box) {
   return [
     box.fragile && { key: "fragile", label: "Fragile" },
@@ -178,38 +150,30 @@ function flagsOf(box) {
 }
 
 function show(markup) {
-  // A countdown belongs to the page it was drawn on. Every view change and
-  // every whole-page redraw comes through here, so this is the one place
-  // that guarantees the ring timer never outlives its photo strip.
+  // Every view change and whole-page redraw passes here, so no ring timer
+  // outlives its photo strip.
   stopRings();
   app.innerHTML = markup;
   markPristine(app);
 }
 
-// Remember what every field held the moment it was drawn. That is the only
-// way a later refresh can tell "nobody has touched this" from "half typed",
-// and it costs one walk of a small form.
+// What each field held when drawn: how a later refresh tells untouched from half typed.
 function markPristine(scope) {
   for (const field of scope.querySelectorAll("input, textarea, select")) {
     field.dataset.initial = fieldValue(field);
   }
 }
 
-// A tick box or a radio (one button of a pushbutton row) is its checkedness:
-// its `.value` is the same string whether or not it is chosen.
 function fieldValue(field) {
   return field.type === "checkbox" || field.type === "radio" ? String(field.checked) : field.value;
 }
 
-// For code that sets a field's value itself (dictation). A programmatic
-// `.value =` fires no input event, and the input event is what autosave on the
-// record page listens for -- without this the dictated text would sit in the
-// field looking saved and never be sent.
+// For code that sets `.value` itself: that fires no input event, and input is
+// what autosave listens for, so the text would look saved and never be sent.
 const edited = (field) => field.dispatchEvent(new Event("input", { bubbles: true }));
 
-// Any button that reaches the server goes through this. Without it a slow
-// action looks identical to a dead button, which is exactly how a print job
-// ends up submitted five times.
+// Every button that reaches the server goes through this, so a slow action is
+// not mistaken for a dead button and pressed again.
 async function busy(button, label, work) {
   const original = button.textContent;
   const wasDisabled = button.disabled;
@@ -225,7 +189,7 @@ async function busy(button, label, work) {
   }
 }
 
-// Matches the server's rule, so the override only appears when it is needed.
+// Mirrors the server's print gate.
 function hasContents(box, items) {
   return Boolean((box.content_summary || "").trim()) || (items || []).length > 0;
 }
@@ -240,8 +204,6 @@ function printerLine(press) {
   return `<p class="${cls}">${escape(mark)} - ${escape(press.detail)}</p>`;
 }
 
-// The printer's state sits in the bar, visible from every page: finding out it
-// is off only once you have scrolled to Print is finding out too late.
 async function refreshPrinterBadge() {
   const badge = document.getElementById("printer-badge");
   if (!badge) return;
@@ -254,13 +216,11 @@ async function refreshPrinterBadge() {
       badge.title = press.detail;
     }
   } catch {
-    badge.hidden = true;  // the server is unreachable; that is its own problem
+    badge.hidden = true;
   }
 }
 
-// The Web Speech API is Chrome-only; on Firefox and Safari the keyboard's own
-// microphone does the job, so the button simply stays hidden rather than
-// sitting there dead.
+// Where the Web Speech API is missing (Firefox), the Dictate button stays hidden.
 const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
 function wireDictation(scope) {
@@ -298,30 +258,19 @@ function announce(message, { warn = false } = {}) {
   banner.hidden = false;
 }
 
-// For a view that could not be drawn at all: there is no page to go back to,
-// so the error *is* the page.
+// For a view that could not be drawn. An action that failed uses failed(),
+// which leaves the page alone.
 function showError(message) {
   show(`<div class="err"><strong>${escape(message)}</strong></div>
         <p><a href="#/">Back to items</a></p>`);
 }
 
-// For an action that failed on a page that is still good. A dialog you can
-// dismiss, and the page -- scroll position, typed text, your place in a long
-// box -- is left exactly as it was. Replacing the view here is how a failed
-// print used to cost you your spot.
-// Escape reaches *every* open dialog, not only the one on top. Measured in
-// Chrome on 2026-09-20 with a scratch page of two modal dialogs: one press
-// fired `cancel` on the viewer **and** on the dialog underneath, and calling
-// preventDefault() in the viewer's own handler did not stop it -- so a photo
-// viewer over the sub-item modal took the modal down with it, committing and
-// closing an editor nobody had finished with.
-//
-// So the key is taken before the browser can turn it into close requests, and
-// only the dialog on top acts on it. Every dialog here is appended to <body>
-// immediately before it is shown, so document order is the order they were
-// opened; and at *keydown* time nothing has closed yet, so `[open]` still
-// tells the truth (by `cancel` time it does not -- the top one has already
-// cleared its own `open` while still in the document).
+// One Escape fires `cancel` on every open modal dialog, not only the top one,
+// and preventDefault() in the top one's handler does not stop it. So the key is
+// taken in the capture phase and only the top dialog acts. Dialogs are appended
+// to <body> just before they are shown, so document order is stacking order;
+// and at keydown `[open]` is still accurate (by `cancel` the top one has
+// already cleared its own).
 function closesOnEscape(dialog, close) {
   const swallow = (event) => {
     if (event.key !== "Escape") return;
@@ -336,6 +285,8 @@ function closesOnEscape(dialog, close) {
     document.removeEventListener("keydown", swallow, { capture: true }));
 }
 
+// For an action that failed on a page that is still good: a dialog, leaving the
+// scroll position and typed text as they were.
 function failed(message, title = "That did not work") {
   let dialog = document.getElementById("oops");
   if (!dialog) {
@@ -353,12 +304,10 @@ function failed(message, title = "That did not work") {
   }
 }
 
-// Ask before destroying or hiding something. Resolves true only on the action
-// button: Escape, the backdrop's own close, and Cancel are all "no". Cancel
-// holds the focus, so a stray Enter or a double tap lands on the safe answer.
-// A native <dialog> rather than confirm(): confirm() cannot be styled, names
-// its buttons "OK" and "Cancel" whatever is at stake, and some mobile browsers
-// suppress it outright after the first one.
+// Ask before destroying or hiding something. True only on the action button:
+// Escape, the backdrop and Cancel are "no", and Cancel holds the focus so a
+// stray Enter or double tap lands on the safe answer. Not confirm(), which some
+// mobile browsers suppress after the first.
 function confirmed({ title, message, action, dismiss = "Cancel" }) {
   return new Promise((resolve) => {
     const dialog = document.createElement("dialog");
@@ -377,8 +326,6 @@ function confirmed({ title, message, action, dismiss = "Cancel" }) {
       dialog.remove();
     });
     document.body.append(dialog);
-    // Escape is "no", and only for this one: it may be over a record being
-    // edited in a modal, which must not be closed by the same press.
     closesOnEscape(dialog, () => dialog.close());
     dialog.showModal();
   });
@@ -386,28 +333,13 @@ function confirmed({ title, message, action, dismiss = "Cancel" }) {
 
 // --- a record saves itself as it is edited ---------------------------------
 //
-// The record page has no Save and no Cancel. Text saves after a pause in
-// typing and on leaving the field, a picker saves when it changes, and every
-// save can be stepped back with Undo, newest first. *When* to save, what is
-// still unsaved and how to take a save back all live in autosave.js, where
-// they are tested without a browser; this is the part that knows about fields
-// and the server.
+// When to save, what is unsaved and Undo live in autosave.js; this part knows
+// the fields and the server.
 //
-// The saver outlives the fields. The page is redrawn under an open editing
-// session -- a handling chip, a print, a change of kind all redraw it -- and
-// the undo history, a save still in flight and any text the server has not
-// got yet all have to survive that. So there is one session per open record,
-// kept here, and each draw of the page plugs itself into it (`session.page`).
-//
-// *Per record*, not one at a time. This was a single `editing` variable while
-// only one record could be on screen; a sub-item's modal over its container's
-// page puts two in play at once, and everything a session holds -- the undo
-// stack, what is still owed the server, which field the server refused and
-// why -- belongs to one record and to nothing else. So they are keyed by code.
-// Two consequences worth stating: Undo in the modal names the child's field
-// and Undo on the page behind it names the container's, because the stacks
-// were never shared; and a map has to be told when to let go, where
-// overwriting a variable did it silently (see `retire`).
+// One session per open record, keyed by code, because a sub-item's modal puts
+// two records on screen at once. A session outlives the page's redraws (a chip,
+// a print, a change of kind): its undo stack, a save in flight and unsent text
+// must survive them. Each draw plugs itself in as `session.page`.
 
 // The fields that save themselves, by `name`, and what Undo calls each one.
 const AUTOSAVED = new Map([
@@ -418,23 +350,17 @@ const AUTOSAVED = new Map([
   ["source_room_id", "packed from"],
   ["source_location", "where in that room"],
   ["current_location", "location"],
-  // Which container it is inside. Saved as null to take it out; "Undo move"
-  // reads right whichever way the last move went.
-  ["parent_code", "move"],
+  ["parent_code", "move"], // null takes it out of its container
 ]);
 const ROOM_FIELDS = new Set(["destination_room_id", "source_room_id"]);
 
-// What the saver compares and sends: text without the space either side. The
-// field itself is left alone while it has the focus -- the space after "pots
-// and" is somebody about to type the next word.
+// Trimmed for comparing and sending only: a focused field keeps its trailing
+// space, which is somebody about to type the next word.
 const tidy = (field) => (field.tagName === "SELECT" ? field.value : field.value.trim());
 
-// The status line each of the record's three forms carries. The text is a
-// polite live region, so "Saved" is spoken without taking the focus; Undo sits
-// beside it rather than inside it, so it is not read out as part of every
-// announcement. Always drawn and never hidden -- its height is reserved (see
-// .autosave in index.html), so a line appearing does not move the page under
-// a thumb.
+// Undo sits outside the live region so it is not read with every announcement.
+// Never hidden: its height is reserved (.autosave) so the page does not shift
+// under a thumb.
 const AUTOSAVE_LINE = `
   <p class="autosave">
     <span class="autosave-state" role="status"></span>
@@ -444,9 +370,8 @@ const AUTOSAVE_LINE = `
 const sessions = new Map();   // code -> the session editing that record
 
 function editSession(code) {
-  // Coming back to a record after leaving it starts afresh: an Undo offered
-  // an hour later would put back a value somebody else may have changed
-  // since. Unless something is still unsaved -- that must not be dropped.
+  // Returning to a record starts afresh -- a late Undo could put back a value
+  // someone has changed since -- unless something is still unsaved.
   const open = sessions.get(code);
   if (open && !(open.left && !open.auto.unsaved())) {
     open.left = false;
@@ -471,12 +396,9 @@ function editSession(code) {
         session.refused.delete(key);
       }
       session.page?.heard(key, state);
-      // Nothing left owing, and nothing on screen: let the session go.
       retire(session);
       if (state === "saved") reloadIfAsked();
     },
-    // Retry a server that could not be reached; do not pester one that
-    // understood the request and refused it.
     retryDelay: (failures, error) =>
       (error?.status >= 400 && error.status < 500 ? null : retryAfter(failures)),
   });
@@ -484,19 +406,15 @@ function editSession(code) {
   return session;
 }
 
-// A session is kept while something on screen is attached to it *or* while it
-// still owes the server -- a save that failed retries on its own with no page
-// in sight, and must be able to land. Once it is neither, it is dropped: the
-// single variable this replaced was swept by being overwritten, and a map has
-// to be told. `force` is for starting afresh on a record that was left clean.
+// A session is kept while a page is attached *or* it still owes the server: a
+// failed save retries with no page in sight and must be able to land.
 function retire(session, { force = false } = {}) {
   if (!force && (!session.left || session.auto.unsaved())) return;
   if (sessions.get(session.code) === session) sessions.delete(session.code);
 }
 
-// One field per save, through the endpoints that were always there. The
-// location has its own because every change of it is written to the box's
-// history -- which is also why it alone waits to be left before it saves.
+// The location has its own endpoint because each change is written to the
+// box's history, which is also why it saves only on leaving the field or Return.
 async function saveField(session, key, value) {
   const path = `/boxes/${encodeURIComponent(session.code)}`;
   const sent = ROOM_FIELDS.has(key) ? (value ? Number(value) : null) : (value || null);
@@ -509,8 +427,7 @@ async function saveField(session, key, value) {
   session.page?.landed(key, value, fresh);
 }
 
-// Going somewhere else, or the screen going dark, inside the pause: save now.
-// Up to 1.2 s of typing is otherwise sitting in a timer that may never fire.
+// Commit now: typing still inside its pause sits in a timer that may never fire.
 function leaveRecord(session) {
   session.auto.commitAll();
   session.page = null;
@@ -521,9 +438,7 @@ function leaveRecord(session) {
 // Over a snapshot: retiring a session deletes it from the map underneath.
 const everySession = (what) => { for (const session of Array.from(sessions.values())) what(session); };
 
-// Navigating abandons the page and anything open over it, so every session
-// goes. Each still owes what it owes: a left session with unsaved work stays
-// in the map, with no page attached, until its retries land.
+// Navigating abandons the page and any modal over it.
 const leaveEveryRecord = () => everySession(leaveRecord);
 
 document.addEventListener("visibilitychange", () => {
@@ -532,24 +447,12 @@ document.addEventListener("visibilitychange", () => {
 addEventListener("pagehide", () => everySession((session) => session.auto.commitAll()));
 addEventListener("online", () => everySession((session) => session.auto.retryFailed()));
 
-/**
- * Wire a set of forms to a record's session: which control holds which key,
- * what the status lines say, the listeners that save, and Undo.
- *
- * One copy for the record page and the sub-item modal, which do the same
- * thing to different records at the same time. What varies is only what is
- * passed: `root` scopes every lookup (the page's `app`, or a dialog -- which
- * also keeps the modal's fields out of the live-refresh hold, since that
- * walks `app`), `forms` are the forms that carry autosaved fields and a
- * status line, `undoLabel` names a key for the Undo button, `onLanded` is
- * what the drawing does with a save that reached the server, and
- * `onKindSaved` redraws for a kind change -- the one save that changes which
- * fields exist.
- *
- * Returns the handles the drawing needs afterwards; `onReturn` is handed back
- * rather than attached, because a form may have a submit of its own (the
- * container look-up) that must not also commit every field.
- */
+// Wires forms to a record's session, for the record page and the sub-item
+// modal alike. `root` scopes every lookup: `app`, or a dialog, whose fields are
+// then outside the live-refresh hold (it walks `app`). `onKindSaved` redraws,
+// since kind is the one save that changes which fields exist. `onReturn` is
+// handed back rather than attached: a form with its own submit (the container
+// look-up) must not also commit every field.
 function autosaveFields({ root, session, forms, undoLabel, onLanded, onKindSaved }) {
   const auto = session.auto;
   const groupOf = (key) => root.querySelector(`.seg[data-name="${key}"]`);
@@ -561,10 +464,8 @@ function autosaveFields({ root, session, forms, undoLabel, onLanded, onKindSaved
     if (group) choose(group, value);
     else fieldOf(key).value = value;
   };
-  // The key's control is pristine at `value`: what the live-refresh hold
-  // compares against. For a row that is every button's checkedness -- as it
-  // stands if the row still shows `value`, and as it would be if it has been
-  // pressed again since (then the press is the edit still owed).
+  // Makes `value` the baseline the live-refresh hold compares against. A row
+  // pressed again since keeps that press as an edit still owed.
   const savedKey = (key, value) => {
     const group = groupOf(key);
     if (group) {
@@ -575,17 +476,13 @@ function autosaveFields({ root, session, forms, undoLabel, onLanded, onKindSaved
       return;
     }
     const field = fieldOf(key);
-    // If the field still holds what was sent (give or take the spaces that
-    // were not), it is pristine as it stands. If it has been typed in since,
-    // what was sent is the baseline and the rest is still an edit.
+    // Typed in since it was sent: what was sent is the baseline, the rest an edit.
     field.dataset.initial = tidy(field) === value ? field.value : value;
   };
 
-  // Carried over: a field the saver still owes the server -- a save in
-  // flight, one that failed, a pause not yet run out when something redrew
-  // the page -- gets its text back rather than the server's older value. Its
-  // `dataset.initial` stays the server's, so it reads as unsaved to the
-  // live-refresh hold, which is the truth. Everything else starts from here.
+  // A field still owed to the server (in flight, failed, or mid-pause when the
+  // page redrew) gets its text back, not the server's older value. Its
+  // `dataset.initial` stays the server's, so it still reads as unsaved.
   for (const form of forms) {
     for (const key of keysOf(form)) {
       const owed = auto.state(key);
@@ -594,13 +491,10 @@ function autosaveFields({ root, session, forms, undoLabel, onLanded, onKindSaved
     }
   }
 
-  // What Undo would take back if pressed now. An edit that is on its way to
-  // being saved will be the newest save by the time an undo can run (pressing
-  // Undo sends it first), so it is what the button names -- not the older
-  // save underneath it.
+  // What Undo would take back now. Undo sends a pending edit first, so that
+  // edit is the one it names; a failed edit is newer than any that saved.
   const owing = () => Array.from(AUTOSAVED.keys())
     .filter((key) => ["unsaved", "saving"].includes(auto.state(key)));
-  // An edit that failed to save is newer still than anything that did save.
   const stuck = () => Array.from(AUTOSAVED.keys()).filter((key) => auto.state(key) === "failed");
   const undoTarget = () => owing()[0] || stuck()[0] || auto.canUndo();
 
@@ -617,11 +511,9 @@ function autosaveFields({ root, session, forms, undoLabel, onLanded, onKindSaved
       setText(line.querySelector(".autosave-state"), text);
       line.classList.toggle("warn", warn);
 
-      // One Undo on the page, on the line of the form last edited, and named
-      // for what it will put back -- the history is one stack across all three
-      // forms, so the next step may belong to a different one. It stays put
-      // while a save is under way rather than blinking out and back on every
-      // pause in typing, which also keeps it one Tab from the field.
+      // One Undo, on the form last edited, named for what it puts back: the
+      // history is one stack across the forms. It stays put while a save is
+      // under way rather than blinking on every pause.
       const undo = line.querySelector(".undo");
       undo.hidden = !(target && session.undoAt === form.id);
       if (!undo.hidden && !undo.classList.contains("working")) {
@@ -631,15 +523,14 @@ function autosaveFields({ root, session, forms, undoLabel, onLanded, onKindSaved
   }
 
   session.page = {
-    // A save reached the server. Nothing is redrawn -- the caret is in one of
-    // these fields -- so the page's own idea of the record is brought up to
-    // date by hand: `box` (the print button reads it), the room band, and the
-    // field's `dataset.initial`, which is how the live-refresh hold knows the
-    // field is no longer half-edited.
+    // A save never redraws, which would take the caret out of a sentence. So
+    // the page's copy is updated by hand: `box` (Print reads it), the room
+    // band, and `dataset.initial`, which tells the live-refresh hold the field
+    // is clean again.
     landed(key, value, fresh) {
       onLanded(key, value, fresh);
       if (fieldOf(key)) savedKey(key, value);
-      // A refresh held back behind this edit may be able to go now.
+      // A refresh held back by this edit may go now.
       fieldClosed();
     },
     heard(key, state) {
@@ -663,7 +554,7 @@ function autosaveFields({ root, session, forms, undoLabel, onLanded, onKindSaved
   const onLeave = (event) => {
     const field = event.target;
     if (!AUTOSAVED.has(field.name)) return;
-    // Out of the field, so its stray spaces can go without moving a caret.
+    // Trimmed only once left, when there is no caret to move.
     if (field.tagName !== "SELECT" && field.type !== "radio" && field.value !== tidy(field)) {
       if (field.dataset.initial === field.value) field.dataset.initial = tidy(field);
       field.value = tidy(field);
@@ -671,42 +562,35 @@ function autosaveFields({ root, session, forms, undoLabel, onLanded, onKindSaved
     auto.commit(field.name);
     drawLines();
   };
-  // Return in a single-line field. For the location this is one of the two
-  // ways it ever saves.
+  // Return in a single-line field; with leaving it, how the location saves.
   const onReturn = (event) => {
     event.preventDefault();
     for (const key of keysOf(event.currentTarget)) auto.commit(key);
     drawLines();
   };
   for (const form of forms) {
-    // Both: a picker fires "change" everywhere but "input" only in newer
-    // browsers, and the second of the two finds nothing new to save.
+    // Both: older browsers fire only "change" for a picker; a second event
+    // finds nothing new to save.
     form.addEventListener("input", onEdit);
     form.addEventListener("change", onEdit);
     form.addEventListener("focusout", onLeave);
     form.querySelector(".undo").addEventListener("click", (event) => undoLast(event.currentTarget));
   }
 
-  // Step back the most recent save, whichever form it was in. A deliberate
-  // press, not typing, so a failure here may say so in a dialog.
-  //
-  // Anything still on its way is sent first and waited for, so that Undo
-  // pressed straight after typing takes back the typing. An undo racing the
-  // save it is meant to follow could reach the server in either order.
+  // Anything pending is sent and waited for first, so Undo straight after
+  // typing takes back the typing rather than racing its save to the server.
+  // A deliberate press, so a failure may raise a dialog.
   async function undoLast(button) {
     try {
       const step = await busy(button, "Undoing…", async () => {
-        // One more try for anything that failed, too: if the network is back
-        // it lands, and is then undone like any other save. Not for a save
-        // the server understood and refused -- asking again gets the same
-        // answer, and Undo beside "Not saved" means "give that up".
+        // Retry failures too, but not a refusal: Undo beside "Not saved" means
+        // give it up.
         for (const key of AUTOSAVED.keys()) {
           if (auto.state(key) !== "clean" && !session.refused.has(key)) auto.commit(key);
         }
         await auto.idle();
-        // Still not there. The newest thing to take back is then the unsaved
-        // edit itself, and the server never had it: give it up here, and send
-        // nothing. undo() would reach past it to the save beneath.
+        // Still unsaved: drop the edit and send nothing. undo() would reach
+        // past it to the save beneath.
         const [lost] = stuck();
         if (lost) return { key: lost, value: auto.revert(lost) };
         return auto.undo();
@@ -715,7 +599,6 @@ function autosaveFields({ root, session, forms, undoLabel, onLanded, onKindSaved
       session.refused.delete(step.key);
       const field = fieldOf(step.key);
       if (field) {
-        // Shown as well as recorded: for a row, the right button lights again.
         showKey(step.key, step.value);
         savedKey(step.key, step.value);
       }
@@ -730,17 +613,11 @@ function autosaveFields({ root, session, forms, undoLabel, onLanded, onKindSaved
 
 // --- fragile climbs ------------------------------------------------------------
 //
-// "fragile should percolate up to the parent and set that (prompt to set if
-// it's not set) but don't undo on clear." A fragile thing makes whatever it is
-// inside fragile, so when a record is marked fragile, or a fragile one is put
-// inside something, the page offers to mark the containers that are not yet.
-// A prompted choice, on the page: the server changes nothing by itself.
-// Clearing Fragile on the record touches nothing else; the containers' marks
-// are their own writes, outside the record's own Undo.
-//
-// `record` is the record with its `path`. Resolves to the steps that were
-// marked, so the caller can bring its own copy of the path into line and not
-// ask again for the same containers.
+// Offers to mark fragile the containers of a fragile record that are not yet.
+// Only on the page, and only if accepted: the server changes nothing itself.
+// Clearing Fragile touches nothing else, and the containers' marks are outside
+// the record's Undo. Resolves to the steps marked, so the caller can update its
+// copy of `path` and not ask again.
 async function offerFragileClimb(record) {
   const steps = notYetFragile(record.path);
   if (!steps.length) return [];
@@ -762,23 +639,18 @@ async function offerFragileClimb(record) {
   return steps;
 }
 
-// How hard a captured frame is squeezed. The server re-encodes anyway; this is
-// only about what goes over the wifi.
+// Upload size only: the server re-encodes.
 const PHOTO_QUALITY = 0.82;
 
 // --- adding something inside a container ----------------------------------------
 //
-// Resolves when the dialog closes. Creating is POST /api/boxes with the kind,
-// the container and the source room, then the photo to the new code, which
-// queues its reading. A photo that does not upload leaves the record standing
-// and the dialog open saying so, with a way to try the photo again: neither a
-// half-made thing nor a photo silently dropped.
+// Resolves when the dialog closes. Creates the record, then uploads the photo.
+// A failed upload leaves the record and keeps the dialog open to retry the
+// photo, so a photo is never silently dropped.
 function addInside({ parent, kinds, rooms, shape }) {
   const dialog = document.createElement("dialog");
   dialog.className = "ask adder";
-  // The paragraphs are single lines on purpose: a dialog's text keeps its
-  // line breaks (a confirmation may run to two paragraphs), so a newline in
-  // this markup would be a break mid-sentence on the screen.
+  // Each paragraph on one line: a dialog's text keeps its line breaks.
   const what = escape(shape.label.toLowerCase());
   dialog.innerHTML = `
     <h2>Add something inside <span class="nb">${escape(parent.code)}</span></h2>
@@ -814,18 +686,10 @@ function addInside({ parent, kinds, rooms, shape }) {
     name: "source_room_id", legend: "Packed from", options: roomChoices(forSource(rooms)),
     optional: true, empty: "Not recorded" }));
 
-  // The viewfinder, live in the dialog: "can we use javascript to have a live
-  // camera immediately during adding a subitem?" -- point and tap, instead of
-  // handing off to the camera app and coming back through its confirm screen.
-  // Asked for when the dialog opens rather than at page load: nobody wants a
-  // camera prompt for browsing a list.
-  //
-  // Everything about it that can fail is ordinary -- no permission, no camera,
-  // a plain LAN address -- so none of it is an error: the line says which
-  // happened, the box is put away rather than left grey and dead, and the file
-  // picker underneath is still there. That picker has no `capture` attribute
-  // on purpose: the live camera is the camera now, and its job is the other
-  // half, choosing a photo already taken.
+  // A live viewfinder, started when the dialog opens rather than at page load.
+  // Every camera failure (refused, none, a LAN address) is ordinary: the line
+  // says which, the box is put away, and the file picker still works. The
+  // picker has no `capture` on purpose: it is for a photo already taken.
   const shot = dialog.querySelector("#adder-shot");
   const photoLine = dialog.querySelector("#adder-photo");
   const box = dialog.querySelector("#adder-box");
@@ -839,10 +703,9 @@ function addInside({ parent, kinds, rooms, shape }) {
   let captured = null;   // { blob, name } from the viewfinder
   let preview = null;    // the object URL behind the thumbnail, to be revoked
 
-  // One way out for the camera, whatever closed the dialog: `close` fires for
-  // Cancel, Escape, the backdrop and a finished Add alike, so this is the only
-  // place that stops anything. A track left running keeps the camera light on
-  // and drains a phone that is carried round a house all day.
+  // Every exit stops the tracks here: `close` fires for Cancel, Escape, the
+  // backdrop and Add alike, and pagehide covers the tab going away. A running
+  // track keeps the camera light on and drains the phone.
   const release = () => {
     if (stream) for (const track of stream.getTracks()) track.stop();
     stream = null;
@@ -864,7 +727,6 @@ function addInside({ parent, kinds, rooms, shape }) {
     still.src = url;
     still.hidden = false;
     cam.hidden = true;
-    // Another go only while there is a camera to go back to.
     shots.hidden = !stream;
     shutter.hidden = true;
     retake.hidden = !stream;
@@ -872,13 +734,12 @@ function addInside({ parent, kinds, rooms, shape }) {
   }
 
   async function startCamera() {
-    // Checked before asking: over a plain LAN address getUserMedia rejects
-    // with nothing that explains itself (CLAUDE.md, "HTTPS is not optional").
+    // Checked first: on a plain LAN address getUserMedia fails with nothing
+    // that explains itself.
     if (!window.isSecureContext) { say(cameraTrouble(null, { secure: false })); return; }
     say("Starting the camera…");
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        // Photographing a box wants the back camera.
         video: { facingMode: { ideal: "environment" } },
       });
     } catch (error) {
@@ -903,7 +764,7 @@ function addInside({ parent, kinds, rooms, shape }) {
     if (preview) URL.revokeObjectURL(preview);
     preview = URL.createObjectURL(blob);
     captured = { blob, name: `${parent.code}-inside.jpg` };
-    shot.value = "";   // one photo at a time: this one wins over an older choice
+    shot.value = "";   // this photo wins over an earlier choice
     showPhoto(preview, "This is the photo. It is read in the background and names what is inside.");
   });
 
@@ -915,21 +776,19 @@ function addInside({ parent, kinds, rooms, shape }) {
   shot.addEventListener("change", () => {
     const file = shot.files[0];
     if (!file) { say("No photo yet, and none is needed."); return; }
-    captured = null;   // the chosen one wins over anything taken here
+    captured = null;   // the chosen file wins over a frame taken here
     if (preview) URL.revokeObjectURL(preview);
     preview = URL.createObjectURL(file);
     showPhoto(preview, `Photo: ${file.name || "chosen"}. It will be read once the record exists.`);
   });
 
-  // Whichever of the two there is; never both.
   const photoToSend = () => {
     if (captured) return captured;
     const file = shot.files[0];
     return file ? { blob: file, name: file.name || "photo.jpg" } : null;
   };
 
-  // Once the record exists the two Add buttons change meaning: the photo can
-  // be tried again, or the record opened to add one there.
+  // Once made, the record is not made again: the buttons retry the photo.
   let made = null;
   const said = dialog.querySelector("#adder-said");
   const acts = dialog.querySelector(".adder-acts");
@@ -959,19 +818,14 @@ function addInside({ parent, kinds, rooms, shape }) {
         }
       });
     } catch (error) {
-      // Nothing was made: say so here and leave everything as it was.
       setText(said, error.message);
       said.hidden = false;
       return;
     }
-    // The container's page (this one, or whichever is now on screen) hears
-    // about it the way it hears about anything: the record's own copy is
-    // refetched. The page's own write is dropped by the socket as an echo,
-    // so it is asked for here.
+    // The socket drops this page's own write as an echo, so ask for the refetch.
     tell(addedInside(made, photoError), made.code);
     requestPart("summary");
     if (photoError) {
-      // The record stands. The photo can be tried again, or added from its page.
       setText(said, `${made.code} was added, but its photo did not upload: ${photoError.message}. `
         + "Try the photo again, add one from its page, or Cancel to leave it as it is.");
       said.hidden = false;
@@ -985,7 +839,7 @@ function addInside({ parent, kinds, rooms, shape }) {
   });
 
   dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close("no"); });
-  // The tab going away is the one exit that never fires `close`.
+  // The tab going away is the one exit that does not fire `close`.
   addEventListener("pagehide", release);
   dialog.addEventListener("close", () => {
     release();
@@ -998,8 +852,6 @@ function addInside({ parent, kinds, rooms, shape }) {
   startCamera();
 }
 
-// The line under "Inside this crate", on whichever draw of the page is up,
-// with a link to what was just added.
 function tell({ text, warn }, code) {
   const line = document.getElementById("inside-said");
   if (!line) return;
@@ -1013,24 +865,11 @@ function tell({ text, warn }, code) {
 
 // --- editing something inside, without leaving the container --------------------
 //
-// "pop open the subitem editor as a modal, rather than changing page." Tapping
-// a row in "Inside this crate" opens that record's editor over the container,
-// for the same reason the add dialog exists: somebody standing at an open
-// crate should be able to correct three things in it without losing their
-// place. It is the child's *own* record being edited -- its session, its undo
-// stack, its status line -- while the container's page stays attached to its
-// own session underneath (see "per record, not one at a time" above).
-//
-// The child's page is untouched and still the whole truth: a scan or a QR
-// opens it, and so does the link in here. This is a shortcut from the parent,
-// not a replacement.
-//
-// Sections with nothing in them are folded away (`editorSections`), and the
-// fold is a native <details>: keyboard-operable and announced correctly with
-// no script, which suits a project with no build step.
+// A row in "Inside this crate" opens the child's editor over the container,
+// with the child's own session and Undo; the container's page keeps its own.
+// The child's page is still the whole record: this is a shortcut to it.
+// Sections with nothing in them are folded (`editorSections`, native <details>).
 
-// One at a time: a second would edit a second record over the first, and the
-// row that opened it is behind this one.
 let openEditor = null;
 
 async function editSubitem(code, { kinds, rooms, onSaved }) {
@@ -1056,11 +895,9 @@ async function editSubitem(code, { kinds, rooms, onSaved }) {
   let strip = null;      // the photo strip, likewise
   let lines = () => {};  // the status line, until there is one
 
-  // The whole body, from the record as it stands. Called again only when the
-  // kind changes, which changes which sections exist -- the same rule the
-  // page follows, and the reason the old form is thrown away rather than
-  // patched: its listeners go with it, and the new one is wired afresh from
-  // the same session, which still holds the undo stack and anything unsaved.
+  // Called again only when the kind changes, which changes which sections
+  // exist. The new form is wired afresh to the same session, which keeps the
+  // undo stack and anything unsaved.
   function render() {
     const shape = shapeOf();
     const sections = editorSections(child, items, shape, photos);
@@ -1069,10 +906,8 @@ async function editSubitem(code, { kinds, rooms, onSaved }) {
         <summary>${escape(section.legend)}</summary>
         <div class="fold-body" data-body="${escape(section.key)}"></div>
       </details>`;
-    // Every section in the one form, so the status line that follows them
-    // belongs to all of them and sits at the end where it reads as the
-    // record's. (Which is why adding an item below is a button and not a
-    // form of its own: a form inside a form is invalid.)
+    // Every section in one form, so the one status line covers them all. Adding
+    // an item is therefore a button, not a form: forms cannot nest.
     dialog.innerHTML = `
       <h2>${escape(child.code)}</h2>
       <p class="meta" id="child-where"></p>
@@ -1088,9 +923,8 @@ async function editSubitem(code, { kinds, rooms, onSaved }) {
       </div>`;
 
     const body = (key) => dialog.querySelector(`[data-body="${key}"]`);
-    // A row carries its own <legend> as the group's name for a screen reader;
-    // the <summary> above it already shows those words, so it is not shown
-    // twice.
+    // The legend still names the group for a screen reader; the <summary>
+    // already shows the words.
     const quiet = (row) => { row.querySelector("legend").classList.add("vh"); return row; };
 
     const what = document.createElement("textarea");
@@ -1120,8 +954,7 @@ async function editSubitem(code, { kinds, rooms, onSaved }) {
     where.setAttribute("aria-label", "Where in that room");
     body("source").append(where);
 
-    // The handling flags, as on the page: each PATCHes on its own rather than
-    // going through the saver, and marking one fragile offers the climb.
+    // Each flag PATCHes on its own, not through the saver.
     const flags = document.createElement("div");
     flags.className = "flags-set";
     for (const [key, label] of [["fragile", "Fragile"], ["heavy", "Heavy"], ["open_first", "Open first"]]) {
@@ -1171,8 +1004,7 @@ async function editSubitem(code, { kinds, rooms, onSaved }) {
       };
       const addButton = document.getElementById("child-add-go");
       addButton.addEventListener("click", () => addItems(addButton));
-      // Return here means "add this", not "commit the fields" -- which is what
-      // the form's own submit would otherwise make of it.
+      // Return adds; the form's own submit would commit the fields instead.
       typed.addEventListener("keydown", (event) => {
         if (event.key !== "Enter" || event.isComposing) return;
         event.preventDefault();
@@ -1180,11 +1012,7 @@ async function editSubitem(code, { kinds, rooms, onSaved }) {
       });
     }
 
-    // "show image thumbs and show the full view on demand". The same strip the
-    // record page draws: `photosPart` through `reconcile`, which keeps each
-    // figure's latest photo and repaints an open viewer as a reading lands --
-    // and a tap on a thumbnail already opens `viewPhoto`, over this modal.
-    // A second implementation of any of that would be the wrong answer.
+    // The record page's own strip; a thumbnail opens viewPhoto over this modal.
     if (body("photos")) {
       const shots = document.createElement("div");
       shots.className = "shots";
@@ -1194,7 +1022,7 @@ async function editSubitem(code, { kinds, rooms, onSaved }) {
         contents: Boolean(shape.contents),
         stale: () => {},   // the modal was closed or rebuilt under it
         ask: () => strip?.refresh(),
-        // A reading that finished changed the items and the summary too.
+        // A finished reading changed the items and the summary too.
         finished: () => { absorb(); },
         changed(now) {
           photos = now;
@@ -1212,9 +1040,7 @@ async function editSubitem(code, { kinds, rooms, onSaved }) {
       undoLabel: (key) => (key === "content_summary" && !shape.contents ? "name" : AUTOSAVED.get(key)),
       onLanded(key, value, fresh) {
         child = { ...child, ...fresh };
-        // The container's row for this record is drawn from its own fetch of
-        // the container; ask for it, so the row behind is right before this
-        // closes. The page's own socket echo is dropped as its own doing.
+        // Refetch the container's row now; this page's own echo is dropped.
         onSaved();
       },
       onKindSaved: redrawForKind,
@@ -1227,8 +1053,8 @@ async function editSubitem(code, { kinds, rooms, onSaved }) {
     lines();
   }
 
-  // The kind decides which sections there are, so it is the one save that
-  // rebuilds the body. Whatever had the focus gets it back.
+  // Kind decides which sections exist, so it alone rebuilds the body. The
+  // focus is put back.
   async function redrawForKind() {
     const active = document.activeElement;
     const selector = active?.id ? `#${CSS.escape(active.id)}`
@@ -1243,10 +1069,8 @@ async function editSubitem(code, { kinds, rooms, onSaved }) {
     if (again) again.focus();
   }
 
-  // Nothing with content stays folded. Only ever opens: closing one would
-  // take away a section somebody had opened for themselves. This is what
-  // keeps the rule true after the record changes under the modal -- a photo
-  // being read writes a summary and a list of items by itself.
+  // Nothing with content stays folded. Only ever opens: never close a section
+  // somebody opened.
   function unfoldFilled() {
     for (const section of editorSections(child, items, shapeOf(), photos)) {
       const fold = dialog.querySelector(`[data-fold="${section.key}"]`);
@@ -1281,21 +1105,16 @@ async function editSubitem(code, { kinds, rooms, onSaved }) {
       child = { ...child, ...fresh };
       drawFlags();
       onSaved();
-      // Fragile climbs from here too: this record is inside something by
-      // definition, and that is exactly what the climb is for.
       if (key === "fragile" && fresh.fragile) {
         const marked = await offerFragileClimb(fresh);
-        // A container of this one was marked: the page behind shows its own
-        // chips, and only a redraw of it can say so.
+        // Only a redraw shows the new chips on the container's page behind.
         if (marked.length) requestRefresh();
       }
     } catch (error) { failed(error.message); }
   }
 
-  // A change to this record from anywhere else -- another phone, or the model
-  // finishing with a photo of it. Taken in place: nothing is rebuilt under
-  // the hands of whoever is typing, and no field that is being edited or is
-  // still owed to the server is touched.
+  // A change from elsewhere (another phone, a finished photo reading), taken in
+  // place: no field that is focused or still owed to the server is touched.
   async function absorb() {
     let fresh;
     let freshItems;
@@ -1303,7 +1122,7 @@ async function editSubitem(code, { kinds, rooms, onSaved }) {
     try {
       [fresh, freshItems, freshPhotos] = await Promise.all([
         api(path), api(`${path}/items`), api(`${path}/photos`)]);
-    } catch { return; }   // a background refresh that fails leaves it alone
+    } catch { return; }   // a failed background refresh leaves it alone
     if (!dialog.isConnected) return;
     const wasKind = child.kind;
     child = { ...child, ...fresh };
@@ -1325,31 +1144,27 @@ async function editSubitem(code, { kinds, rooms, onSaved }) {
       auto.track(key, chosen(row));
     }
     contents?.draw(items);
-    // The strip redraws in place -- a reading landing must not take the
-    // viewer down with it. The *first* photo is the one case that needs the
-    // body rebuilt, since until now there was no photo section at all.
+    // In place, so an open viewer survives. Only the first photo rebuilds the
+    // body: until then there is no photo section.
     strip?.draw(photos);
     if (!hadPhotos && photos.length && !dialog.contains(document.activeElement)) { render(); return; }
     unfoldFilled();
     showWhere();
     drawFlags();
     lines();
-    // The kind decides which sections exist. Rebuilding takes the focus with
-    // it, so it waits for a moment when nobody is mid-anything.
+    // Rebuilding takes the focus, so a new kind waits until nobody is mid-edit.
     if (fresh.kind !== wasKind && !auto.unsaved() && !dialog.contains(document.activeElement)) {
       await redrawForKind();
     }
   }
 
   const watching = (event) => {
-    // The same rule the views use, including dropping this device's own echo.
     if (affects(event, { name: "box", code, clientId })) absorb();
   };
   alsoWatching.add(watching);
 
-  // Closing commits what is waiting and *waits for it*, so the row behind is
-  // right by the time this is out of the way -- the same rule as leaving a
-  // record, which is what this is.
+  // Closing commits what is waiting and waits for it to land, as leaving a
+  // record does, so the row behind is right once this is gone.
   let closing = false;
   async function dismiss() {
     if (closing) return;
@@ -1359,14 +1174,12 @@ async function editSubitem(code, { kinds, rooms, onSaved }) {
     leaveRecord(session);
     dialog.close();
   }
-  // Escape would close it before any of that, so it is taken over.
-  // Escape goes through `dismiss`, which commits and waits, rather than the
-  // native close, which would not. `cancel` stays as the fallback for a close
-  // request that is not a key press; Escape never reaches it now.
+  // Every way out goes through `dismiss`; the native close would not commit.
+  // `cancel` covers a close request that is not a key press.
   closesOnEscape(dialog, () => dismiss());
   dialog.addEventListener("cancel", (event) => { event.preventDefault(); dismiss(); });
   dialog.addEventListener("click", (event) => { if (event.target === dialog) dismiss(); });
-  // Following the link to the whole page, or a scan landing somewhere else.
+  // The link to the whole page, or a scan landing elsewhere.
   const leaving = () => dismiss();
   addEventListener("hashchange", leaving);
   dialog.addEventListener("close", () => {
@@ -1383,10 +1196,8 @@ async function editSubitem(code, { kinds, rooms, onSaved }) {
 
 // --- looking at one photo ------------------------------------------------------
 //
-// Tapping a photo opens it large, with what the model saw *in that photo*
-// beside it: the evidence for one picture, so a wrong item on the contents
-// list can be traced to where it came from. One viewer at a time; `showing`
-// lets the photo strip repaint it if the model finishes while it is open.
+// What the model saw in *that* photo, so a wrong item can be traced to it.
+// `showing` lets the strip repaint an open viewer when a reading lands.
 const showing = { id: null, render: null };
 
 function viewPhoto(photo, { readable = true } = {}) {
@@ -1424,7 +1235,7 @@ function viewPhoto(photo, { readable = true } = {}) {
     const by = dialog.querySelector(".by");
     setText(by, seen.by);
     by.hidden = !seen.by;
-    // Built with DOM calls and textContent: the names are the model's words.
+    // textContent: the names are the model's words.
     const list = dialog.querySelector(".items");
     list.replaceChildren(...seen.items.map((item) => {
       const row = document.createElement("li");
@@ -1450,12 +1261,8 @@ function viewPhoto(photo, { readable = true } = {}) {
   };
   render(photo);
 
-  // The quick model reads every photo; this asks the careful one. Nothing to
-  // redraw here: the queued job comes back as photos.changed, the strip
-  // repaints, and it repaints this viewer with it (see `showing`).
-  //
-  // Both buttons queue a job and draw what comes back. `busy()` puts a button's
-  // old words back when it finishes, so the render comes after it, not inside.
+  // The result arrives later through photos.changed and `showing`. busy() puts
+  // the button's words back when done, so the render comes after it, not inside.
   const ask = (button, query, problem) => button.addEventListener("click", async () => {
     try {
       const queued = await busy(button, "Asking…", () =>
@@ -1468,16 +1275,13 @@ function viewPhoto(photo, { readable = true } = {}) {
 
   showing.id = photo.id;
   showing.render = render;
-  // Whatever opened it -- the thumbnail in a strip, wherever that strip is.
   const opener = document.activeElement;
-  // The backdrop is the dialog element itself; anything inside it is not.
+  // A click on the backdrop targets the dialog itself.
   dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
   dialog.addEventListener("close", () => {
     if (showing.render === render) { showing.id = null; showing.render = null; }
     dialog.remove();
-    // Back to the thumbnail. A dialog restores focus by itself, but this one
-    // is opened over a modal whose fields somebody may be part-way through,
-    // and the strip under it redraws in place while a photo is being read.
+    // Back to the thumbnail, if a redraw of the strip has not replaced it.
     if (opener?.isConnected) opener.focus();
   });
   document.body.append(dialog);
@@ -1487,32 +1291,19 @@ function viewPhoto(photo, { readable = true } = {}) {
 
 // --- parts of a box page that update on their own -------------------------
 //
-// The contents list and the photo strip change while the page is open, and
-// not only from another phone: a photo is read in the background after an
-// upload, and what it finds lands here seconds later -- usually while somebody
-// is typing into the summary a few centimetres up the same page. A whole-page
-// redraw is held while a field is focused (see "live updates" below), so these
-// two are drawn by `reconcile` instead, the same way the box list is: the first
-// draw and every later update are one code path, a row that survives keeps its
-// element (and with it its listeners, its focus, and an <img> that does not
-// reload and flash), and nothing outside the part is touched.
+// The contents list and the photo strip change while the page is open, often
+// from a background photo reading while somebody types in the summary. A
+// whole-page redraw is held while a field is focused, so these are drawn by
+// `reconcile`: the first draw and every update share one path, and a surviving
+// row keeps its element, listeners, focus and loaded <img>.
 //
-// Listeners are attached where a row is created and nowhere else. There is no
-// "rebind after re-render" step to forget, which is how buttons go dead.
-//
-// Rows are built with DOM calls and textContent, as in rowFor: nothing is
-// interpolated into markup, so escape() has nothing to do. The photo figure is
-// the exception -- it is markup, and every value in it goes through escape().
+// Listeners are attached where a row is created, so there is no rebind step to
+// forget. Rows use textContent; the photo figure is markup, and every value in
+// it goes through escape().
 
-/**
- * The "What is in it" list of one box.
- *
- * `changed(items)` is told whenever the list is redrawn from the server, so
- * the page can keep the things that depend on it (the delete note, and what
- * the print warning counts as "contents") in step. `stale()` is called when a refresh comes back to
- * find its list gone from the page -- a redraw overtook it, possibly with
- * older data than this refresh was carrying.
- */
+// `changed(items)` keeps what depends on the list in step (the delete note, the
+// print warning). `stale()` is called when a refresh finds its list gone from
+// the page: a redraw overtook it, possibly with older data.
 function itemsPart(list, { path, changed, stale }) {
   let latest = 0;
 
@@ -1521,9 +1312,8 @@ function itemsPart(list, { path, changed, stale }) {
   }
 
   async function refresh() {
-    // Two refreshes can be in flight at once (an event, and the person's own
-    // rename). Only the one that started last may paint: it asked last, so it
-    // holds the newest answer, whichever order the replies arrive in.
+    // Only the refresh that started last may paint: it holds the newest answer,
+    // whatever order the replies arrive in.
     const mine = ++latest;
     const items = await api(`${path}/items`);
     if (mine !== latest) return;
@@ -1534,13 +1324,10 @@ function itemsPart(list, { path, changed, stale }) {
 
   function itemRow(item) {
     const row = document.createElement("li");
-    // What reconcile finds this row by next time. Without it every update
-    // would make a second copy of the list beneath the first.
+    // How reconcile finds the row; without it every update draws a second list.
     row.dataset.key = item.id;
     const what = document.createElement("span");
     what.className = "what";
-    // A button, not a span with a click handler: it takes focus, and Enter and
-    // Space press it, without any of that being reimplemented here.
     const name = document.createElement("button");
     name.type = "button";
     name.className = "name";
@@ -1557,9 +1344,8 @@ function itemsPart(list, { path, changed, stale }) {
     row.append(what, qty, remove);
 
     name.addEventListener("click", () => rename(row));
-    // Removing one item deliberately does not ask first: it is one tap to
-    // re-add, and a modal per row would make tidying what a photo found
-    // miserable.
+    // Deliberately unconfirmed: one tap to re-add, and a modal per row would
+    // make tidying what a photo found miserable.
     remove.addEventListener("click", async () => {
       remove.disabled = true;
       try {
@@ -1575,9 +1361,7 @@ function itemsPart(list, { path, changed, stale }) {
   }
 
   function fillItemRow(row, item) {
-    // The row's own record of what it shows. The handlers above read these at
-    // the moment of the tap, so they act on the item as it is now rather than
-    // as it was when the row was first made.
+    // Handlers read this at tap time, so they act on the item as it is now.
     row.dataset.name = item.name;
     const name = row.querySelector(".name");
     setText(name, item.name);
@@ -1589,11 +1373,10 @@ function itemsPart(list, { path, changed, stale }) {
     row.querySelector("[data-remove]").setAttribute("aria-label", `Remove ${item.name}`);
   }
 
-  // Tap a name to change it. The name gives way to a field holding the same
-  // text; Enter or leaving the field saves, Escape puts the name back. The
-  // field is *removed* when it closes rather than hidden: a leftover input
-  // whose value differs from what was drawn would look like an unsaved edit
-  // to the live-update hold, and the page would never refresh again.
+  // Enter or leaving saves, Escape puts the name back. The field is *removed*
+  // on closing, not hidden: a leftover input differing from what was drawn
+  // reads as an unsaved edit to the live-refresh hold, which would then hold
+  // the page forever.
   function rename(row) {
     if (row.classList.contains("renaming")) return;
     const name = row.querySelector(".name");
@@ -1611,8 +1394,8 @@ function itemsPart(list, { path, changed, stale }) {
     field.focus();
     field.select();
 
-    // Closing takes the focus away, which fires blur, which would save again;
-    // and so does the error dialog. One flag covers every way back in.
+    // Closing, and the error dialog, move the focus and fire blur, which would
+    // save again.
     let finished = false;
     const close = (refocus) => {
       finished = true;
@@ -1625,7 +1408,6 @@ function itemsPart(list, { path, changed, stale }) {
     const save = async (refocus) => {
       if (finished) return;
       const value = field.value.trim();
-      // Emptied, or left as it was: nothing to say to the server.
       if (!value || value === was) { close(refocus); return; }
       finished = true;
       field.disabled = true;
@@ -1637,12 +1419,10 @@ function itemsPart(list, { path, changed, stale }) {
         failed(error.message, "Not renamed");
         return;
       }
-      // Shown at once rather than after the refetch, so the old name does not
-      // flash back for the length of a request.
+      // At once, so the old name does not flash back during the refetch.
       setText(name, value);
       close(refocus);
-      // The server has also made the item this person's own (source goes from
-      // "ai" to "manual"), so the refetch is what clears "autogenerated".
+      // Renaming made the item a person's; the refetch clears "autogenerated".
       try { await refresh(); } catch (error) { failed(error.message); }
     };
 
@@ -1658,8 +1438,7 @@ function itemsPart(list, { path, changed, stale }) {
   return { draw, refresh };
 }
 
-// One timer for the one photo strip on screen. Module-level so that show()
-// can stop it without knowing anything about photos.
+// Module-level so show() can stop it.
 let ringTimer = null;
 
 function stopRings() {
@@ -1667,27 +1446,19 @@ function stopRings() {
   ringTimer = null;
 }
 
-/** How often a spinner that has outrun its estimate asks whether it is done. */
 const OVERDUE_ASK_MS = 5000;
 
-/**
- * The photo strip of one box, including what the vision model is doing with
- * each photo.
- *
- * `contents` is whether this kind of record holds contents at all (a bicycle
- * does not, and its photos are never read). `ask()` requests a refresh of the
- * strip through the usual gate; `finished()` is called when a job that was
- * running on the last draw is done on this one.
- */
+// `contents`: whether this kind holds contents at all; if not, its photos are
+// never read. `ask()` requests a refresh through the usual gate. `finished()`
+// is called when a job running on the last draw is done on this one.
 function photosPart(strip, { path, contents, changed, stale, ask, finished }) {
-  // Each figure's photo as last heard from the server: a figure is built once
-  // and updated in place, so the viewer must not show what it was born with.
+  // Figures are updated in place, so the viewer reads the photo as last heard,
+  // not as the figure was built.
   const lastHeard = new WeakMap();
   let latest = 0;
   let asked = 0;
-  // figure -> the snapshot it is counting down from, and when that arrived.
-  // The server says how long is left as of its reply; from there on the
-  // countdown is this side's clock.
+  // figure -> the snapshot it counts down from, and when that arrived: the
+  // server's time left is as of its reply.
   const clocks = new Map();
 
   function draw(photos) {
@@ -1712,15 +1483,13 @@ function photosPart(strip, { path, contents, changed, stale, ask, finished }) {
     });
     stopRings();
     if (clocks.size) {
-      // Reduced motion: the text still has to count, so the timer still runs,
-      // but once a second and with no easing (see .ring-arc in index.html),
-      // so the ring steps rather than sweeps. It never spins either way.
+      // Reduced motion: the text still counts, but once a second and with no
+      // easing (.ring-arc), so the ring steps rather than sweeps.
       const calm = matchMedia("(prefers-reduced-motion: reduce)").matches;
       ringTimer = setInterval(tick, calm ? 1000 : 200);
     }
-    // Normally `items.changed` and `box.updated` arrive alongside the event
-    // that led here. If those were lost in a reconnect, this is the only sign
-    // that the list and the summary have moved; a duplicate costs two GETs.
+    // If `items.changed` and `box.updated` were lost in a reconnect, this is the
+    // only sign the list and summary moved. A duplicate costs two GETs.
     if (settled) finished();
   }
 
@@ -1733,9 +1502,8 @@ function photosPart(strip, { path, contents, changed, stale, ask, finished }) {
       overdue = overdue || view.indeterminate;
       paint(figure, view);
     }
-    // The estimate has run out. The event that says "done" is probably moments
-    // away, but if it was dropped the spinner would turn forever -- so while
-    // one is turning, ask now and then. Bounded: it stops with the spinner.
+    // Past the estimate: if the "done" event was dropped the spinner would turn
+    // forever, so ask now and then while it turns.
     if (overdue && now - asked > OVERDUE_ASK_MS) {
       asked = now;
       ask();
@@ -1752,18 +1520,16 @@ function photosPart(strip, { path, contents, changed, stale, ask, finished }) {
     const ring = figure.querySelector(".ring");
     ring.hidden = !view.busy;
     ring.classList.toggle("spin", view.indeterminate);
-    // Filled by how much of the estimate has gone. Once there is no honest
-    // fraction the inline offset is dropped and the stylesheet's spinner arc
-    // takes over -- it can never be left sitting full.
+    // With no honest fraction the inline offset is dropped and the stylesheet's
+    // spinner takes over, so the ring is never left sitting full.
     ring.querySelector(".ring-arc").style.strokeDashoffset =
       view.fraction === null ? "" : String(100 * (1 - view.fraction));
 
-    // The same button is "Retry" after a failure and the way in for a photo
-    // that has never been read (one taken before photos were read at all).
+    // Retry after a failure, or the first reading of a photo never read.
     const again = block.querySelector("[data-analyse]");
     const offered = view.retry || (view.state === "none" && contents);
     again.hidden = !offered;
-    // busy() owns the label while a request is out, and puts it back after.
+    // busy() owns the label while a request is out.
     if (offered && !again.classList.contains("working")) {
       setText(again, view.retry ? "Retry" : "Read this photo");
     }
@@ -1783,9 +1549,8 @@ function photosPart(strip, { path, contents, changed, stale, ask, finished }) {
     figure.dataset.key = photo.id;  // what reconcile finds it by next time
     lastHeard.set(figure, photo);
     const id = encodeURIComponent(photo.id);
-    // Everything that can change later is in here from the start and toggled
-    // with `hidden`, so an update never has to create a control -- or remember
-    // to give it a listener.
+    // Everything that can change is here from the start and toggled with
+    // `hidden`, so an update never creates a control that needs a listener.
     figure.innerHTML = `
       <div class="pic">
         <a href="/photos/${escape(id)}/full" target="_blank" rel="noreferrer">
@@ -1811,19 +1576,14 @@ function photosPart(strip, { path, contents, changed, stale, ask, finished }) {
         <button type="button" data-analyse hidden>Retry</button>
       </div>`;
 
-    // Still a real link, so a long press or a middle click opens the file as
-    // before; a plain tap opens the viewer, with what was seen in the photo.
+    // Still a real link for a long press or middle click; a plain tap opens the viewer.
     figure.querySelector(".pic a").addEventListener("click", (event) => {
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
       event.preventDefault();
       viewPhoto(lastHeard.get(figure) || photo, { readable: contents });
     });
 
-    // Not under /api: photo files and their controls sit at the root, so
-    // these go through request() rather than api().
-    //
-    // Each action redraws the strip and nothing else. They used to redraw the
-    // whole page, which threw away anything typed elsewhere on it.
+    // Each action redraws the strip only: a page redraw would lose typing elsewhere.
     const press = (selector, work) => {
       const button = figure.querySelector(selector);
       button.addEventListener("click", async () => {
@@ -1854,9 +1614,8 @@ function photosPart(strip, { path, contents, changed, stale, ask, finished }) {
 
 // --- printing a label that will not say much ---------------------------------
 //
-// A label with no contents, or no destination room, is tape spent on something
-// that cannot be sorted by sight. Not forbidden -- sometimes that is the label
-// you want -- but it asks first. Returns whether to go ahead.
+// No contents or no destination room: allowed, but asked first. Returns
+// whether to go ahead.
 async function confirmThinLabel(what, { contents, room }) {
   const missing = [];
   if (!contents) missing.push("nothing is written down for it");
@@ -1873,13 +1632,10 @@ async function confirmThinLabel(what, { contents, room }) {
 
 // --- a barcode reader ---------------------------------------------------------
 //
-// A keyboard-wedge reader types what it scans and presses Return: the label's
-// Code 128 is the box number, its QR is the box URL. `entered` (wedge.js) says
-// what a piece of text points at; this decides whether to go there.
-//
-// A URL can only have come from a label, so it is opened without asking. A
-// bare number is only *shaped* like a code -- so is "kettle" -- and is looked
-// up first, or every one-word search would land on "no such box".
+// A keyboard-wedge reader types what it scans and presses Return: the Code 128
+// is the box number, the QR the box URL. A URL can only come from a label, so
+// it opens without asking; a bare word is only *shaped* like a code (so is
+// "kettle") and is looked up first.
 async function openEntered(text) {
   const target = entered(text);
   if (!target) return false;
@@ -1894,37 +1650,32 @@ async function openEntered(text) {
   return true;
 }
 
-// The reader has no idea where the cursor is. With a field focused its keys go
-// into that field (the search box handles that, above); with *nothing* focused
-// they would go nowhere, so they are collected here instead.
+// With nothing focused the reader's keys would go nowhere, so they are collected here.
 const scanKeys = new KeyBuffer();
 document.addEventListener("keydown", async (event) => {
   if (event.ctrlKey || event.metaKey || event.altKey) return;
-  // A field takes its own keys, and a modal is a question being asked.
-  // A radio or a tick box is a button that happens to be an <input>: it takes
-  // no text, so a scan while one has the focus is a scan at the page.
+  // A field takes its own keys, and an open dialog is a question being asked.
+  // A radio or tick box takes no text: counted as a field, a scan while one had
+  // the focus would be ignored and the reader's Return would submit its form.
   const typing = event.target instanceof Element
     && event.target.closest(
       "input:not([type=radio]):not([type=checkbox]), textarea, select, [contenteditable]");
   if (typing || document.querySelector("dialog[open]")) return;
 
   const now = performance.now();
-  // Firefox opens quick find on "/" and "'" when nothing is focused, which
-  // would swallow the rest of a scanned URL. Only while a scan is under way:
-  // a lone "/" still does what the browser means it to.
+  // Firefox opens quick find on "/" and "'" when nothing is focused, swallowing
+  // the rest of a scanned URL. Only during a scan, so a lone "/" still works.
   if (scanKeys.collecting(now) && (event.key === "/" || event.key === "'")) {
     event.preventDefault();
   }
 
   const scannedText = scanKeys.feed(event.key, now);
   if (scannedText === null) return;
-  // A *button* may well have the focus -- whichever was tapped last -- and the
-  // reader's Return would press it again. After "Print label", that is a scan
-  // that spends tape. The Return belongs to the scan, so it stops here.
+  // The last button tapped may have the focus, and the reader's Return would
+  // press it: after "Print label", a scan would spend tape.
   event.preventDefault();
   if (await openEntered(scannedText)) return;
-  // Read something, but it is not a box here: show the search for it rather
-  // than doing nothing, so a mis-scan is visible.
+  // Not a box here: search for it, so a mis-scan is visible.
   location.hash = `#/search/${encodeURIComponent(scannedText.trim())}`;
 });
 
@@ -1936,17 +1687,10 @@ const boxesPath = (query) =>
 const listHeading = (boxes, query) =>
   query ? `Matches for “${query}”` : `${boxes.length} item${boxes.length === 1 ? "" : "s"}`;
 
-// A live refresh updates the rows in place (see reconcile in live.js) rather
-// than rebuilding the list's markup, so a row stays the same element across a
-// refresh and a thumb already on it still opens the box it was aimed at.
-//
-// These rows are built with DOM calls and textContent, so no value is ever
-// interpolated into markup and escape() has nothing to do here.
-//
-// The thumbnail frame is drawn for every row, photo or not. It holds its size
-// from the stylesheet rather than from the image, so a box with no picture
-// leaves a gap the same shape as its neighbours' -- and a box that gains one
-// later fills that gap instead of shoving every row below it down the screen.
+// Rows are updated in place by reconcile, never rebuilt, so a tap that began on
+// a row's <a> still opens the box it was aimed at. The thumbnail frame is drawn
+// for every row and sized by the stylesheet, so a photo arriving later fills
+// its gap rather than pushing the rows below down.
 function rowFor(box) {
   const row = document.createElement("li");
   row.dataset.key = box.code;
@@ -1954,11 +1698,10 @@ function rowFor(box) {
   link.setAttribute("href", `#/b/${encodeURIComponent(box.code)}`);
   const frame = document.createElement("span");
   frame.className = "t";
-  // Under the photo, not instead of it: an <img> that arrives later simply
-  // paints over the mark, so nothing has to decide which of the two shows.
+  // Under the photo: an <img> that arrives later paints over it.
   frame.append(iconNode(kindIcon(box), "i tk"));
   const thumb = document.createElement("img");
-  thumb.alt = "";  // decorative: the code beside it already names the box
+  thumb.alt = "";  // decorative: the code beside it names the box
   thumb.loading = "lazy";
   thumb.hidden = true;
   frame.append(thumb);
@@ -1968,8 +1711,7 @@ function rowFor(box) {
     span.className = cls;
     link.append(span);
   }
-  // Three lines in the last cell: what it is, how far along it is, and how
-  // much is inside it (blank for most rows).
+  // The last cell: kind, status, and how much is inside.
   for (const cls of ["k", "st", "in"]) {
     const line = document.createElement("span");
     line.className = cls;
@@ -1979,10 +1721,8 @@ function rowFor(box) {
   return row;
 }
 
-// Where the row sits in a group of search results: `depth` steps in from the
-// left, `data-context` says it is here to say where a match is rather than
-// because it matched. The number is honest however deep it goes; the
-// stylesheet is what stops the indent walking off a narrow screen.
+// `data-context` marks a container shown to say where a match is, not because
+// it matched. The stylesheet caps the indent `depth` gives.
 function placeRow(row, { depth = 0, context = false } = {}) {
   if (depth) row.style.setProperty("--depth", depth);
   else row.style.removeProperty("--depth");
@@ -2001,8 +1741,7 @@ function fillRow(row, box) {
   setThumb(row.querySelector("span.t img"), coverUrl(box));
 }
 
-// Removing the attribute rather than setting src="" -- an empty src makes the
-// browser re-request the page itself.
+// Removes src rather than emptying it: an empty src re-requests the page itself.
 function setThumb(image, url) {
   if (!image) return;
   if (!url) {
@@ -2018,11 +1757,8 @@ function setText(node, value) {
   if (node && node.textContent !== value) node.textContent = value;
 }
 
-// Search results arrive with the containers they are inside (`matched` false
-// on those), so the list is drawn as groups: the container first, then what
-// was found in it, indented. Every other list -- browsing, a container's
-// contents -- flags nothing, and groupMatches hands it back flat, so there is
-// one path and the rows cannot be built two ways.
+// Search results carry the containers of matches (`matched` false) and are
+// drawn grouped; groupMatches returns any other list flat.
 const patchBoxList = (list, boxes) =>
   reconcile(list, groupMatches(boxes), {
     key: (found) => found.row.code,
@@ -2033,10 +1769,9 @@ const patchBoxList = (list, boxes) =>
     },
   });
 
-// Which page the browser thinks it is on. A background refresh has to prove
-// it is still the right one before it paints: tapping a row starts a
-// navigation that finishes long before a refetch begun a moment earlier does,
-// and without this the list would land back on top of the box you just opened.
+// A background refresh checks this before painting: a tap's navigation can
+// finish before a refetch begun earlier, which would paint the list over the
+// box just opened.
 const here = () => location.hash || "#/";
 
 async function refreshBoxes(query, at) {
@@ -2044,8 +1779,7 @@ async function refreshBoxes(query, at) {
   if (here() !== at) return;
   const list = document.getElementById("boxlist");
   if (!list || !boxes.length) {
-    // Crossing into or out of the empty state changes the whole page, not
-    // just the rows, so there is nothing to patch.
+    // Into or out of the empty state changes the whole page.
     await viewBoxes(query);
     return;
   }
@@ -2056,10 +1790,6 @@ async function refreshBoxes(query, at) {
 async function viewBoxes(query) {
   const boxes = await api(boxesPath(query));
 
-  // The rows themselves are built by rowFor/fillRow, below, rather than
-  // written out again here: this was a template that had to match them
-  // element for element, and a list drawn two ways is a list that ends up
-  // disagreeing with itself.
   const list = boxes.length
     ? `<ul class="boxlist" id="boxlist"></ul>`
     : query
@@ -2085,8 +1815,7 @@ async function viewBoxes(query) {
   document.getElementById("search").addEventListener("submit", async (event) => {
     event.preventDefault();
     const value = new FormData(event.target).get("q").trim();
-    // A barcode reader types a box number (the Code 128) or a box URL (the
-    // QR) and presses Return. Either opens the box; anything else searches.
+    // A barcode reader types a code or a box URL here and presses Return.
     if (await openEntered(value)) return;
     location.hash = value ? `#/search/${encodeURIComponent(value)}` : "#/";
   });
@@ -2094,18 +1823,13 @@ async function viewBoxes(query) {
   watch({ name: "list", query, refresh: (at) => refreshBoxes(query, at) });
 }
 
-// A whole-page draw fetches six things and paints when the slowest is back.
-// An event that arrives in between may be applied to the page that is about
-// to be replaced, and the replacement may have been fetched too early to
-// include it -- the page would then be stale with nothing left to correct it.
-// So whole-page draws are counted, and any part that changed while one was
-// out is asked for again once the new page is up (see `overtaken` below).
+// An event arriving while a whole-page draw is fetching may be applied to the
+// page about to be replaced, and the replacement may predate it. So draws are
+// counted, and a part that changed meanwhile is asked for again (`overtaken`).
 async function viewBox(code, options) {
-  // The fields are about to be replaced from the server. Anything sitting in
-  // a pause is sent first, *and waited for*: a page fetched while the save was
-  // still on its way would show the old text as if it were current, and then
-  // adopt it as the baseline. What could not be saved at all is put back into
-  // its field by the new page (see "carried over" in drawBox).
+  // Pending saves are sent *and waited for*: a page fetched before a save
+  // lands would show the old text and adopt it as the baseline. What cannot be
+  // saved at all is put back into its field by the new page.
   const open = sessions.get(code);
   if (open) {
     open.auto.commitAll();
@@ -2131,15 +1855,13 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
     api("/printer").catch(() => null),
     api("/settings/kinds"),
   ]);
-  // These three are kept up to date in place after the first draw, so they
-  // are variables: the delete note and the print override read them later.
+  // Kept up to date in place; the delete note and Print read them.
   let box = drawnBox;
   let items = drawnItems;
   let photos = drawnPhotos;
   const shape = allKinds.find((k) => k.kind === box.kind) || allKinds[0];
-  // Five requests take a moment, and a thumb can navigate away inside it. A
-  // background refresh says which page it was drawing for and gives up if
-  // that is no longer the page. Foreground calls pass nothing and always win.
+  // A background refresh gives up if the page changed while it fetched;
+  // foreground calls pass no `at`.
   if (at !== null && here() !== at) return;
   const room = rooms.find((r) => r.id === box.destination_room_id);
   const flags = flagsOf(box);
@@ -2309,8 +2031,6 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
       const key = button.dataset.flag;
       act(async () => {
         const fresh = await api(path, { method: "PATCH", body: JSON.stringify({ [key]: !box[key] }) });
-        // Turned on, on something inside something: offer to mark the
-        // containers too. Turned off: nothing else moves.
         if (key === "fragile" && fresh.fragile) await offerFragileClimb(fresh);
       });
     });
@@ -2321,13 +2041,9 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
       api(`/boxes/${encodeURIComponent(code)}/status`, { method: "POST", body: JSON.stringify({ status: button.dataset.status }) })));
   }
 
-  // The two parts of the page that keep themselves up to date. Drawn here by
-  // the same code that later updates them in place.
   const page = here();
-  // A refresh that comes back to find its element gone was overtaken by a
-  // redraw of this same page -- one that may have fetched before the change
-  // this refresh was carrying. Ask the page now on screen for it again. If
-  // the person has gone somewhere else, there is nothing to correct.
+  // A refresh that finds its element gone was overtaken by a redraw that may
+  // predate its change: ask again, unless the person has left the page.
   const stale = (part) => () => { if (here() === page) requestPart(part); };
 
   const itemList = document.getElementById("items");
@@ -2348,16 +2064,13 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
   });
   strip.draw(photos);
 
-  // The pushbutton rows: the kind, its size (a container only), and the two
-  // rooms. Built after the draw, into the slots the markup left for them.
   const kindRow = mount(segmented({ name: "kind", legend: "This is a", options: kindChoices(allKinds), value: box.kind }));
   if (shape.sizes?.length) {
     mount(segmented({
       name: "size", legend: "How big", options: sizeChoices(shape.sizes),
       value: box.size, optional: true, empty: "No size" }));
   }
-  // Always built, even for a nested record that hides it: it comes and goes
-  // in place as the record is put inside something and taken out again.
+  // Always built, even when nested and hidden: it comes and goes in place.
   const roomRow = mount(segmented({
     name: "destination_room_id", legend: "Destination room", options: roomChoices(forDestination(rooms)),
     value: box.destination_room_id, optional: true, empty: "Not decided yet" }));
@@ -2365,11 +2078,7 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
     name: "source_room_id", legend: "Packed from", options: roomChoices(forSource(rooms)),
     value: box.source_room_id, optional: true, empty: "Not recorded" }));
 
-  // --- the three forms that save themselves ---
-  //
-  // What it is; where it is going and where it came from; where it is now.
-  // They are still forms, so that Return in a single-line field means "save
-  // this now" rather than reloading the page with the fields in the URL.
+  // --- the forms that save themselves ---
   const summaryForm = document.getElementById("summary-form");
   const destinationForm = document.getElementById("destination");
   const locationForm = document.getElementById("location");
@@ -2377,16 +2086,11 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
   const summaryField = summaryForm.querySelector("[name=content_summary]");
   const savingForms = [summaryForm, destinationForm, locationForm, containerForm];
 
-  // One autosaved key is one control: a text field, or a row of pushbuttons,
-  // which is several radios sharing the name. Everything below reads and
-  // writes a key through these rather than through `.value`, of which a row
-  // has one per button, none of them the answer.
   const session = editSession(code);
   const auto = session.auto;
 
-  // Where this record is going. Inside a container it goes where the container
-  // goes -- the nearest one with a room -- and its own row is put away; the
-  // room it had stays in the database and comes back if it is taken out.
+  // Nested, it goes where the nearest container with a room goes. Its own room
+  // stays in the database for when it is taken out.
   const goingTo = () => {
     const from = inheritedRoom(box.path);
     return from ? from.room : box.destination_room_id;
@@ -2413,11 +2117,8 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
 
   // --- things inside things ---
   //
-  // What this record is inside (the breadcrumb above the code, and the line in
-  // "What it is inside") and what is inside it (rows like the list's, drawn by
-  // reconcile so a tap on one survives an update). All of it comes with the
-  // record and moves on box.updated, so it is redrawn from `box` in place --
-  // never by redrawing a page somebody is typing on.
+  // What it is inside and what is inside it come with the record and change on
+  // box.updated, so they are redrawn from `box` in place, never with the page.
   let children = box.children || [];
   const singles = allKinds.filter((k) => !k.contents).map((k) => k.kind);
 
@@ -2449,10 +2150,8 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
       const link = document.createElement("a");
       link.setAttribute("href", `#/b/${encodeURIComponent(parent.code)}`);
       link.textContent = parent.code;
-      // One span, not three loose children: the line is a flex row (so the
-      // tap-sized link centres in it and the line keeps its height either
-      // way), and a flex container drops the spaces around a bare text run --
-      // "Inside B-0012 (crate)." would come out with no spaces at all.
+      // One span: the line is a flex row, and a flex container drops the spaces
+      // around bare text runs.
       const said = document.createElement("span");
       said.append("Inside ", link, ` (${describe(parent)}).`);
       line.replaceChildren(said);
@@ -2466,12 +2165,9 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
   function drawChildren() {
     const list = document.getElementById("inside");
     if (!list) return;   // a single thing: nothing goes inside it
-    // Drawn by the list's own rows, parent_code and all: being inside
-    // something is what takes the packing status off them (rowStatus), and
-    // these are as inside as a row gets.
     patchBoxList(list, children);
     document.getElementById("inside-empty").hidden = children.length > 0;
-    // A container holding things cannot become a single thing, and cannot be
+    // A container holding things may neither become a single thing nor be
     // deleted: the server refuses both, so neither is offered.
     restrict(kindRow, children.length ? singles : [],
       "It holds things: move them out before making it a single thing.");
@@ -2486,22 +2182,15 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
   showInside();
   drawChildren();
 
-  // Adding something inside, without leaving this page: somebody standing at
-  // an open crate dropping bags into it. A dialog asks for the kind, a photo
-  // and where it came from, and nothing else -- the photo is read in the
-  // background and names the contents, and the rest can be done from the new
-  // record's page. On document.body, like every dialog here, so a live
-  // refresh of the page underneath does not take it away; outside `app`, so
-  // the autosaver's hold never counts its fields.
+  // Its dialog is on document.body, like every dialog here: a live refresh
+  // underneath cannot take it away, and the hold never counts its fields.
   document.getElementById("add-inside")?.addEventListener("click", () => {
     addInside({ parent: box, kinds: allKinds, rooms, shape });
   });
 
-  // Tapping one of the things inside opens its editor over this page rather
-  // than going to it -- three corrections without losing your place. The row
-  // stays a real link, so a middle click or a long press still opens the whole
-  // page, and so does anything holding a modifier (same rule as a photo).
-  // Delegated, so rows redrawn by `reconcile` need no rebinding.
+  // A plain tap opens the editor over this page; the row is still a real link
+  // for a middle click, long press or modifier. Delegated, so reconciled rows
+  // need no rebinding.
   document.getElementById("inside")?.addEventListener("click", (event) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     const link = event.target.closest("a[href^='#/b/']");
@@ -2510,16 +2199,14 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
     editSubitem(decodeURIComponent(link.getAttribute("href").slice(4)), {
       kinds: allKinds,
       rooms,
-      // What is inside this container, and the rows that draw it, come from
-      // the container's own record: one fetch, the one already in place.
+      // The rows come from the container's own record.
       onSaved: () => requestPart("summary"),
     });
   });
 
-  // (the barcode reader types and presses Return, which submits), looked up,
-  // and shown -- what it is, and whether it may hold this -- before anything
-  // is saved. Saving is the autosaver's, with Undo, like every other field:
-  // the hidden `parent_code` is the field it tracks.
+  // A container is typed or scanned (the reader's Return submits), looked up
+  // and previewed before anything is saved. The autosaver tracks the hidden
+  // `parent_code` field, with Undo like any other.
   const lookup = document.getElementById("container-code");
   const found = document.getElementById("container-found");
   const acts = document.getElementById("container-acts");
@@ -2568,13 +2255,12 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
     drawLines();
   });
 
-  // The kind decides which sections exist, so it is the one save that redraws
-  // the page. Whatever had the focus gets it back, caret included: the redraw
-  // is this page's doing, not the person's.
+  // Kind decides which sections exist, so it alone redraws the page. The focus
+  // goes back, caret included: the redraw is the page's doing, not the person's.
   async function redrawForKind() {
     const active = document.activeElement;
-    // A pushbutton row is one tab stop, and it is the chosen button's: by name
-    // alone the first button would get the focus, whichever was pressed.
+    // A pushbutton row's tab stop is its chosen button; by name alone the
+    // first button would get the focus.
     const selector = active?.id ? `#${CSS.escape(active.id)}`
       : active?.type === "radio" ? `[name="${CSS.escape(active.name)}"]:checked`
       : active?.name ? `[name="${CSS.escape(active.name)}"]` : null;
@@ -2587,13 +2273,10 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
     try { if (caret?.[0] != null) again.setSelectionRange(...caret); } catch { /* a picker */ }
   }
 
-  // Everything else the wiring needs it keeps to itself: the page's own code
-  // reaches its fields by name where it needs them.
   const { drawLines, onReturn } = autosaveFields({
     root: app,
     session,
     forms: savingForms,
-    // What it is, not what is in it, for something with no contents.
     undoLabel: (key) => (key === "content_summary" && !shape.contents ? "name" : AUTOSAVED.get(key)),
     onLanded(key, value, fresh) {
       box = {
@@ -2603,9 +2286,7 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
       if (key === "destination_room_id") showRoom();
       if (key === "parent_code") {
         showInside();
-        // A fragile thing put inside something: offer to mark that fragile.
-        // The steps marked are the page's own copy of the path, so the same
-        // containers are not asked about again.
+        // The climb marks this page's copy of the path, so it does not ask twice.
         if (box.fragile && box.parent) offerFragileClimb(box).catch((error) => failed(error.message));
       }
     },
@@ -2618,14 +2299,12 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
   drawLines();
   wireDictation(app);
 
-  // `box.updated`, applied in place when that is possible. It is what a
-  // finished photo sends when it rebuilt the autogenerated summary -- and the
-  // summary field is exactly where somebody may be typing at that moment.
+  // `box.updated`, applied in place when possible. A finished photo sends it
+  // after rebuilding the summary, where somebody may be typing.
   async function refreshSummary() {
     const fresh = await api(path);
     if (!summaryField.isConnected) { stale("summary")(); return; }
-    // What is inside it, and what it is inside: a move at either end sends
-    // box.updated here. Drawn in place; they touch nothing anyone types in.
+    // A move at either end sends box.updated; these touch no field.
     children = fresh.children || [];
     box = { ...box, children, path: fresh.path, parent: fresh.parent };
     drawChildren();
@@ -2638,17 +2317,13 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
       initial: summaryField.dataset.initial ?? "",
       focused: document.activeElement === summaryField,
     }]);
-    // `box.updated` also covers the flags, the rooms and the kind. If any of
-    // those moved, or the summary moved under somebody's cursor, this is a
-    // job for the whole-page refresh and its rules: it redraws when it
-    // safely can and raises the banner when it cannot. Never clobber typing.
+    // Flags, rooms or kind moved, or the summary moved under somebody's
+    // cursor: the whole-page refresh decides, and never clobbers typing.
     const needsPage = !onlySummaryChanged(box, fresh) || (moved && inUse);
     if (moved && !inUse) {
-      // The value, the record of what was drawn, and the saver's baseline,
-      // all three: the field must stay pristine. Miss the second and every
-      // later refresh is held behind it; miss the third and the saver takes
-      // the server's own text for an edit and saves it straight back -- as
-      // this person's, which would stop photos ever updating it again.
+      // All three, so the field stays pristine. Without `initial` every later
+      // refresh is held; without track() the saver sends the server's text
+      // back as this person's, and photos never update it again.
       summaryField.value = incoming;
       summaryField.dataset.initial = incoming;
       auto.track("content_summary", tidy(summaryField));
@@ -2658,12 +2333,11 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
     if (needsPage) requestRefresh();
     else box = fresh;
   }
-  // Absent for a loose thing: a bicycle has no contents to add to.
+  // Absent for a single thing.
   const addForm = document.getElementById("add-item");
   addForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    // Dictation arrives as one run-on phrase, so split it rather than storing
-    // "kettle, toaster and three mugs" as a single thing.
+    // Dictation arrives as one run-on phrase.
     const names = splitItems(new FormData(event.target).get("name"));
     if (!names.length) return;
     const button = addForm.querySelector("button[type=submit]");
@@ -2673,13 +2347,10 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
           await api(`${path}/items`, { method: "POST", body: JSON.stringify({ name }) });
         }
       });
-      // Only once every name is in: a failure part-way leaves the text where
-      // it is, to be fixed and sent again.
+      // Only once every name is in, so a failure leaves the text to resend.
       addForm.reset();
     } catch (error) { failed(error.message); }
-    // The list alone, and either way -- a failure part-way still added some.
-    // Redrawing the whole page here used to discard anything half-typed in
-    // the summary above.
+    // The list alone, and either way: a failure part-way still added some.
     try { await contents.refresh(); } catch (error) { failed(error.message); }
   });
   const suggest = document.getElementById("suggest");
@@ -2692,8 +2363,7 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
         announce("Nothing to summarise yet - add some items first.", { warn: true });
         return;
       }
-      // Fills the field and saves at once, like picking from a list: there is
-      // no half-made choice to wait out, and Undo puts the old summary back.
+      // Saves at once, like a picker; Undo puts the old summary back.
       field.value = summary;
       auto.edit("content_summary", tidy(field), "change");
       session.undoAt = summaryForm.id;
@@ -2701,27 +2371,18 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
     } catch (error) { failed(error.message); }
   });
 
-  // Spell out what is about to be destroyed. "Are you sure?" tells you
-  // nothing; the count of photos and items, and whether a label for this code
-  // is already stuck to something, are what actually inform the decision.
-  //
-  // Worked out when asked, not once at draw time: the items and photos change
-  // under an open page now, and a confirmation that miscounts what it is
-  // about to take is worse than one that does not count at all.
+  // Counted when asked, not at draw time: items and photos change under an open page.
   const losses = () => [
     items.length && `${items.length} item${items.length === 1 ? "" : "s"}`,
     photos.length && `${photos.length} photo${photos.length === 1 ? "" : "s"}`,
   ].filter(Boolean);
   const printed = box.label_print_count || 0;
 
-  // Everything outside the two parts that depends on what they hold. Called
-  // after the first draw and again whenever either part changes.
+  // Whatever outside the two parts depends on what they hold.
   function recount() {
     const losing = losses();
     const note = document.getElementById("delete-note");
     if (note) {
-      // Reversible, so the note describes what goes out of view rather than
-      // warning about loss. Nothing here is destroyed.
       setText(note, [
         "Takes it out of the list and out of search. Nothing is destroyed, and you can restore it.",
         losing.length ? `Its ${losing.join(" and ")} go with it.` : "",
@@ -2762,8 +2423,6 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
   });
 
   document.getElementById("purge")?.addEventListener("click", async (event) => {
-    // The only irreversible action in the app, so this one does ask, and
-    // spells out what a printed label will do afterwards.
     const losing = losses();
     const detail = [
       losing.length ? `Destroys its ${losing.join(" and ")}, including the photo files.` : "",
@@ -2784,9 +2443,8 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
   });
 
   const printButton = document.getElementById("print");
-  // The number of copies is a choice for this print, not part of the record:
-  // nothing saves it, so it must never make the page look half-edited (which
-  // would hold back live updates for good). Its baseline follows its value.
+  // Copies is for this print only and never saved, so its baseline follows its
+  // value: otherwise it would read as half-edited and hold live updates forever.
   const copiesField = document.getElementById("copies");
   copiesField.addEventListener("input", () => { copiesField.dataset.initial = copiesField.value; });
 
@@ -2810,8 +2468,7 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
     }
     try {
       if (result.backend === "fake") {
-        // The request succeeded and no tape came out. Saying "Printed" here
-        // would be a lie, and it is the lie that gets the button pressed again.
+        // No tape came out; "Printed" would get the button pressed again.
         announce(
           `No label printed: the server is using the '${result.backend}' printer, ` +
           `which only writes a preview image. Set MOVING_PRINTER_BACKEND=brother_ql.`,
@@ -2836,16 +2493,13 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
     note.hidden = false;
     picker.disabled = true;
     try {
-      // No content-type header: the browser must set the multipart boundary.
       await api(`${path}/photos`, { method: "POST", body });
-      // The server has queued the photo for reading by the time it answers,
-      // so the strip comes back with the countdown already on the new photo.
       await strip.refresh();
     } catch (error) { failed(error.message); }
     finally {
       note.hidden = true;
       picker.disabled = false;
-      // Or choosing the same file again would not fire "change".
+      // Otherwise choosing the same file again would not fire "change".
       picker.value = "";
     }
   });
@@ -2860,8 +2514,7 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
     name: "box",
     code,
     refresh: (at) => viewBox(code, { keepBanner: true, at }),
-    // What can be brought up to date without redrawing the page; see partOf
-    // in live.js for which event means which.
+    // Updated without redrawing the page; partOf in live.js maps events to parts.
     parts: {
       items: () => contents?.refresh(),
       photos: () => strip.refresh(),
@@ -2874,12 +2527,10 @@ async function viewNew(parentCode = null) {
   const [rooms, allKinds, parent] = await Promise.all([
     api("/rooms"),
     api("/settings/kinds"),
-    // "Add something inside" on a container's page comes here with its code.
-    // A code that is not a record is not fatal: the form is drawn on its own.
+    // An unknown container code is not fatal: the form is drawn on its own.
     parentCode ? api(`/boxes/${encodeURIComponent(parentCode)}`).catch(() => null) : null,
   ]);
-  // Inside a container the usual move is just Create: "generally won't have a
-  // label". The stub and the label stay available, after it.
+  // Inside a container plain Create comes first: nested things rarely get a label.
   const creates = parent
     ? `<button class="btn" type="submit" id="create">Create</button>
        <button class="btn quiet" type="submit" id="create-stub" data-print="stub" style="margin-top:0.75rem">Create and print stub</button>
@@ -2922,31 +2573,23 @@ async function viewNew(parentCode = null) {
     announce(`There is no ${parentCode} to put this inside; it will be on its own.`, { warn: true });
   }
 
-  // The stub is the first button because it is the usual move: make the
-  // record, stick an inch of tape on the empty box, pack, print the full
-  // label at the end. The plain Create names what it makes, following the
-  // kind picker.
-  //
-  // Enter, though, must never spend tape. A browser submits with the *first*
-  // submit button when Enter is pressed in a field, which is now the one that
-  // prints -- so Enter is pointed at the plain Create instead.
+  // Enter must never spend tape. A browser submits with the *first* submit
+  // button, which may print the stub, so Enter is pointed at plain Create.
   document.getElementById("new").addEventListener("keydown", (event) => {
     if (event.key !== "Enter" || event.target.tagName !== "INPUT") return;
     event.preventDefault();
-    // Not from a pushbutton: Return there is nobody meaning "make it", and a
-    // barcode reader's Return with one focused would create an empty record.
+    // Not from a pushbutton: a barcode reader's Return with one focused would
+    // create an empty record.
     if (event.target.type === "radio") return;
     event.currentTarget.requestSubmit(document.getElementById("create"));
   });
 
-  // The kind first, since it decides whether there is a size to choose. All
-  // the sizes are one row; which kinds offer it comes from the server.
   const first = allKinds[0];
   mount(segmented({ name: "kind", legend: "Kind", options: kindChoices(allKinds), value: first.kind }));
   const allSizes = allKinds.find((k) => k.sizes?.length)?.sizes || [];
   const sizeRow = mount(segmented({
     name: "size", legend: "How big", options: sizeChoices(allSizes), optional: true, empty: "No size" }));
-  // Inside a container there is no room to choose: it goes where that goes.
+  // Inside a container, it goes where the container goes.
   const roomSlot = app.querySelector('[data-seg="destination_room_id"]');
   if (parent) roomSlot.closest(".section").remove();
   else {
@@ -2960,9 +2603,8 @@ async function viewNew(parentCode = null) {
 
   const form = document.getElementById("new");
   const kindChosen = () => allKinds.find((k) => k.kind === new FormData(form).get("kind")) || first;
-  // The size row comes and goes with the kind. Disabled as well as hidden: a
-  // disabled fieldset's radios are left out of FormData, so a size chosen for
-  // a box is not sent along with the furniture it became.
+  // Disabled as well as hidden: a disabled fieldset's radios stay out of
+  // FormData, so a box's size is not sent with the furniture it became.
   const followKind = () => {
     const shape = kindChosen();
     document.getElementById("create").textContent = `Create ${shape.label.toLowerCase()}`;
@@ -2986,20 +2628,17 @@ async function viewNew(parentCode = null) {
     if (roomId) payload.destination_room_id = Number(roomId);
     const sourceId = form.get("source_room_id");
     if (sourceId) payload.source_room_id = Number(sourceId);
-    // Absent when nothing is chosen, and when the row is disabled for a kind
-    // that has no size.
     const size = form.get("size");
     if (size) payload.size = size;
     if (parent) payload.parent_code = parent.code;
 
-    // Which button was pressed: data-print is "stub", "label", or absent.
+    // data-print is "stub", "label", or absent.
     const pressed = event.submitter || document.getElementById("create");
     const printing = pressed.dataset.print || null;
     const wantsLabel = printing !== null;
 
-    // Asked *before* creating: saying no should leave you on the form with
-    // nothing made, not on a new record you did not mean to make yet. The
-    // stub is exempt -- an empty box is what it is for.
+    // Asked *before* creating, so no leaves nothing made. The stub is exempt:
+    // an empty box is what it is for.
     if (printing === "label") {
       const sure = await confirmThinLabel("its label", {
         contents: Boolean(payload.content_summary),
@@ -3025,8 +2664,6 @@ async function viewNew(parentCode = null) {
         }
         return made;
       });
-      // Made fragile, inside something: offer to mark the containers too,
-      // from the path the server sent back with it, before going to it.
       if (payload.fragile && box.path?.length) await offerFragileClimb(box);
       location.hash = `#/b/${box.code}`;
       if (unprinted) {
@@ -3039,51 +2676,37 @@ async function viewNew(parentCode = null) {
 
 // --- live updates ---------------------------------------------------------
 //
-// Two devices are packing the same house, so the screen has to follow the
-// database rather than the last reload. The server only ever says *which box*
-// changed; the refresh below refetches through the same endpoints the first
-// draw used, so there is one code path deciding what a box looks like and a
-// dropped or duplicated notification costs a wasted GET and nothing more.
+// The server says only *which box* changed; a refresh refetches through the
+// endpoints the first draw used, so a dropped or duplicated notification costs
+// a GET and nothing more.
 //
-// The hard part is not the socket. It is that a refresh is an interruption:
-// it can take the keyboard away mid-word, throw away an unsaved edit, or --
-// worst -- move a row out from under a thumb that is already coming down on
-// it. So every refresh asks permission first, and when the answer is no it
-// waits and says so instead.
-//
-// A box page has a second, gentler route. Its contents list, its photo strip
-// and its summary can each be brought up to date on their own (`parts`), and
-// that does not disturb a field somebody is typing in -- so those do not wait
-// for the typing to stop, only for a finger to be off the glass. This is what
-// lets a photo's findings appear in the list while the summary has the focus.
+// A refresh is an interruption: it can take the keyboard mid-word, discard an
+// unsaved edit, or move a row under a thumb coming down on it. So it is held
+// while a field is focused or dirty, a pointer is down, and for the settle
+// after, and a held refresh says so. A box page's `parts` (contents, photos,
+// summary) touch no field being typed in, so they wait only for the gesture.
 
-// The view currently on screen, and how to bring it up to date. Views that
-// are not in this list -- the new-box form, the scanner -- are never
-// refreshed at all: `affects` matches nothing for them.
+// The view on screen. The new-box form and the scanner are never refreshed:
+// `affects` matches nothing for them.
 let view = null;
 let pending = false;
 let flushTimer = null;
 
-// Parts of the open box waiting for a still moment, and the timer watching
-// for one.
+// Parts of the open box waiting for a still moment.
 const waiting = new Set();
 let partTimer = null;
 
-// Whole-page draws of a box in flight, and the parts that changed while one
-// was. See viewBox: the new page may have been fetched too early to include
-// them, so they are asked for again once it is up.
+// Whole-page draws in flight, and the parts that changed during one (viewBox).
 let drawing = 0;
 const overtaken = new Set();
 
-// Gesture state. `pointerDown` is the tap hazard proper; `lastTouch` keeps the
-// screen still for a moment afterwards, because the click has not landed yet
-// when the finger lifts.
+// `lastTouch` holds the screen still after the finger lifts: the click has not
+// landed yet.
 let pointerDown = false;
 let lastTouch = 0;
 
 function watch(next) {
   view = { ...next, clientId, at: here() };
-  // Whatever was just drawn is current by definition.
   pending = false;
   showNotice();
   forgetParts();
@@ -3109,7 +2732,7 @@ function editableFields() {
 
 function requestRefresh() {
   if (!view || !view.refresh) return;
-  // Nothing on a screen that is off needs to be right; `wake` catches up.
+  // A hidden page catches up in LiveChannel.wake.
   if (document.hidden) { pending = true; return; }
   if (holdRefresh(holdState())) {
     pending = true;
@@ -3128,20 +2751,15 @@ async function runRefresh() {
   try {
     await target.refresh(target.at);
   } catch {
-    // A background refresh that fails must leave the screen alone. Replacing
-    // a working page with an error because a poll lost the wifi for a second
-    // would be worse than showing something a few seconds stale.
+    // A failed background refresh leaves a working page alone.
   }
 }
 
-// Bring one part of the open box up to date. Unlike a whole refresh this goes
-// ahead while a field is focused or dirty -- it touches nothing a person can
-// type into (the summary part checks that for itself) -- but it still waits
-// out a gesture: a list that grows between pointerdown and click moves the
-// thing being tapped, and one that grows mid-scroll makes the page jump.
+// Unlike a whole refresh this goes ahead while a field is focused or dirty (the
+// summary part checks for itself), but still waits out a gesture: a list that
+// grows between pointerdown and click moves the thing being tapped.
 function requestPart(part) {
   if (!view || !view.parts || !view.parts[part]) return;
-  // Nothing on a screen that is off needs to be right; `wake` resyncs.
   if (document.hidden) { pending = true; return; }
   waiting.add(part);
   flushParts();
@@ -3158,8 +2776,6 @@ function flushParts() {
   }
   const { parts } = view;
   for (const part of waiting) {
-    // As in runRefresh: a background update that fails leaves the screen
-    // alone. A few seconds stale beats an error over a working page.
     Promise.resolve().then(() => parts[part]()).catch(() => {});
   }
   waiting.clear();
@@ -3177,9 +2793,8 @@ function replayOvertaken() {
   for (const part of parts) requestPart(part);
 }
 
-// A field can stop being in the way by ceasing to exist: the inline rename
-// box is removed from the page, and removing a focused element fires no
-// focusout for the listener below to hear.
+// Removing a focused element (the inline rename field) fires no focusout, so
+// that is announced by hand.
 function fieldClosed() {
   if (pending) scheduleFlush();
 }
@@ -3193,22 +2808,19 @@ function flush() {
   flushTimer = null;
   if (!pending || !view) return;
   const hold = holdState();
-  // Still mid-edit: the notice stays up and the person decides. Waking this
-  // again is the job of the focusout/change listeners below, not of a timer
-  // that would otherwise tick forever behind a focused field.
+  // Still mid-edit: the notice stays up. The focusout/change listeners wake
+  // this again, not a timer ticking forever behind a focused field.
   if (hold.editing) return;
   if (holdRefresh(hold)) { scheduleFlush(); return; }
   runRefresh();
 }
 
 const notice = document.getElementById("live");
-// One banner, two reasons. A newer app wins: a reload brings everything up to
-// date, so a refresh held behind it has nothing left to say.
+// One banner, two reasons; a newer app wins, since a reload brings everything up to date.
 notice.addEventListener("click", () => (updateTo ? reloadWhenSafe("asked") : runRefresh()));
 
 function showNotice() {
   if (updateTo) {
-    // Says what is happening. "Changed on another device" would be false.
     notice.textContent = askedToReload
       ? "App updated — reloading once everything is saved"
       : "App updated — tap to reload";
@@ -3221,29 +2833,17 @@ function showNotice() {
 
 // --- keeping up with deploys ------------------------------------------------
 //
-// "add auto-reloading when the version changes -- probably needs a periodic
-// check." Every deploy restarts the service; an open page keeps running the
-// old app.js until it is reloaded. What to decide is reload.js's, and tested
-// there. This is when the questions are asked, and what is done with the
-// answers.
+// An open page runs the old app.js until reloaded. reload.js decides; this asks
+// and acts. Checked when the socket reconnects (a deploy drops it), when the
+// page becomes visible, and every CHECK_MS while visible.
 //
-// When: a deploy drops the socket, so its reconnect checks at once; so does
-// the page becoming visible again, which is a phone being picked up; and a
-// timer (reload.js CHECK_MS) catches what those miss -- only while visible.
-//
-// What: an idle page reloads itself. One in use does not: a reload is the most
-// violent refresh there is, so it waits for everything a refresh waits for,
-// plus an open dialog, a write still out, and every session's saves -- which
-// are committed and waited for, the same rule as leaving a record. Until then
-// the banner says the app was updated, and the reload happens at the next
-// safe moment: a tap on the banner, leaving the current view, or a later check
-// that finds the page idle. Not on becoming hidden: a hidden page can be
-// frozen before the saves it must wait for have landed, and the camera in the
-// add dialog (with a photo taken in it) would go with it; coming back is the
-// same moment from the person's side, and is checked.
+// An idle page reloads itself. One in use waits for what a refresh waits for,
+// plus an open dialog, a write in flight and every session's saves; the banner
+// offers it meanwhile. Never on becoming hidden: a hidden page can be frozen
+// before its saves land, and would lose a photo taken in the add dialog.
 
-// The revision this page was served as. Null on a dev server, which serves
-// modules unversioned: then none of this runs, or it would reload forever.
+// Null on a dev server, which serves modules unversioned: none of this runs,
+// or it would reload forever.
 const running = runningRevision(import.meta.url);
 let updateTo = null;         // a newer revision the server is running, once seen
 let offerOnly = false;       // already reloaded towards it once: offer, never force
@@ -3251,8 +2851,7 @@ let askedToReload = false;   // the banner was tapped and something had to land 
 let reloading = false;
 let checkTimer = null;
 
-// sessionStorage's accessor itself can throw (a private window, blocked site
-// data); reload.js reads an unusable one as "cannot remember".
+// The accessor itself can throw (a private window, blocked site data).
 function tabStorage() {
   try { return sessionStorage; } catch { return undefined; }
 }
@@ -3261,8 +2860,8 @@ async function checkRevision() {
   if (!running || document.hidden) return;
   let live = null;
   try {
-    // no-store, and the service worker lets /health through: an answer kept
-    // anywhere would be read back as "still the revision you are running".
+    // no-store, and the service worker passes /health through: a cached answer
+    // would always read as the revision already running.
     const response = await fetch("/health", { cache: "no-store" });
     if (response.ok) live = liveRevision(await response.json());
   } catch { /* down, mid-deploy: cannot tell, which is not "changed" */ }
@@ -3275,9 +2874,8 @@ async function checkRevision() {
   else showNotice();
 }
 
-// What a reload would destroy right now, for reloadBlocked. `held` is the
-// live refresh's own hold, not a second opinion on it. `owed` is only asked
-// once the saves have been committed and waited for.
+// What a reload would destroy now. `owed` is only asked once saves have been
+// committed and waited for.
 function reloadState({ settled = false } = {}) {
   return {
     held: holdRefresh(holdState()),
@@ -3287,24 +2885,21 @@ function reloadState({ settled = false } = {}) {
   };
 }
 
-// Resolves true once the reload has been started, false when it must wait
-// (and the banner then says so). `moment` is reload.js's: "idle", "asked" or
-// "leaving".
+// True once the reload has started, false when it must wait. `moment` is
+// "idle", "asked" or "leaving".
 async function reloadWhenSafe(moment) {
   if (!updateTo || reloading) return false;
   if (offerOnly && moment !== "asked") { showNotice(); return false; }
   if (moment === "asked") askedToReload = true;
   if (reloadBlocked(reloadState(), moment)) { showNotice(); return false; }
   reloading = true;
-  // Never lose typing: send whatever is waiting, in every session -- a modal's
-  // too -- and wait for it to land. Reloading after only sending it is the
-  // commit-then-redraw mistake: the new page could fetch the record before the
-  // save arrived and show the old text as current.
+  // Send what is waiting in every session and wait for it to land: the new
+  // page could otherwise fetch the record before the save and show old text.
   everySession((session) => session.auto.commitAll());
   await Promise.all(Array.from(sessions.values(), (session) => session.auto.idle()));
   const blocked = reloadBlocked(reloadState({ settled: true }), moment)
-    // Remembered before it is made, so the page it lands on knows it tried.
-    // A tab that cannot remember does not reload by itself.
+    // Remembered first, so the new page knows it tried and cannot loop. A tab
+    // that cannot remember does not reload by itself.
     || (!rememberTried(tabStorage(), updateTo) && moment !== "asked");
   if (blocked) {
     reloading = false;
@@ -3316,17 +2911,14 @@ async function reloadWhenSafe(moment) {
   return true;
 }
 
-// A tapped banner whose reload was waiting on a save or a request goes ahead
-// by itself once that lands, rather than asking to be tapped again.
+// A tapped banner's reload, held by a save or a request, goes once that lands.
 function reloadIfAsked() {
   if (askedToReload && !reloading) reloadWhenSafe("asked");
 }
 
-// A reload is answered by the service worker that controls the page, and
-// until the new one has taken over that is the old one, serving the old shell
-// from its cache -- the reload would land on the very code it was meant to
-// replace. So ask for the update and wait for the handover first; a few
-// seconds at most, and a failure of any of it just lets the reload go ahead.
+// The controlling worker answers the reload, and until the handover that is the
+// old one serving the old shell. So update and wait for controllerchange first;
+// at most 5 s, and any failure lets the reload go ahead.
 async function freshWorker() {
   const workers = navigator.serviceWorker;
   if (!workers?.controller) return;
@@ -3342,8 +2934,7 @@ async function freshWorker() {
   } catch { /* no worker to update: nothing stands in the reload's way */ }
 }
 
-// The timer runs only while the page can be seen: a phone in a pocket does
-// not spend battery asking.
+// Only while visible: a phone in a pocket does not spend battery asking.
 function pollWhileVisible() {
   clearInterval(checkTimer);
   checkTimer = document.hidden ? null : setInterval(checkRevision, CHECK_MS);
@@ -3373,8 +2964,7 @@ for (const kind of ["pointerup", "pointercancel"]) {
 // Scrolling is a gesture too: re-rendering under a moving list makes it jump.
 addEventListener("scroll", () => { lastTouch = Date.now(); }, { capture: true, passive: true });
 
-// Leaving a field, or committing a dropdown, is the moment a held refresh
-// becomes safe again.
+// Leaving a field, or committing a dropdown, is when a held refresh may go.
 for (const kind of ["focusout", "change"]) {
   addEventListener(kind, () => { if (pending) scheduleFlush(); }, { capture: true, passive: true });
 }
@@ -3382,15 +2972,11 @@ for (const kind of ["focusout", "change"]) {
 function socketUrl() {
   const scheme = location.protocol === "https:" ? "wss:" : "ws:";
   const key = keyStore.get();
-  // The key goes in the query because a browser's WebSocket constructor takes
-  // a URL and nothing else -- there is no way to attach a header to the
-  // handshake. Usually there is no key at all: this runs on a tailnet.
+  // In the query: the browser's WebSocket cannot add a header to the handshake.
   return `${scheme}//${location.host}/api/events${key ? `?key=${encodeURIComponent(key)}` : ""}`;
 }
 
-// Things that watch the socket but are not the view: the sub-item modal
-// follows its own record while the page behind it follows the container's.
-// Each does its own `affects` check, so each drops its own echoes.
+// Watchers besides the view, such as the sub-item modal following its own record.
 const alsoWatching = new Set();
 
 const live = new LiveChannel({
@@ -3399,8 +2985,7 @@ const live = new LiveChannel({
   onOpen: () => checkRevision(),
   onEvent: (event) => {
     for (const watcher of Array.from(alsoWatching)) watcher(event);
-    // Also drops this device's own echo: whoever made a change here has
-    // already redrawn the part it touched.
+    // Also drops this device's own echo: it already redrew what it changed.
     if (!affects(event, view)) return;
     // `view` can be null here: a resync affects everything, watched or not.
     const part = view?.parts ? partOf(event) : null;
@@ -3416,7 +3001,6 @@ async function viewSettings() {
     api("/printer").catch(() => null),
     api("/rooms"),
     api("/settings/kinds"),
-    // An older server has no such route; the section simply stays off.
     api("/settings/spend").catch(() => null),
   ]);
   const reading = spend ? readingWith(spend) : null;
@@ -3559,8 +3143,7 @@ async function viewSettings() {
     } catch (error) { announce(error.message, { warn: true }); }
   });
 
-  // One Save for the block, one request per kind that changed. The numbers
-  // are read back from what the server kept, so a refused one shows as it was.
+  // One request per changed kind, each read back from what the server kept.
   document.getElementById("kind-copies").addEventListener("submit", async (event) => {
     event.preventDefault();
     const fields = Array.from(event.target.querySelectorAll("input[type=number]"));
@@ -3651,26 +3234,22 @@ const routes = [
 
 async function route() {
   const hash = location.hash || "#/";
-  // Nothing is watched until a view says so. A view that throws, and every
-  // view without a refresh of its own, therefore ends up unwatched rather
-  // than inheriting the previous page's idea of what to redraw.
+  // Unwatched until a view says so, so a view that throws cannot inherit the
+  // previous page's refresh.
   view = null;
   pending = false;
   showNotice();
   forgetParts();
-  // Leaving a record inside the pause autosave waits out: send it now. (If
-  // this is the same record being opened again, the session is picked up.)
   leaveEveryRecord();
-  // And a moment to catch up with a deploy: the page is being replaced
-  // anyway, so a reload costs nothing this navigation was not about to. It
-  // lands on the new route, since the hash has already changed.
+  // The page is being replaced anyway, so a pending reload costs nothing; it
+  // lands on the new route.
   if (updateTo && (await reloadWhenSafe("leaving"))) return;
   for (const [pattern, handler] of routes) {
     const match = hash.match(pattern);
     if (match) {
       for (const link of document.querySelectorAll(".bar a")) {
-        // Not toggleAttribute: it writes aria-current="", and both the
-        // stylesheet and assistive tech ask for the token "page".
+        // Not toggleAttribute, which writes aria-current="": the stylesheet and
+        // assistive tech want "page".
         if (link.getAttribute("href") === hash) link.setAttribute("aria-current", "page");
         else link.removeAttribute("aria-current");
       }
