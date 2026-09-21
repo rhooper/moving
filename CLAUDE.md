@@ -305,14 +305,35 @@ exactly like a working one until you compare the items**, so if the last ten
 photos were all read locally while the cloud tier is configured with a key, the
 panel says so and points at the log.
 
-**Live state (2026-09-20): the key in `.env` returns HTTP 401
-`authentication_error`.** Every other part of the path is proven: the file is
-read, the key is found, the request is built, the API is reached, the 401 is
-recognised, the local model reads the photo, the items are applied and the
-spend (zero -- a 401 is not billed) is recorded. `authentication_error` is the
-API's own type, so it is the credential, not the request shape; a bad request
-would be a 400 `invalid_request_error`. **Nothing has been spent, and no cloud
-read has ever succeeded.**
+**The cloud tier works, and here is what it actually costs** (measured
+2026-09-21 from `ai_jobs`, the app's own `usage` numbers, on the owner's real
+photos). It returned 401 for several hours first -- the key, not the request
+shape -- which is worth remembering only because **a refused key looks exactly
+like a working one** from the app: the fallback is silent by design, and the
+Settings panel's "last ten reads were all local" line is what surfaced it.
+
+| tier | model | thinking | median in | median out | median | $/photo |
+|---|---|---|---|---|---|---|
+| quick | `claude-sonnet-5` | off | 2,936 | 274 | **4.3 s** | **$0.0082** |
+| closer look | `claude-opus-5` | adaptive, medium | 2,936 | 555 | **9.0 s** | **$0.0286** |
+
+Input is identical because every photo is shrunk to the same 1568 px and the
+prompt is fixed; the difference is all output. Against the local baseline of
+19.6 s median and 92 s worst, the quick tier is **four to five times faster**
+as well as better, which was the case for the hybrid.
+
+Two things follow that were guesses before and are now numbers:
+
+- **The estimate held.** $0.0075/photo predicted, $0.0082 measured -- so a
+  move of 300-1,000 photos is $2.50-8 on the quick tier, comfortably inside
+  the $20-30 budget.
+- **The closer look costs 3.5x the quick read, not the 2.3x the price list
+  implies.** Opus emits double the output tokens, and adaptive thinking is
+  part of that (thinking tokens are billed as output). **Whether it reads any
+  better for it is still untested** -- only two closer looks have ever run.
+  `DETAIL_EFFORT` is one module constant, and the way to settle it is to run
+  the same photos with thinking disabled and compare the items found, not to
+  reason about it.
 
 **A quick model reads every photo; a careful one looks closer when asked.**
 `qwen3-vl:4b-instruct` by default (`MOVING_VISION_MODEL`), `qwen3-vl:8b-instruct`
