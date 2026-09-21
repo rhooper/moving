@@ -13,11 +13,13 @@ uv run moving seed-rooms         # starter set of rooms
 uv run moving preview B-0001     # render a label to PNG, no printing
 uv run moving print  B-0001      # honours MOVING_PRINTER_BACKEND (default: fake)
 uv run moving reindex            # rebuild the FTS index
+uv run moving thumbnails         # sharp strip image for every photo lacking one (--dry-run)
 uv run moving backup             # verified backup + prune
 uv run moving export --format csv -o out.csv
 uv run moving manifest           # box counts per room
 scripts/claude/try_vision.py     # call the local model directly (slow, non-deterministic)
 scripts/claude/try_summary.py    # the summary model over real contents lists, timed
+node scripts/claude/strip_cache_check.mjs  # prove a regenerated strip reaches a phone (~40 s)
 scripts/claude/try_cloud_vision.py  # prove the cloud tier through a running app (spends money)
 uv run pytest                    # printer forced to `fake` in conftest
 scripts/claude/install-service.sh          # launchd + tailscale serve (persistent https)
@@ -194,6 +196,94 @@ finds libzbar via `ctypes.util.find_library`, which does not search Homebrew's
 prefix; `tests/conftest.py` sets `DYLD_FALLBACK_LIBRARY_PATH` in `os.environ`
 before the import. That works where `DYLD_LIBRARY_PATH` would not, because
 ctypes reads it at call time whereas dyld caches its own at exec.
+
+**The photo strip has its own sharp image; the list thumbnail was left alone**
+(`renditions.py`, asked for as "generate sharpened thumbnails, highdpi"). Measured
+before anything was built, in headless Chrome at a 412 px viewport, as source
+pixels per device pixel -- over 1 means the browser was upscaling:
+
+| surface | css size (phone) | at 3x, before | after |
+|---|---|---|---|
+| list row cover | 42 x 42 | 0.42 | unchanged |
+| rows inside a container | 64 x 64 | 0.64 | unchanged |
+| **photo strip** | 186 x 248 | **1.86** | 0.93 |
+| **sub-item modal strip** | 160 x 213 | **1.60** | 0.80 |
+
+- **The list was never soft, so its thumbnail is untouched**: same 400 px, same
+  bytes, no sharpening. Growing it to suit the strip would have taken a screen
+  of forty rows from ~1.0 MB to ~3.4 MB for nothing visible, and sharpening it
+  was measured and made no difference at 42 px -- the browser's own 2.4x
+  downsample averages it away. A test pins its bytes to the old recipe.
+- **The strip gets a second image, 800 px on the long edge** (600 across a
+  portrait, and 58 of the 61 real photos are portraits), served through
+  `srcset` with `sizes` (`STRIP_SIZES` in `covers.js`). A 3x or 2x screen takes
+  it; a 1x screen still takes the 400 px thumbnail. 1000 px would also cover a
+  3.5x phone at 45% more bytes, for a difference nobody could see at that size.
+- **Sharpening `UNSHARP = (0.8, 80, 3)`, chosen by looking**: the same crops of
+  real photos drawn at the strip's device-pixel size, side by side, then a real
+  Chrome screenshot at 3x. **Resolution did most of the work** -- 800 px alone
+  turned "22-18AWG 0.5-1.5mm2" on a parts box from a smear into print.
+  Sharpening is the refinement: at radius 1.5 the letters grew light halos; at
+  120% flat cardboard began to speckle with amplified JPEG noise; at 50% it was
+  indistinguishable from none. The sharpening test was calibrated against a
+  measured baseline (exactly 1.0 with the mask off) and checked by switching
+  the mask off to watch it fail.
+- **Every path renders the strip from the stored full image** -- the upload,
+  `moving thumbnails`, and a request for one not made yet -- never from the
+  original in hand and never from the old thumbnail (which would compound the
+  blur). That is what makes a strip the same bytes whichever path made it, and
+  a test compares an upload's strip with the command's byte for byte.
+
+**A photo URL must name one set of bytes, forever.** This is the rule the strip
+is built round, and it is not optional: `web/sw.js` is **cache-first for every
+path except `/api/` and `/b/`** -- photos included -- and the photo route sends
+`max-age` of a year. So a URL whose bytes change is never fetched again:
+
+- the service worker answers it from its own cache without asking;
+- a deploy's new worker wipes that cache, and then refetches **through the HTTP
+  cache, which is still holding the old bytes for a year**. `strip_cache_check`
+  proves this with a control: it rewrites the list thumbnail in place under its
+  unchanged URL, waits for a deploy's new worker to wipe its cache, and the page
+  *still* sees the old bytes. The same shape as "reload it twice", below.
+
+Hence the strip's URL is `/photos/{id}/strip?v=<version>`, where **the version is
+a hash of the recipe** (size, sharpening, quality) -- derived, never typed, for
+the reason sw.js once was not. Change the recipe and every strip gets a new URL,
+a miss in both caches. **Any other version is a 404, never "the current one
+instead"**: a fallback under an old version's URL would be cached as that
+version for a year. `strip_name` looks the version up on each call rather than
+binding it as a default argument, which would freeze it at import.
+
+**`/photos/{id}/thumb` and `/full` are id-keyed and cached for a year, and are
+safe only because their bytes never change**: the full image is the record,
+and the list thumbnail is never regenerated -- `moving thumbnails` does not
+touch it. The old comment there said the files were content-addressed, which
+was true of the *files* and not of the URLs. Anyone who ever needs to
+regenerate either must give it a versioned URL first, the way the strip has.
+
+**`moving thumbnails`** gives photos from before this their strip (`--dry-run`
+says what it would do). It **only reads the database** -- a test holds
+`total_changes` still -- so it cannot take a lock the service is waiting on;
+never touches a full image or a list thumbnail; renames each strip into place
+from a hidden temporary file, so the running service never serves half a JPEG;
+and does nothing on a second run. On a copy of the live data (2026-09-21): 61
+strips in 3 s, 5.9 MB, and the fingerprint over every full image and thumbnail
+identical before and after. A strip not yet made is also made on demand when
+its URL is first asked for, so the command is a pre-warm, not a prerequisite.
+`--prune` removes strips of an older recipe and is **off by default**: a copy of
+the service still running the old code would be advertising exactly those.
+Strips are found by the full image's name, since they are not in the table, so
+`storage.delete_photo` and `store.purge_box` both remove every version.
+
+Two measuring traps, met while doing this:
+
+- **Under `srcset`, `img.naturalWidth` is density-corrected, not the file's
+  pixels**: a 300 px thumbnail chosen for a 252 px slot reports 252. Decode
+  `currentSrc` in a fresh `Image()` to learn what was actually served.
+- **`Page.captureScreenshot`'s `clip` is in document coordinates**: after a
+  `scrollIntoView`, `getBoundingClientRect()` is viewport-relative, and passing
+  it straight in photographs some other, darker part of the page. Add
+  `scrollX`/`scrollY` and pass `captureBeyondViewport: true`.
 
 **Fonts are bundled** (`labels/fonts/Inter.ttf`, OFL). Golden-image tests
 compare rendered bytes, so a system font update would break them spuriously.
@@ -938,7 +1028,9 @@ word from the generated comment; they are escaped now.
   The device that made a change has already redrawn from the response; without
   the tag it redraws again on its own echo, which is how half-typed text
   disappears. `web/live.js` `affects()` drops events whose origin is itself.
-- **Photos are normalised on the way in**: downscaled to 2048 px, EXIF
+- **Photos are normalised on the way in** (and a list thumbnail and a strip
+  image are derived from them -- see "The photo strip has its own sharp
+  image" above): downscaled to 2048 px, EXIF
   orientation baked in and all other metadata stripped (indoor photos carry
   GPS, and this database gets exported), deduplicated by sha256 so the phone's
   upload retries are harmless.
