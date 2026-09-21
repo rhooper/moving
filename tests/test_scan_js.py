@@ -1,10 +1,4 @@
-"""Run the front-end scanner tests as part of the normal suite.
-
-The code-parsing in web/scan.js decides what a scanned label resolves to, which
-matters as much as anything on the Python side -- and it silently stopped
-matching two of the three configurable code shapes once the format became
-configurable. `uv run pytest` should catch that.
-"""
+"""Run the front-end unit tests, tests/*.test.mjs, as part of the normal suite."""
 
 import shutil
 import subprocess

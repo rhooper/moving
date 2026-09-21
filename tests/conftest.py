@@ -1,30 +1,24 @@
 import os
 
-# Set before importing anything that reads config, so no test can ever reach the
-# physical printer. Done here rather than via pyproject's `env =` key, which
-# silently does nothing unless pytest-env is installed.
+# Set before anything imports config, so no test can reach the physical printer.
+# Not via pyproject's `env =` key, which silently does nothing without
+# pytest-env.
 os.environ["MOVING_PRINTER_BACKEND"] = "fake"
 
-# Set before importing anything that reads config, so no test can ever reach
-# the Anthropic API. The key in `.env` is the owner's billed credential, and
-# `make check` runs on every commit and every deploy -- a suite that picked it
-# up would spend their money every run.
-#
-# All three inputs are neutralised, because `from_env()` with no argument reads
-# the real environment *and* the real `.env`, and the cloud tier made "claude"
-# its default provider: one bare call anywhere in the suite would be enough.
-# `tests/test_no_test_reaches_the_api.py` proves each one.
+# Set before anything imports config, so no test can reach the Anthropic API:
+# the key in `.env` is the owner's billed credential, and `make check` runs on
+# every commit and deploy. `from_env()` with no argument reads the real
+# environment *and* the real `.env`, and defaults to the cloud provider, so all
+# three inputs are neutralised. test_no_test_reaches_the_api.py proves each.
 os.environ["MOVING_VISION_PROVIDER"] = "stub"
 os.environ.pop("ANTHROPIC_API_KEY", None)
-# A path that cannot exist, so the real .env is never the file that is read.
-# Tests that exercise the parser pass their own fixture path explicitly.
+# A path that cannot exist, so the real .env is never read. Parser tests pass
+# their own fixture path.
 os.environ["MOVING_ENV_FILE"] = "/nonexistent/moving-tests-never-read-a-real-env"
 
-# pyzbar resolves libzbar through ctypes.util.find_library, which on macOS does
-# not search Homebrew's prefix. ctypes reads this from os.environ at call time
-# (unlike DYLD_LIBRARY_PATH, which dyld caches at exec), so setting it here --
-# before pyzbar is imported -- is enough, and beats making everyone remember to
-# export it. Harmless on platforms where zbar is already on the search path.
+# pyzbar finds libzbar through ctypes.util.find_library, which does not search
+# Homebrew's prefix on macOS. ctypes reads this at call time (dyld caches
+# DYLD_LIBRARY_PATH at exec), so setting it before pyzbar is imported works.
 os.environ.setdefault(
     "DYLD_FALLBACK_LIBRARY_PATH",
     "/opt/homebrew/lib:/usr/local/lib:/usr/lib",

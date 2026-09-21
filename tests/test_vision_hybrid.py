@@ -1,8 +1,8 @@
 """The hybrid: cloud first, the local model when the cloud cannot answer.
 
-The point of the fallback is a house move. The Mac gets unplugged and carried
-to a van; the tailnet survives things the internet does not. A read that cannot
-reach the API should get worse, not stop.
+A read that cannot reach the API gets worse rather than stopping: mid-move the
+Mac is unplugged and carried to a van, and the tailnet survives things the
+internet does not.
 """
 
 import pytest

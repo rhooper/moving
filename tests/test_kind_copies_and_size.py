@@ -1,9 +1,7 @@
 """How many labels each kind of thing gets, and how big a container is.
 
-Asked for: two labels for a box or a crate (more than one face gets seen in a
-stack), one for furniture, a loose item or a bag. And an optional size for a
-container -- small, medium, large, extra large -- because "the large box for the
-kitchen" is how people actually look for one.
+Two labels for a box or a crate, since more than one face of a stack is seen;
+one for furniture, a loose item or a bag. A container may also have a size.
 """
 
 import pytest
@@ -111,8 +109,7 @@ class TestCopiesPerKind:
         assert client.put("/api/settings/kind-copies", json=body).status_code == 422
 
     def test_the_single_global_number_is_gone(self, client):
-        # It lasted two days and nobody ever set it. One number cannot be right
-        # for a crate and a lamp at once.
+        # One number cannot be right for a crate and a lamp at once.
         assert client.get("/api/settings/printing").status_code == 404
         assert "label_copies" not in client.get("/api/printer").json()
 

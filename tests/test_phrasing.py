@@ -1,9 +1,8 @@
 """Asking a small model to phrase a summary, and falling back when it cannot.
 
-Nothing here calls a model: the point is that the request we build is the one
-we meant, that a reply is mined as forgivingly as a vision draft is, and above
-all that **every** way this can go wrong ends in the assembled line rather than
-in an error. Offline has to keep working.
+Nothing here calls a model. The request built is the one meant, a reply is
+mined as forgivingly as a vision draft is, and **every** way this can go wrong
+ends in the assembled line rather than an error, so offline keeps working.
 """
 
 import json
@@ -112,8 +111,7 @@ class TestTheReply:
 
     def test_an_answer_left_in_thinking_is_still_found(self):
         # Ollama 0.34 with `format` set puts a thinking checkpoint's JSON in
-        # `thinking` and leaves `content` empty. 42 of 42 vision replies were
-        # lost that way once; this path is the same trap.
+        # `thinking` and leaves `content` empty.
         body = {"message": {"content": "", "thinking": '{"summary": "Books - two albums"}'}}
 
         assert phrasing.read_response(body) == "Books - two albums"
@@ -180,10 +178,8 @@ class TestFallingBackIsNormal:
         assert said.calls == 0
 
     def test_too_few_things_to_generalise_are_not_sent_to_the_model(self):
-        # Measured, not guessed: on a one- or two-line list the models tested
-        # padded the answer out of the prompt's own example ("a kettle, clamps
-        # and a tin of screws"). There is nothing to generalise from two
-        # things, and "kettle, toaster" is already the best line there is.
+        # On a one- or two-line list every model tried padded its answer from
+        # the prompt's own example; "kettle, toaster" is already the best line.
         said = Says("Kitchen essentials - a kettle, clamps and a tin of screws")
 
         summary, source = phrasing.summary_for(things("kettle", "toaster"), said, model="m")
@@ -202,8 +198,7 @@ class TestKeepingTheModelWarm:
     """The first press of an evening must not pay for a model load."""
 
     def test_it_does_nothing_when_phrasing_is_off(self, config):
-        # Which is every test: a Config built directly has it off, so nothing
-        # in this suite can reach a model.
+        # A directly built Config has it off, so no test can reach a model.
         pings = []
         warmer = phrasing.Warmer(config, ping=lambda c: pings.append(c) or True)
 

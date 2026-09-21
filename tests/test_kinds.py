@@ -1,9 +1,9 @@
 """Boxes, tubs and loose items are all labelled records.
 
-A bicycle needs a code, a QR, a destination room, a status and a location just
-as much as a box does — it simply has no contents. Making it a `kind` on the
-same record rather than a second table means codes, scanning, search, events,
-the manifest and the export all keep working with no special cases.
+A bicycle needs a code, a QR, a destination, a status and a location as much
+as a box does; it simply has no contents. As a `kind` on the same record,
+codes, scanning, search, events, the manifest and the export need no special
+cases.
 """
 
 import pytest
@@ -12,7 +12,7 @@ from movingbox import kinds, store
 
 
 def test_a_record_is_a_box_unless_told_otherwise(conn):
-    # Every row that existed before this feature is a box.
+    # Rows from before kinds existed are boxes.
     assert store.create_box(conn)["kind"] == "box"
 
 
@@ -27,7 +27,6 @@ def test_an_unknown_kind_is_refused(conn):
 
 
 def test_the_kind_can_be_changed_afterwards(conn):
-    # "I thought it was a box, it's really a crate" has to be fixable.
     box = store.create_box(conn)
 
     store.update_box(conn, box["code"], kind="crate")

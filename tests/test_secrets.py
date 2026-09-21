@@ -41,7 +41,7 @@ class TestTheGrammar:
         }
 
     def test_an_export_prefix_is_tolerated(self):
-        # Because half of everyone pastes the line they exported by hand.
+        # People paste the line they exported by hand.
         assert secrets.parse("export ANTHROPIC_API_KEY=sk-ant-x") == {
             "ANTHROPIC_API_KEY": "sk-ant-x"
         }
@@ -53,7 +53,6 @@ class TestTheGrammar:
         }
 
     def test_other_peoples_settings_are_left_alone(self):
-        # The file will grow. Nothing here has an opinion about the rest of it.
         assert secrets.parse("MOVING_BASE_URL=https://x\nANTHROPIC_API_KEY=sk-ant-x") == {
             "MOVING_BASE_URL": "https://x",
             "ANTHROPIC_API_KEY": "sk-ant-x",
@@ -118,8 +117,7 @@ class TestWhereTheKeyComesFrom:
 
     def test_no_key_anywhere_is_not_an_error(self, tmp_path):
         # The hybrid falls back to the local model, so an absent key degrades
-        # the reading rather than breaking the app. Somebody who starts the
-        # service before putting the key in place gets local analysis.
+        # the reading rather than breaking the app.
         assert secrets.anthropic_api_key({}, env_file=tmp_path / "nope.env") is None
         assert secrets.anthropic_api_key({}, env_file=None) is None
 

@@ -1,8 +1,7 @@
 """Destroying a record for good, and taking its photo files with it.
 
-Deleting is reversible and keeps everything (test_soft_delete.py); *purging* is
-the step that actually removes rows and unlinks files. These cover the
-destructive half.
+Deleting is reversible and keeps everything (test_soft_delete.py); *purging*
+removes rows and unlinks files.
 """
 
 import io

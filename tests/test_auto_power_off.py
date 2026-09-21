@@ -1,14 +1,12 @@
 """Disabling the printer's auto power-off, and serialising access to it.
 
-The command and its framing come from i3labelstation's brother_ql.cpp, which
-drives the same QL-800 in production:
+The framing is i3labelstation's (brother_ql.cpp), for the same QL-800:
 
     400 x 0x00            invalidate (QL-800; older models use 200)
     1B 40                 ESC @        initialise
     1B 69 55 41 00 00     ESC i U A    auto power-off, timeout 0 = disabled
 
-It is written to the printer's own memory and persists, which is why the
-watcher can send it once and stop rather than poll forever.
+It persists in the printer's own memory, so the watcher sends it once and stops.
 """
 
 import threading
@@ -39,8 +37,8 @@ class TestTheCommand:
         assert printer.QL800_INVALIDATE == 400
 
     def test_the_whole_thing_is_the_expected_length(self):
-        # 400 invalidate + 2 init + 6 command. Pinned because a wrong length
-        # here is a command the printer silently ignores.
+        # 400 invalidate + 2 init + 6 command. The printer silently ignores a
+        # command of the wrong length.
         assert len(printer.auto_power_off_command()) == 408
 
     def test_the_invalidate_length_can_be_given_for_another_model(self):
@@ -72,11 +70,9 @@ class TestSending:
 
 
 class TestReleasingTheDevice:
-    """The watcher lives in the long-running service; a handle it keeps is a
-    handle nothing else can have. This shipped broken once: the service held
-    the QL-800 exclusively from startup (ioreg: UsbExclusiveOwner = the
-    service's own pid), so brother_ql's second open -- every print job -- was
-    refused, and the process was locked out of the printer by itself."""
+    """The watcher lives in the long-running service, and a handle it keeps is
+    one nothing else can have: brother_ql's own open for every print job would
+    be refused, locking the process out of the printer by itself."""
 
     def test_the_device_is_released_once_the_command_is_sent(self, config):
         closed = []
@@ -190,8 +186,7 @@ class TestTheWatcher:
         assert not watcher.is_alive()
 
     def test_it_does_nothing_when_the_backend_is_not_a_real_printer(self, config):
-        # `fake` writes PNGs; there is no device to talk to. This one takes the
-        # plain config on purpose -- the fake backend is the whole point.
+        # The plain config on purpose: `fake` writes PNGs and has no device.
         attempts = []
         watcher = printer.AutoOffWatcher(
             config, send=lambda _c: attempts.append(1) or True, interval=0.01

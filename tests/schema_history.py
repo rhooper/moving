@@ -2,12 +2,9 @@
 
 A migration test has to start from the schema as it was *before* the migration
 it is testing. The runner replays everything above `user_version`, so winding
-that number back without also undoing the later migrations makes them run a
-second time — "duplicate column name: kind" and friends.
-
-Doing that per test file meant every new migration broke every older test.
-The undo steps live here instead, so adding a migration means adding one entry
-in one place.
+that number back without undoing the later migrations makes them run a second
+time -- "duplicate column name: kind". Adding a migration means adding its undo
+step here.
 """
 
 import sqlite3

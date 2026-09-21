@@ -126,10 +126,8 @@ class TestWhatIsSent:
         assert "effort" not in sent["output_config"]
 
     def test_the_closer_look_does_not_think_either(self):
-        # It did, adaptively, until it was measured: three photos read both
-        # ways through the app found the same items (4/4, 2/2, 7/7) for the
-        # same money, and thinking off was the faster of the two. What the
-        # closer look still gets is the bigger model and a spend of `effort`.
+        # Measured through the app, thinking found the same items for the same
+        # money, only slower. The closer look gets the bigger model and `effort`.
         sent = claude.build_request("claude-opus-5", [a_jpeg()], detail=True)
 
         assert sent["thinking"] == {"type": "disabled"}
@@ -195,8 +193,7 @@ class TestCost:
         assert claude.cost_usd("claude-sonnet-5-20260514", 1_000_000, 0) == pytest.approx(2.0)
 
     def test_an_unknown_model_is_priced_at_the_dearest_rate(self):
-        # Never guess low: a budget that under-counts is a budget that is
-        # quietly exceeded.
+        # A budget that under-counts is quietly exceeded.
         dearest = max(rate for rate, _ in claude.PRICES.values())
 
         assert claude.cost_usd("claude-something-new", 1_000_000, 0) == pytest.approx(dearest)
@@ -272,8 +269,7 @@ class TestFailing:
 
 class TestConstruction:
     def test_no_key_means_no_provider(self):
-        # The one thing that must never happen by accident: a client built
-        # with no key of our own, which the SDK would then resolve from
+        # A client built with no key of our own would resolve one from
         # whatever credentials happen to be on the machine.
         assert claude.provider_for(None, detail_model="claude-opus-5") is None
 

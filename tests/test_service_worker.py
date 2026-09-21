@@ -1,10 +1,9 @@
 """The service worker's cache version must roll with every deploy.
 
-The shell cache was pinned by a hand-bumped literal (`VERSION = "v3"`), and
-nobody bumped it -- so phones kept serving a stale app.js against a newer API
-until buttons errored. Serving /sw.js with the deployed revision substituted
-makes the cache roll automatically: the browser re-checks sw.js bytes, sees a
-new VERSION, reinstalls the shell, and skipWaiting/clients.claim take it live.
+Serving /sw.js with the deployed revision substituted makes the cache roll by
+itself: the browser re-checks sw.js bytes, sees a new VERSION, reinstalls the
+shell, and skipWaiting/clients.claim take it live. A hand-bumped literal is one
+nobody bumps.
 """
 
 import re
@@ -70,10 +69,9 @@ class TestServedServiceWorker:
 class TestTheRevisionCheckIsNeverAnsweredFromACache:
     """An open page learns that a deploy happened by asking /health.
 
-    The worker serves everything outside /api/ cache-first and caches what it
-    fetches, so without an exception a page's first /health answer would be
-    the only one it ever got: every later check would read the revision the
-    page is already running, and auto-reload would silently never fire.
+    The worker serves everything outside /api/ cache-first, so without an
+    exception a page's first /health answer would be the only one it ever got,
+    and auto-reload would silently never fire.
     """
 
     def test_the_worker_passes_health_straight_to_the_network(self):

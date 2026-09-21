@@ -43,8 +43,7 @@ def test_patching_a_box_changes_it(client):
 
 
 def test_status_cannot_be_smuggled_through_patch(client):
-    # Editing status directly would bypass the event log, leaving a hole in the
-    # record of where a box has been.
+    # Status has its own call so that every transition reaches the event log.
     code = client.post("/api/boxes", json={}).json()["code"]
 
     response = client.patch(f"/api/boxes/{code}", json={"status": "loaded"})
@@ -110,8 +109,6 @@ def test_listing_boxes_filters_by_status(client):
 
 
 def test_deleting_a_box_takes_it_out_of_the_list(client):
-    # Reversible: the record stays reachable by its code so it can be
-    # restored. See test_soft_delete.py.
     code = client.post("/api/boxes", json={}).json()["code"]
 
     assert client.delete(f"/api/boxes/{code}").status_code == 204
@@ -135,10 +132,7 @@ def test_a_box_scanned_by_its_code_resolves_to_its_page(client):
 class TestDeployedRevision:
     """/health reports the commit the process started from.
 
-    This is what scripts/claude/deploy.sh checks to tell "the service restarted
-    on the new code" from "the service is up", which are not the same thing --
-    the whole reason the deploy is automated is that finished work kept sitting
-    merged but not actually served.
+    deploy.sh compares it to tell "restarted on the new code" from merely "up".
     """
 
     def test_health_reports_the_revision_recorded_at_startup(self, config, tmp_path, monkeypatch):
@@ -157,9 +151,8 @@ class TestDeployedRevision:
             assert c.get("/health").json()["revision"] == "unknown"
 
     def test_the_revision_is_not_re_read_per_request(self, config, tmp_path, monkeypatch):
-        # Writing the file is not deploying: the file is written *before* the
-        # restart, so a per-request read would claim the new build was live
-        # while the old process was still serving.
+        # The file is written *before* the restart, so a per-request read would
+        # report the new build while the old process was still serving.
         recorded = tmp_path / "deployed-revision"
         recorded.write_text("old\n")
         monkeypatch.setattr(app_module, "REVISION_FILE", recorded)
@@ -188,5 +181,5 @@ class TestAuth:
         assert secured.get("/api/boxes", headers={"X-API-Key": "nope"}).status_code == 401
 
     def test_health_is_reachable_without_a_key(self, secured):
-        # Needed so a launchd/monitoring check does not have to hold the secret.
+        # So a monitoring check does not have to hold the secret.
         assert secured.get("/health").status_code == 200

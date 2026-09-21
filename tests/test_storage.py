@@ -160,9 +160,8 @@ def test_nothing_is_written_to_disk_when_the_upload_is_rejected(config, conn_wit
 class TestCover:
     """Exactly one photo per box is its cover, and it survives a deletion.
 
-    The list and the search results render a box by its cover, so "no cover"
-    and "two covers" are both wrong in ways a person notices: a row that shows
-    nothing, or a row whose picture changes depending on which query ran.
+    Lists render a box by its cover: "no cover" is a blank row, and "two
+    covers" a picture that changes depending on which query ran.
     """
 
     def three(self, config, conn, code):
@@ -227,10 +226,8 @@ class TestCover:
     def test_deleting_a_photo_that_is_not_the_cover_leaves_the_cover_alone(
         self, config, conn_with_box
     ):
-        # The promote-on-delete rule predates being able to choose a cover, so
-        # it promoted the lowest-numbered survivor unconditionally. Once the
-        # cover is somebody's choice that is both a silent change of picture
-        # and a second cover on the same box.
+        # Promoting a survivor unconditionally would silently change a chosen
+        # picture and leave two covers on one box.
         conn, code = conn_with_box
         first, second, third = self.three(config, conn, code)
         storage.set_cover(conn, second["id"])
@@ -278,10 +275,9 @@ class TestTheStripImage:
             assert image.size == (600, 800)
 
     def test_it_is_byte_identical_to_the_one_the_command_makes_later(self, config, conn_with_box):
-        # The cache invariant, across the paths that make one. An upload has
-        # the original in hand and could render from that -- but the command
-        # and a request only ever have the stored full image, so all three
-        # render from it. Otherwise one URL would have two sets of bytes.
+        # The command and a request only have the stored full image, so an
+        # upload renders from that too rather than from the original in hand.
+        # Otherwise one URL would have two sets of bytes.
         conn, code = conn_with_box
         photo = storage.save_photo(conn, config, code, a_jpeg(size=(3024, 4032)))
         strip = config.photo_dir / renditions.strip_name(photo["filename"])
@@ -293,9 +289,7 @@ class TestTheStripImage:
         assert strip.read_bytes() == made_at_upload
 
     def test_the_list_thumbnail_is_left_exactly_as_it_was(self, config, conn_with_box):
-        # Measured as ample already -- 2.4x the pixels a 3x phone's list row
-        # needs -- and sharpening it made no difference anyone could see. Its
-        # bytes must not move either: its URL is cached for a year.
+        # Its URL is cached for a year, so its bytes must not move.
         conn, code = conn_with_box
         data = a_jpeg(size=(3024, 4032))
 

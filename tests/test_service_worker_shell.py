@@ -1,11 +1,9 @@
 """The service worker must pre-cache every module the app cannot start without.
 
-`web/app.js` imports its helpers statically, so if any one of them is missing
-the whole app fails to load -- there is no partial failure. The worker serves
-cache-first and pre-caches the list in `SHELL`; a module left out of it is only
-cached once it happens to be fetched online. So a phone that picks up a new
-`app.js` and then opens the app in a dead spot gets a blank page. `covers.js`
-was left out once, and `autosave.js` would have been the second.
+`web/app.js` imports its helpers statically, so one missing module fails the
+whole app. A module left out of `SHELL` is only cached once it happens to be
+fetched online, so a phone that picks up a new `app.js` and then opens the app
+in a dead spot gets a blank page.
 """
 
 import re

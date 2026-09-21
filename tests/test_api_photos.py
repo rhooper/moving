@@ -137,8 +137,7 @@ class TestDraft:
         assert [i["name"] for i in body["draft"]["items"]] == ["stock pot", "baking pan"]
 
     def test_the_draft_is_not_applied_to_the_box(self, client, code):
-        # The whole design: a model proposes, a human accepts. Auto-applying
-        # would silently overwrite what someone typed.
+        # A draft is a proposal: applying it could overwrite what someone typed.
         self.upload(client, code)
 
         client.post(f"/api/boxes/{code}/ai/draft", json={})
@@ -220,9 +219,7 @@ class TestDraft:
 class TestCover:
     """Choosing which photo represents a box, and carrying it on list rows.
 
-    The whole point is recognising a box by sight, which means the thumbnail
-    has to arrive with the list. A cover id per row keeps a hundred-box list at
-    one request instead of a hundred and one.
+    A cover id per row keeps a list at one request instead of one per row.
     """
 
     def upload(self, client, code, colour):
@@ -269,8 +266,8 @@ class TestCover:
         assert self.row(client, code)["cover_photo_id"] == photo["id"]
 
     def test_a_box_with_no_photo_says_so_rather_than_leaving_the_field_out(self, client, code):
-        # The row still reserves the space for a thumbnail, so the client has
-        # to be told "no cover" rather than left to guess from a missing key.
+        # The row reserves space for a thumbnail either way, so "no cover" is
+        # said rather than left to a missing key.
         row = self.row(client, code)
 
         assert "cover_photo_id" in row
@@ -293,8 +290,8 @@ class TestCover:
         assert [b["cover_photo_id"] for b in found] == [photo["id"]]
 
     def test_the_cover_a_row_points_at_is_the_small_image(self, client, code):
-        # 400 px, not the 2048 px original: a list of 200 boxes must not pull
-        # 200 full-size photographs.
+        # 400 px, not the 2048 px original: a long list must not pull full-size
+        # photographs.
         photo = self.upload(client, code, (1, 1, 1))
         cover = self.row(client, code)["cover_photo_id"]
 
@@ -339,10 +336,10 @@ def uploaded(client, code, size=(3024, 4032)):
 
 
 class TestTheStripImage:
-    """GET /photos/{id}/strip?v=... -- see renditions.py for why it is shaped so.
+    """GET /photos/{id}/strip?v=...
 
-    The whole design rests on one property: a strip URL names one set of bytes,
-    forever. The service worker is cache-first and this is cached for a year.
+    A strip URL names one set of bytes forever: the service worker is
+    cache-first and the response is cached for a year.
     """
 
     def test_the_current_version_is_served_and_cached_hard(self, client, code):
@@ -359,8 +356,7 @@ class TestTheStripImage:
             assert image.size == (600, 800)
 
     def test_any_other_version_is_not_found_rather_than_answered_with_this_one(self, client, code):
-        # A fallback here would be cached as *that* version for a year -- the
-        # exact trap the version exists to avoid.
+        # A fallback here would be cached as *that* version for a year.
         photo = uploaded(client, code)
 
         response = client.get(f"/photos/{photo['id']}/strip?v=0123456789")
@@ -373,8 +369,8 @@ class TestTheStripImage:
         assert client.get(f"/photos/{photo['id']}/strip").status_code == 404
 
     def test_one_not_made_yet_is_made_when_it_is_asked_for(self, client, code, config):
-        # So a photo from before this existed is sharp the moment its page is
-        # opened, whether or not `moving thumbnails` has been run yet.
+        # So an older photo is sharp as soon as its page is opened, whether or
+        # not `moving thumbnails` has been run.
         photo = uploaded(client, code)
         strip = config.photo_dir / renditions.strip_name(photo["filename"])
         made_at_upload = strip.read_bytes()

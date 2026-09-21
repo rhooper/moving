@@ -62,10 +62,9 @@ def test_the_backup_is_not_a_wal_dependent_fragment(populated):
 
 
 def test_a_backup_can_be_opened_read_only(populated):
-    # A backup inherits the source's journal mode page-for-page, so without
-    # switching it to a rollback journal the artefact is a WAL database -- and
-    # a read-only connection cannot open one that has no -shm file. Restoring
-    # from a read-only copy (a mounted snapshot, a synced folder) would fail.
+    # A backup inherits WAL mode page-for-page, and a read-only connection
+    # cannot open a WAL database that has no -shm file -- so restoring from a
+    # mounted snapshot or a synced folder would fail.
     written = backup.create(populated)
 
     with closing(sqlite3.connect(f"file:{written}?mode=ro", uri=True)) as copy:
@@ -132,8 +131,7 @@ def test_verify_accepts_a_real_backup(populated):
 
 
 def test_create_verifies_before_pruning_anything(populated, monkeypatch):
-    # A corrupt new backup must never be the reason older good ones are
-    # deleted. That would turn a bad backup into data loss.
+    # A corrupt new backup must never be the reason older good ones are deleted.
     good = backup.create(populated, keep=1)
     monkeypatch.setattr(backup, "verify", lambda path: False)
 

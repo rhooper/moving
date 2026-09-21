@@ -1,9 +1,8 @@
 """The version: one source of truth, semver, and bumped by committing.
 
-Asked for as "add semver, auto-update version number on commit". The number
-lives in src/movingbox/version.py alone -- pyproject reads it from there
-(hatchling dynamic version), the API serves it -- and a pre-commit hook bumps
-the patch on every commit that does not bump it itself.
+The number lives in src/movingbox/version.py alone -- pyproject reads it from
+there (hatchling dynamic version), the API serves it -- and a pre-commit hook
+bumps the patch on every commit that does not bump it itself.
 """
 
 import re

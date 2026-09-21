@@ -1,8 +1,7 @@
 """Refusing to print a label for a box whose contents are not recorded.
 
-A label with no contents is the expensive mistake: the tape is spent, it goes
-on the box, and the box is then indistinguishable from any other unlabelled
-one until it is opened.
+A label with no contents is the expensive mistake: the tape is spent, and the
+box is indistinguishable from any other until it is opened.
 """
 
 import pytest
@@ -40,8 +39,7 @@ def test_nothing_is_printed_when_one_box_in_a_batch_is_empty(client, empty, conf
 
     client.post("/api/labels/print", json={"codes": [full, empty]})
 
-    # The whole batch is rejected, as with an unknown code: half a run of tape
-    # with no way to tell which labels came out is worse than none.
+    # As with an unknown code: half a run of tape is worse than none.
     assert not (config.label_preview_dir / f"{full}.png").exists()
 
 

@@ -1,14 +1,11 @@
 """A connection must survive the thread handoff FastAPI performs.
 
-FastAPI runs a sync generator dependency's `__enter__` via run_in_threadpool,
-the endpoint body via the threadpool again, and `__exit__` under a *separate*
-CapacityLimiter (fastapi/concurrency.py). So within a single request the setup,
-the body and the teardown can each land on a different worker thread.
-
-sqlite3 rejects that by default, which took the live service down with 500s on
-/api/rooms and /api/boxes/{code}/items as soon as the phone issued its four
-parallel requests. Access is still strictly sequential -- the handoff is
-awaited -- so the connection is never used by two threads at once.
+FastAPI runs a sync generator dependency's `__enter__` in the threadpool, the
+endpoint body in the threadpool again, and `__exit__` under a *separate*
+CapacityLimiter (fastapi/concurrency.py), so within one request the setup, body
+and teardown can each land on a different thread. sqlite3 rejects that by
+default. Access is still strictly sequential -- each handoff is awaited -- so
+no two threads ever use the connection at once.
 """
 
 import concurrent.futures
@@ -34,8 +31,8 @@ def test_a_connection_can_be_queried_from_another_thread(tmp_path):
 
 
 def test_a_connection_can_be_closed_from_another_thread(tmp_path):
-    # This is the exact failure: get_conn's `finally: conn.close()` runs under
-    # the exit limiter, not on the thread that opened the connection.
+    # get_conn's `finally: conn.close()` runs under the exit limiter, not on the
+    # thread that opened the connection.
     conn = db.connect(tmp_path / "t.db")
 
     run_in_another_thread(conn.close)

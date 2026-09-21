@@ -75,8 +75,8 @@ def test_moving_a_box_records_the_location_change(conn):
 
 
 def test_current_location_is_independent_of_destination_room(conn):
-    # The whole point of the two fields: a box bound for the kitchen can be on
-    # the truck, and asking where it is must not answer where it is going.
+    # A box bound for the kitchen can be on the truck; asking where it is must
+    # not answer where it is going.
     room_id = store.create_room(conn, "Kitchen")["id"]
     box = store.create_box(conn, destination_room_id=room_id)
 

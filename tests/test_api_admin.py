@@ -35,7 +35,6 @@ def test_json_export_is_downloadable(client, seeded):
 
 
 def test_json_export_is_offered_as_a_file(client, seeded):
-    # It is a backup you keep, not a page you read.
     response = client.get("/api/export.json")
 
     assert "attachment" in response.headers.get("content-disposition", "")
@@ -66,7 +65,6 @@ def test_the_manifest_pdf_is_a_pdf(client, seeded):
 
 
 def test_the_manifest_pdf_works_with_no_boxes_at_all(client):
-    # Printing the manifest before packing anything must not 500.
     response = client.get("/api/manifest.pdf")
 
     assert response.status_code == 200

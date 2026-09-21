@@ -1,8 +1,7 @@
 """How many copies of a label print when a request says, and what gets counted.
 
-What prints when a request does *not* say is per kind of thing, and lives in
-test_kind_copies_and_size.py. (For two days it was one global number; the tests
-for that are gone with it.)
+What prints when a request does *not* say is per kind of thing, in
+test_kind_copies_and_size.py.
 """
 
 import pytest
@@ -80,8 +79,7 @@ class TestWhatAPrintMayAsk:
 
 class TestTheCount:
     def test_it_counts_labels_not_button_presses(self, client, spy):
-        # The count explains why several labels with one code are in
-        # circulation. Two copies is two labels.
+        # The count explains why several labels with one code are in circulation.
         code = a_box(client)
 
         client.post("/api/labels/print", json={"codes": [code]})

@@ -1,20 +1,17 @@
 """The icon family, inlined once, and used only where it was approved.
 
-The marks are one evenodd path each on the home mark's 16-unit grid (source and
-rationale in `docs/design/icons/`). They ship as a single inline `<symbol>`
-sprite in index.html, referenced with `<use href="#i-...">`: no build step, no
-icon font, no request per glyph, and `currentColor` so one file serves both
-themes and follows a chip into its `on` state.
+The marks are one evenodd path each on the home mark's 16-unit grid (source in
+`docs/design/icons/`), shipped as a single inline `<symbol>` sprite in
+index.html and referenced with `<use href="#i-...">`, filled with
+`currentColor` so they follow the theme and a chip's `on` state.
 
-Three things are worth pinning:
-
-- a `<use>` pointing at a symbol that is not there draws nothing at all, in
-  silence -- there is no console error and no broken-image box;
+- a `<use>` pointing at a symbol that is not there draws nothing, silently --
+  no console error and no broken-image box;
 - `fill` does **not** reach the cloned symbol from the sprite's own root: the
   clone's ancestors are the referencing `<svg>`, so the fill has to be set
   there. A missed rule is black-on-black in dark mode;
-- the words carry the meaning and the icons are decoration, so every icon is
-  `aria-hidden` and no labelled control was allowed to lose its name.
+- the icons are decoration, so every one is `aria-hidden` and no labelled
+  control loses its name.
 """
 
 import re
@@ -30,20 +27,16 @@ COVERS = ROOT / "web" / "covers.js"
 APP = ROOT / "web" / "app.js"
 SPRITE = ROOT / "docs" / "design" / "icons" / "sprite.svg"
 
-#: The three approved homes for a mark. Anything else is a regression -- the
-#: status track, the nesting buttons, the section headings, Delete, "Look
-#: closer" and the size row were each drawn, tried and turned down
-#: (docs/design/icons/NOTES.md).
+#: The three approved homes for a mark. The status track, the nesting buttons,
+#: the section headings, Delete, "Look closer" and the size row were each tried
+#: and turned down.
 NAV = ["i-items", "i-scan", "i-new", "i-settings"]
 FLAGS = {"fragile": "i-fragile", "heavy": "i-heavy", "open_first": "i-open-first"}
 
 
 def markup() -> dict[str, str]:
-    """Every file that draws an icon -- index.html without its stylesheet.
-
-    A CSS comment explaining the rule is not markup, and saying so here is
-    cheaper than writing the explanation around the thing it explains.
-    """
+    """Every file that draws an icon -- index.html without its stylesheet,
+    whose comments are not markup."""
     page = INDEX.read_text()
     return {
         "index.html": page[: page.index("<style>")] + page[page.index("</style>") :],
@@ -118,9 +111,8 @@ def test_the_mark_built_by_hand_is_hidden_too():
 
 
 def test_the_referencing_element_sets_its_own_fill():
-    # The sprite's own root carries fill="currentColor", but a <use> clone's
-    # ancestors are the referencing <svg>, not the sprite -- so the attribute
-    # on the sprite never reaches the paths. This is that rule.
+    # A <use> clone's ancestors are the referencing <svg>, not the sprite, so
+    # the sprite's own fill="currentColor" never reaches the paths.
     css = stylesheet()
     assert re.search(r"\.i\b[^{]*\{[^}]*fill:\s*currentcolor", css), "no fill on the icon class"
 
@@ -164,10 +156,8 @@ ROUNDED = [
     ".shots figure",
     "#live",
     ".say",
-    # These two mirror the printed label most directly, where the corners are
-    # square because a thermal printer puts square corners on tape. The owner
-    # asked for the radius on the UI all the same; it is called out so it can
-    # be taken off these two without unpicking the rest.
+    # These two mirror the square-cornered printed label most directly; kept
+    # last so their radius can come off alone.
     ".band",
     ".flag",
 ]
@@ -183,9 +173,8 @@ def test_the_box_like_surfaces_are_rounded(selector):
 
 
 def test_the_seams_between_pushbuttons_stay_square():
-    # Asked for directly: "for radio buttons, don't round the inner edges."
-    # The row clips its children, which is what squares the inside and rounds
-    # the outside at once -- so the buttons must not round themselves.
+    # The row clips its children, which squares the inside and rounds the
+    # outside at once -- so the buttons must not round themselves.
     button = rule(".seg-row span")
     assert "border-radius: 0" in button, button
     assert "overflow: hidden" in rule(".seg-row")
@@ -217,8 +206,8 @@ def test_the_kind_mark_in_it_grows_to_match_and_lands_on_whole_pixels():
     root = rule(":root")
     inside = rule("#inside")
     grown = px(inside, "--kind-icon")
-    # 26 x 1.5 is 39; 40 is the kinder number -- multiples of 8 land every
-    # edge on a pixel (docs/design/icons/NOTES.md).
+    # 26 x 1.5 is 39; multiples of 8 land every edge of a 16-unit glyph on a
+    # pixel.
     assert grown % 8 == 0
     assert round(px(root, "--kind-icon") * 1.5) <= grown <= round(px(root, "--kind-icon") * 1.6)
 

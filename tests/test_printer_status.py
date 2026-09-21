@@ -9,8 +9,7 @@ from movingbox.labels import printer
 
 class TestStatus:
     def test_the_fake_backend_says_it_prints_nothing(self, config):
-        # It returns success, so the UI has to be told that no tape came out --
-        # this is exactly what made the Print button look broken.
+        # It returns success, so the UI has to be told that no tape came out.
         state = printer.status(config)
 
         assert state["backend"] == "fake"
