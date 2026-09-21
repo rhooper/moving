@@ -65,3 +65,29 @@ class TestServedServiceWorker:
 
         assert "skipWaiting" in body
         assert "clients.claim" in body
+
+
+class TestTheRevisionCheckIsNeverAnsweredFromACache:
+    """An open page learns that a deploy happened by asking /health.
+
+    The worker serves everything outside /api/ cache-first and caches what it
+    fetches, so without an exception a page's first /health answer would be
+    the only one it ever got: every later check would read the revision the
+    page is already running, and auto-reload would silently never fire.
+    """
+
+    def test_the_worker_passes_health_straight_to_the_network(self):
+        from movingbox.api import app as app_module
+
+        source = (app_module.WEB_ROOT / "sw.js").read_text()
+        handler = source[source.index('addEventListener("fetch"') :]
+        bypass = re.search(r'url\.pathname === "/health"\)\s*return;', handler)
+
+        assert bypass, "sw.js does not let /health through uncached"
+        assert bypass.start() < handler.index("respondWith"), "the bypass comes after the cache"
+
+    def test_and_the_answer_itself_says_not_to_keep_it(self, config):
+        with TestClient(create_app(config)) as client:
+            response = client.get("/health")
+
+        assert response.headers["cache-control"] == "no-store"

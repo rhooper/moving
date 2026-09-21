@@ -907,6 +907,69 @@ were reported missing.
   `browser_checks.sh` sets it, so the checks load the app the way production
   serves it rather than the one way it never does.
 
+**A deploy reaches an open phone by itself now** (`web/reload.js` for the
+decisions, tested; the wiring at "keeping up with deploys" in `app.js`; asked
+for as "add auto-reloading when the version changes -- probably needs a
+periodic check"). Cache-busting made a reload fetch the new code, but nothing
+made the reload happen, and with a dozen deploys a day the phone was usually
+running something older than what was live. "Deployed" used to mean "live for
+the next page load"; it now means "live on every open page within seconds of
+it being safe to reload".
+
+- **Which revision the page runs is its own module URL's `?v=`** -- no server
+  change. A dev server serves modules unversioned, so `running` is null and
+  none of it runs; otherwise a dev server would reload itself forever.
+- **When it asks `/health`:** at once when the socket reconnects (a deploy is
+  a restart, and `LiveChannel`'s `onOpen` is the first sign of new code), at
+  once when the page becomes visible (a phone picked up off a box), and every
+  `CHECK_MS` (60 s) otherwise -- **only while visible**, the timer cleared
+  when hidden and a check refusing to run while hidden, since the reconnect
+  happens with the screen off too. The timer is the backstop, for a socket
+  that never connects; the fast paths catch nearly every deploy first.
+- **A failed `/health` is "cannot tell", never "changed".** The service is
+  briefly down mid-deploy.
+- **`/health` must never come from a cache.** The worker serves everything
+  outside `/api/` cache-first and keeps what it fetches, so it now lets
+  `/health` straight through, and `/health` says `no-store`. Measured: with
+  both removed, the first deploy is seen and the next one never is, because
+  the second check reads the first answer back.
+- **An idle page reloads itself; one in use waits.** `reloadBlocked` takes the
+  live refresh's own answer (`held`: `holdRefresh(holdState())`, not a copy of
+  it) and adds what a refresh leaves standing and a reload destroys: an open
+  `dialog` (the add-inside camera, the viewer over a modal), a write still out
+  (`busy`, counted in `request()` -- not the autosaver's, which are keepalive
+  and waited for through `idle()`), and a save not landed (`owed`, across the
+  whole `sessions` map, modals included, asked only *after* every session has
+  been committed and waited for -- the leaving-a-record rule).
+- **Until then the banner says "App updated -- tap to reload"**, never the
+  another-device text. It reloads at the next safe moment: **a tap** (which,
+  if a save is still owed, says "reloading once everything is saved" and goes
+  ahead by itself when it lands), **leaving the current view** (`route()`: the
+  page is being replaced anyway, and the reload lands on the new route), or
+  **a later check that finds the page idle**. *Not* on becoming hidden: a
+  hidden page can be frozen before its saves land, and it would take a photo
+  taken in the add dialog with it -- coming back is the same moment from the
+  person's side, and it checks then.
+- **Before reloading it asks the worker to update and waits for the
+  handover** (`freshWorker`, five seconds at most). A reload is answered by
+  whichever worker controls the page, and until the new one takes over that
+  is the old one, serving the old shell from its own cache. Measured: without
+  the handover every reload in the check landed on the revision it was
+  replacing.
+- **One reload per revision, per tab.** Before reloading, the tab writes the
+  target into `sessionStorage` (`moving.reloadedTowards`); a page that finds
+  itself still behind that same target only *offers* the reload. A tab whose
+  storage throws does not reload by itself at all. Without the guard, a
+  `/health` that kept disagreeing produced 213 reloads in the time the check
+  allows for one.
+- **`scripts/claude/reload_check.mjs` is how this is known**, in
+  `make browser-check`. It runs its *own* server on a free loopback port and
+  restarts it under a new `MOVING_REVISION` for each stage, stopping exactly
+  that process group. Its setup trap: `Page.navigate` to the URL already open
+  is a fragment navigation, not a load -- after clearing the worker it has to
+  be `Page.reload`. Headless Chrome keeps its one page visible, so "hidden" is
+  the page being told, through `document.hidden` and the event.
+
 **`CDPATH` is set in this user's shell, and it corrupts `$(cd … && pwd)`.**
 When `cd` resolves a *relative* path through `CDPATH`, bash prints the
 destination to stdout — so `$(cd "$(git rev-parse --git-common-dir)" && pwd -P)`
@@ -1219,7 +1282,8 @@ word from the generated comment; they are escaped now.
   after a deploy), and the ones that write -- `autosave_check` (real typing,
   pauses, blur, Undo, failed saves made at the network layer), `copies_check`,
   `viewer_check` and `nesting_check` -- which **refuse port 8787 and any
-  non-loopback host**.
+  non-loopback host** -- and `reload_check`, which brings its own server and
+  restarts it under new revisions (see "A deploy reaches an open phone").
   All drive headless Chrome over CDP with Node's built-in WebSocket, no npm.
   The static guards cannot see an undefined variable inside a click handler;
   these can, and have caught: a stale element reference left by a merge, a

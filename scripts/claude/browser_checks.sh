@@ -80,6 +80,9 @@ run nesting_check  node scripts/claude/nesting_check.mjs "$B"
 # the kind of thing that regresses in silence ("reload it twice"), so it runs
 # every time rather than only on the day it was written.
 run strip_cache    env PORT=$((PORT + 1)) CDP_PORT=$((CDP_PORT + 1)) node scripts/claude/strip_cache_check.mjs
+# Its own server, on a free port, restarted under new revisions: a deploy as
+# an open page sees one. It never touches the one above.
+run reload_check   node scripts/claude/reload_check.mjs
 
 TRACEBACKS=$(grep -a -c Traceback "$T/server.log")
 echo "server tracebacks: $TRACEBACKS"
