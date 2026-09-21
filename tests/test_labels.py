@@ -1,16 +1,16 @@
 """Label rendering for 62 mm continuous DK-2205 tape on a QL-800.
 
 These cover the *portrait* renderer, which is cut to content along the tape.
-Landscape (the default, a fixed 4 inches) is covered in test_landscape.py, so
-every render() call here passes orientation explicitly.
+Landscape, the default, is in test_landscape.py, so every render() call here
+passes orientation explicitly.
 """
 
 import pytest
 
 from movingbox.labels import layout
 
-# zbar is the decoder real barcode scanners are built on. Needs `brew install
-# zbar`; conftest points ctypes at Homebrew's prefix so no env var is required.
+# zbar, the decoder real scanners are built on: cv2.QRCodeDetector failed to
+# decode a valid QR. Needs `brew install zbar`; conftest points ctypes at it.
 pyzbar = pytest.importorskip(
     "pyzbar.pyzbar", reason="zbar not available -- run `brew install zbar`"
 )
@@ -52,8 +52,8 @@ def test_label_is_monochrome_for_black_only_tape(conn):
 
 
 def test_the_rendered_qr_decodes_back_to_the_box_url(conn):
-    # The single property the whole system depends on. If placement, scaling or
-    # the quiet zone are wrong the label looks fine and scans not at all.
+    # If placement, scaling or the quiet zone are wrong, the label looks fine
+    # and does not scan.
     data = a_label()
 
     assert decode_qr(layout.render(data, orientation="portrait")) == data.url

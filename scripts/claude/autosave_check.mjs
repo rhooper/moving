@@ -1,23 +1,18 @@
 #!/usr/bin/env node
-// Purpose: the record page saves itself as it is edited, with Undo. This
-//          drives that for real: REAL key and mouse events (CDP Input.*), so a
-//          pause is a pause and leaving a field is a blur the browser fired;
-//          every request the page makes is logged at the network layer, bodies
-//          included, so "saved exactly once" and "sent the old value" are
-//          things it can see; and failures are made at the network layer too
-//          (CDP Fetch.failRequest), not by stubbing the page's fetch.
+// Purpose: the record page saves itself as it is edited, with Undo. Driven
+//          with real key and mouse events (CDP Input.*); every request is
+//          logged at the network layer with its body, and failures are made
+//          there too (CDP Fetch.failRequest), not by stubbing the page's fetch.
 // Date:    2026-09-18
 // Usage:   node scripts/claude/autosave_check.mjs [base-url] [--no-vision]
 //          default: http://127.0.0.1:8788 (`make run`)
 //          CDP_PORT=9340 to move Chrome's debugging port off the default.
 //
-// THIS ONE WRITES. It makes its own records and edits only those, but it does
-// make them, prints (to whatever the server's printer backend is) and uploads
-// a photo. So it refuses port 8787 -- the live service, the real database, a
-// real printer -- and anything that is not this machine. Point it at a
-// throwaway (CLAUDE.md, "A throwaway server is how write paths get checked").
-// The background-summary check needs MOVING_VISION_PROVIDER=stub on that
-// server; --no-vision skips it rather than wake a real model.
+// THIS ONE WRITES: it creates and edits its own records, prints and uploads.
+// So it refuses port 8787 -- the live service, the real database, a real
+// printer -- and any host that is not this machine. Point it at a throwaway
+// server. The background-summary check needs MOVING_VISION_PROVIDER=stub
+// there; --no-vision skips it rather than wake a real model.
 //
 // Needs Node 22+ (global WebSocket, zlib.crc32) and Google Chrome. No npm.
 import { spawn } from "node:child_process";
@@ -177,9 +172,7 @@ try {
     await click(selector);
     await evaluate(`(() => { const f = ${q(selector)}; f.setSelectionRange(f.value.length, f.value.length); })()`);
   }
-  // A picker is a row of pushbuttons, and unlike the <select> it replaced it
-  // can be pressed for real: a mouse press on the button's face, which is the
-  // <label> the hidden radio sits in.
+  // A pushbutton's face is the <label> its hidden radio sits in: press that.
   const face = (name, value) => `.seg[data-name="${name}"] input[value="${value}"] + span`;
   const tap = (name, value) => click(face(name, value));
   // (The face eases to its new colour over 90 ms; look once it has arrived.)
@@ -307,9 +300,9 @@ try {
   check("Undo has moved to the form that was just saved in",
         (await lineOf("destination")).undo === "Undo destination room" && (await lineOf("summary-form")).undo === null,
         JSON.stringify([await lineOf("destination"), await lineOf("summary-form")]));
-  // The print button reads the page's own copy of the record at click time. It
-  // now has contents and a room, so it must print without the thin-label
-  // question -- which it only will if autosave kept that copy current.
+  // The print button reads the page's own copy of the record at click time.
+  // With contents and a room it prints without the thin-label question --
+  // only if autosave kept that copy current.
   mark = writes().length;
   await click("#print");
   await sleep(300);
@@ -465,9 +458,8 @@ try {
         (await valueOf("content_summary")) === "pots and lids and a wok, colander, sieve, whisk", await valueOf("content_summary"));
   check("and the new page still says it is not saved", line.warn && line.text === "Not saved yet — will retry", JSON.stringify(line));
   check("the chip itself was saved", (await server(api)).fragile === 1);
-  // The badge above the summary is the one place a raised flag is drawn with
-  // the printed label's own glyph. Checked here because this is where a flag
-  // actually gets raised; ui_check only ever looks.
+  // The badge above the summary draws a raised flag with the label's own
+  // glyph. Checked here because this is where a flag gets raised.
   const badge = await evaluate('(() => { const b = document.querySelector(".flags .flag");'
     + ' return b ? b.textContent.trim() + "|" + b.querySelector("svg.i use").getAttribute("href") : "none"; })()');
   check("and the record wears a Fragile badge, word and glyph", badge === "Fragile|#i-fragile", badge);
@@ -580,7 +572,8 @@ try {
   await tap("size", "large");
   await waitFor(`${q("#destination .undo")}.textContent === "Undo size"`, "the size to be saved");
   check("choosing a size saves it, once", JSON.stringify(writesSince(mark).map(patchOf)) === JSON.stringify([{ size: "large" }]), show(writesSince(mark)));
-  // ...from the keyboard: an arrow moves the choice, Space on it clears
+  // ...from the keyboard: an arrow moves the choice, Space on it clears.
+  // Chrome sends no click for Space on an already-chosen radio.
   await evaluate(`document.querySelector('.seg[data-name="size"] input:checked').focus()`);
   mark = writes().length;
   await press("ArrowRight");
@@ -751,8 +744,8 @@ try {
   await press("Backspace");
   await press("Tab");
 
-  // The full new-record form, pre-set inside. (The button on the container
-  // opens the quick dialog instead now -- nesting_check.mjs presses that.)
+  // The full new-record form, pre-set inside. The container's own button opens
+  // the quick dialog, which nesting_check.mjs presses.
   mark = writes().length;
   await evaluate(`location.hash = ${JSON.stringify(`#/new/in/${code}`)}`);
   await waitFor(`${q("#inside-note")} && ${q("#new #create")}`, "the new-record form, pre-set inside");

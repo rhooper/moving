@@ -2,11 +2,8 @@
 
 `node --check web/app.js` looks like this check and is not: on a `.js` file
 containing `import`, Node (23.3 here) exits 0 without parsing it as a module,
-so a missing brace sails through. That command was the syntax guard for a whole
-day of patches to app.js before anyone noticed it proved nothing.
-
-`node --input-type=module --check < file` is the form that works, and
-`test_the_check_can_fail` keeps this file honest about that.
+so a missing brace sails through. `node --input-type=module --check < file` is
+the form that works, and `test_the_check_can_fail` keeps this file honest.
 """
 
 import shutil
@@ -43,7 +40,7 @@ def test_the_scan_finds_the_modules_it_guards():
 
 
 def test_the_check_can_fail():
-    # The whole point: a guard that cannot fail is the bug this file replaces.
+    # A guard that cannot fail is the bug this file replaces.
     broken = 'import x from "/y.js";\nfunction f( {\n'
 
     assert check(broken).returncode != 0

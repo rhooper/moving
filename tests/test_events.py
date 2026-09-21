@@ -1,10 +1,8 @@
 """The live change channel a second device listens on.
 
-The whole point is that a phone in the garage sees a box move without anyone
-reloading. What travels is *what changed*, never the change itself: every
-client re-fetches through the ordinary REST endpoints, so there stays exactly
-one code path deciding what a box looks like, and a missed or duplicated
-notification is harmless rather than corrupting.
+What travels is *what changed*, never the change itself: every client
+re-fetches through the ordinary REST endpoints, so one code path decides what a
+box looks like and a missed or duplicated notification is harmless.
 """
 
 import asyncio
@@ -80,8 +78,8 @@ class TestWhatIsAnnounced:
         assert listening.receive_json() == {"kind": "items.changed", "code": code}
 
     def test_an_item_being_removed_names_the_box_not_the_item(self, client, code, listening):
-        # The client re-fetches by box code, so an item id would be useless to
-        # it -- and the item is gone by the time the message lands anyway.
+        # Clients re-fetch by box code, and the item is gone by the time the
+        # message lands anyway.
         item = client.post(f"/api/boxes/{code}/items", json={"name": "kettle"}).json()
         assert listening.receive_json()["kind"] == "items.changed"
 
@@ -90,9 +88,8 @@ class TestWhatIsAnnounced:
         assert listening.receive_json() == {"kind": "items.changed", "code": code}
 
     def test_a_label_being_printed(self, client, code, listening):
-        # allow_empty because the shared fixture box has no contents recorded,
-        # and printing one is otherwise refused. This test is about the event,
-        # not the gate -- see test_print_gate.py for that.
+        # allow_empty: the fixture box has no contents, and printing one is
+        # otherwise refused.
         client.post("/api/labels/print", json={"codes": [code], "allow_empty": True})
 
         assert listening.receive_json() == {"kind": "label.printed", "code": code}
@@ -113,8 +110,7 @@ class TestWhatIsAnnounced:
         assert listening.receive_json() == {"kind": "photos.changed", "code": code}
 
     def test_a_new_cover_being_chosen(self, client, code, listening):
-        # The other phone is looking at the same list, and the picture on the
-        # row it is showing has just changed.
+        # The cover is drawn on the list rows other phones are showing.
         photo = client.post(
             f"/api/boxes/{code}/photos", files={"file": ("a.jpg", a_jpeg(), "image/jpeg")}
         ).json()
@@ -125,10 +121,9 @@ class TestWhatIsAnnounced:
         assert listening.receive_json() == {"kind": "photos.changed", "code": code}
 
     def test_a_read_announces_nothing(self, client, code, listening):
-        # Otherwise one phone merely looking at a box would make every other
-        # phone refetch. Silence cannot be proven by waiting for it, so make a
-        # real change afterwards: the queue preserves order, and if any of
-        # these reads had announced something it would arrive first.
+        # Silence cannot be proven by waiting for it, so a real change follows:
+        # the queue preserves order, so anything a read announced would arrive
+        # first.
         client.get("/api/boxes")
         client.get(f"/api/boxes/{code}")
         client.get(f"/api/boxes/{code}/items")
@@ -141,16 +136,14 @@ class TestWhatIsAnnounced:
 
 class TestThePayload:
     def test_it_carries_a_kind_and_a_code_and_nothing_else(self, client, listening):
-        # Small on purpose: this goes to every connected phone on every change,
-        # and a whole box body would be stale by the time it arrived.
+        # A whole box body would be stale by the time it arrived.
         client.post("/api/boxes", json={})
 
         assert set(listening.receive_json()) <= {"kind", "code", "origin"}
 
     def test_a_change_is_tagged_with_the_device_that_made_it(self, client, listening):
-        # The device that made the change has already redrawn. Without this tag
-        # it redraws again on its own echo, throwing away whatever the user
-        # started typing in between.
+        # The device that made the change has already redrawn; redrawing on its
+        # own echo would throw away whatever the user has typed since.
         client.post("/api/boxes", json={}, headers={"X-Client-Id": "the-phone"})
 
         assert listening.receive_json()["origin"] == "the-phone"
@@ -230,10 +223,8 @@ class TestTheHub:
     """The broadcast hub on its own, away from HTTP."""
 
     def test_an_event_published_from_a_worker_thread_arrives(self):
-        # This is the whole trick. Every route that touches the database is a
-        # sync `def`, so it runs in FastAPI's threadpool -- while the socket
-        # and its asyncio.Queue live on the event loop. Publishing has to cross
-        # that boundary, and asyncio.Queue is not thread-safe.
+        # Database routes are sync and run in FastAPI's threadpool, while the
+        # socket's asyncio.Queue lives on the event loop and is not thread-safe.
         async def scenario():
             hub = events.Hub()
             with hub.subscribe() as queue:
@@ -243,9 +234,8 @@ class TestTheHub:
         assert asyncio.run(scenario()) == {"kind": "box.updated", "code": "B-0001"}
 
     def test_a_listener_that_falls_behind_is_told_to_start_over(self):
-        # A phone in a dead spot cannot be caught up event by event, and a
-        # queue that grows without bound is a leak. One "start over" marker
-        # says everything the backlog said, because clients re-fetch anyway.
+        # An unbounded queue is a leak. Clients re-fetch anyway, so one "start
+        # over" marker says everything the backlog said.
         async def scenario():
             hub = events.Hub(backlog=4)
             with hub.subscribe() as queue:
@@ -257,9 +247,7 @@ class TestTheHub:
         drained = asyncio.run(scenario())
 
         assert len(drained) <= 4, "the backlog grew without bound"
-        # The marker is the *first* thing the client reads, so it refetches
-        # before acting on anything that arrived after the gap. Whatever
-        # follows it is a handful of redundant refetches, which cost nothing.
+        # First, so the client refetches before acting on anything after the gap.
         assert drained[0] == {"kind": "resync"}
 
     def test_a_listener_is_forgotten_when_it_leaves(self):

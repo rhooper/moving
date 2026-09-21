@@ -1,17 +1,13 @@
 """The strip rendition: a sharpened, high-DPI image for the photo strip.
 
-Measured before building (2026-09-21, headless Chrome at a 412 px viewport):
-the list row covers were never under-resolved -- a 300 px short edge filling a
-42 px frame is 0.42 source pixels per device pixel at 3x -- but the photo
-strip was, at 1.86x. A portrait 300x400 thumbnail was being stretched across a
-186 css px figure on a 3x phone. So the strip gets its own image, and the list
-thumbnail is left exactly as it was.
+A 300x400 list thumbnail is too soft for a 186 css px strip figure on a 3x
+phone; the list rows are small enough for it, so they keep it.
 
-The property the whole design rests on is that **a strip URL names one set of
-bytes, forever**. The service worker is cache-first and the photo route is
-cached for a year, so a URL whose bytes change is never fetched again. Hence
-the version in the URL is derived from the recipe, and every path that makes a
-strip -- upload, the command, a request -- makes the same bytes.
+**A strip URL names one set of bytes, forever.** The service worker is
+cache-first and the photo route is cached for a year, so a URL whose bytes
+change is never fetched again. The version in the URL is derived from the
+recipe, and every path that makes a strip -- upload, the command, a request --
+makes the same bytes.
 """
 
 import hashlib
@@ -78,15 +74,13 @@ class TestTheImage:
             strip = renditions.render_strip(full)
 
         assert strip.size == plain.size
-        # Without the mask this ratio is exactly 1.0; with it, 1.097 on these
-        # bars. They are already hard-edged and well resolved at 800 px, so
-        # the mask can only crisp them a little -- which is the point of a
-        # modest one. 1.05 still tells sharpened from not with room to spare.
+        # Without the mask this ratio is exactly 1.0; with it, about 1.1 on
+        # these already hard-edged bars.
         assert sharpness(strip) > sharpness(plain) * 1.05
 
     def test_it_is_not_over_sharpened(self, tmp_path):
-        # Halos and amplified JPEG noise are worse than softness. The chosen
-        # recipe was picked by eye; this only stops it drifting far past it.
+        # Halos and amplified JPEG noise are worse than softness. The recipe
+        # was picked by eye; this only stops it drifting far past that.
         name = a_full_photo(tmp_path)
         with Image.open(tmp_path / name) as full:
             plain = full.copy()
@@ -110,8 +104,7 @@ class TestTheImage:
 
 class TestTheVersion:
     def test_it_is_derived_from_the_recipe_not_typed(self):
-        # A hand-bumped version is one nobody bumps: sw.js had one, and phones
-        # ran a stale app against a new API. This one cannot be forgotten.
+        # A hand-bumped version is one nobody bumps.
         assert renditions.VERSION == renditions.version()
 
     @pytest.mark.parametrize(
@@ -172,8 +165,7 @@ class TestWritingOne:
 
     def test_it_is_written_whole_or_not_at_all(self, tmp_path):
         # The service may be serving this directory while the command writes
-        # to it. A reader must never see half a JPEG, so it is written aside
-        # and renamed into place -- and nothing is left lying around.
+        # to it, so a file is written aside and renamed into place.
         name = a_full_photo(tmp_path)
 
         renditions.write_strip(tmp_path, name)
@@ -233,10 +225,8 @@ class TestTheSrcset:
 class TestTheCommand:
     """`moving thumbnails`: give every existing photo its strip.
 
-    Changing the generator only reaches new uploads, and there are dozens of
-    photos already. This is how the old ones get theirs -- run by hand, against
-    a service that is running, so it must be safe to run twice and safe to run
-    underneath it.
+    It is run by hand against a running service, so it must be safe to run
+    twice and safe to run underneath it.
     """
 
     @pytest.fixture

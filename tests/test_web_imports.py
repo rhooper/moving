@@ -1,10 +1,7 @@
 """Front-end modules must use what they import.
 
-There is no JS linter here, and an unused import is the fingerprint of an edit
-that half-landed: the import was added, the code that was supposed to call it
-was not. That exact failure shipped once — `splitItems` was imported and never
-called, so dictated lists were silently never split, while the commit message
-said they were.
+An unused import is the fingerprint of an edit that half-landed: the import was
+added, the code that was supposed to call it was not.
 """
 
 import re
@@ -43,8 +40,8 @@ def test_every_imported_name_is_used():
 
 
 def test_the_check_can_actually_see_imports():
-    # Guards the guard: if the import pattern stopped matching, the test above
-    # would pass while checking nothing.
+    # If the import pattern stopped matching, the test above would pass while
+    # checking nothing.
     source = (WEB / "app.js").read_text()
 
     assert imported_names(source), "no imports parsed out of app.js"

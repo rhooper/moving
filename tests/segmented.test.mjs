@@ -2,8 +2,7 @@
 // optional row, pressing the selected one again clears it.
 //
 // The control is real radio buttons underneath, and a radio does not un-check
-// when it is pressed -- that is the whole of what this adds, so the decision is
-// here, away from the DOM, where it can be pinned down.
+// when it is pressed: that is what this adds.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -36,10 +35,9 @@ test("values are compared as the strings a form holds", () => {
 
 // --- the line under an optional row ------------------------------------------------
 //
-// There is no empty <option> any more to say what "nothing chosen" means, and
-// pressing a selected button to clear it is not something anyone would guess.
-// The line under the row says the one while nothing is chosen and the other
-// once something is. It is always there, so neither appearing moves the page.
+// Nobody would guess that pressing a selected button clears it, so the line
+// says so once something is chosen, and what "nothing chosen" means before. It
+// is always there, so neither appearing moves the page.
 
 test("with nothing chosen the line says what that means", () => {
   assert.equal(hintFor("", "Not decided yet"), "Not decided yet");

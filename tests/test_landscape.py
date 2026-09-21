@@ -1,4 +1,4 @@
-"""Landscape labels: 3 inches along the tape, all identity."""
+"""Landscape labels: 3.3 inches along the tape, all identity."""
 
 import pytest
 
@@ -62,8 +62,7 @@ def test_a_portrait_label_is_passed_through_untouched(conn):
 
 
 def test_the_qr_survives_rotation(conn):
-    # The single property the whole system rests on, re-checked after the
-    # image is turned on its side.
+    # Re-checked after the image is turned on its side.
     data = a_label()
 
     raster = printer.to_raster(layout.render(data, orientation="landscape"))
@@ -72,8 +71,7 @@ def test_the_qr_survives_rotation(conn):
 
 
 def test_the_label_has_no_field_for_itemised_contents(conn):
-    # Removed on purpose: the list is one scan away in the app, and the tape is
-    # for finding the box. If someone adds the field back, this says why not.
+    # On purpose: the list is one scan away in the app.
     assert "items" not in layout.LabelData.__dataclass_fields__
 
 
@@ -107,10 +105,7 @@ def test_build_instructions_accepts_a_landscape_design(conn):
 
 # --- the fixed layout ---------------------------------------------------------
 #
-# Asked for, after a round of stepped scaling: no dynamic font sizing. Every
-# label sets the same element at the same size, so a shelf of boxes reads as
-# one system. What made that possible is the 3.3 inch length and chips that
-# sit side by side instead of stacking.
+# No dynamic font sizing: every label sets the same element at the same size.
 
 ROOMS = [
     "Living Room",
@@ -143,7 +138,6 @@ def test_type_sizes_never_depend_on_the_content(conn):
 
 
 def test_a_loose_things_name_is_set_like_any_summary(conn):
-    # "Bicycle (Trek hybrid)" used to print huge because it was short.
     sizes = layout.type_sizes(a_label(summary=None, title="Bicycle (Trek hybrid)"))
 
     assert sizes["title"] == sizes["summary"]
@@ -152,16 +146,15 @@ def test_a_loose_things_name_is_set_like_any_summary(conn):
 def test_the_qr_sits_flush_in_the_top_right_corner(conn):
     image = layout.render(a_label(), orientation="landscape").convert("L")
 
-    # The corner finder pattern starts one quiet zone in from both edges, and
-    # nowhere near the old 24 px margin.
+    # The corner finder pattern starts one quiet zone in from both edges.
     quiet = layout.QR_QUIET * layout.QR_MODULE
     assert image.getpixel((image.width - quiet - 2, quiet + 1)) == 0
     assert quiet < 24
 
 
 def test_the_qr_is_drawn_at_a_whole_number_of_pixels_per_module(conn):
-    # The previous "bigger QR" changed a target number and nothing on the tape,
-    # because the size snaps to whole pixels. So the module size is the setting.
+    # The size snaps to whole pixels per module, so the module size is the
+    # setting.
     assert layout.QR_MODULE == 6
 
 
@@ -217,8 +210,8 @@ def test_the_summary_always_has_room(conn, flags):
 
 
 def test_a_code_too_long_to_fit_shrinks_rather_than_hitting_the_qr(conn):
-    # The one exception to fixed sizes, and it is a guard, not a design: a
-    # prefix nobody has configured yet must not print over the QR.
+    # The one exception to fixed sizes, and a guard: a code that cannot fit
+    # must not print over the QR.
     sizes = layout.type_sizes(a_label(code="WAREHOUSE-000123"))
 
     assert sizes["code"] < layout.type_sizes(a_label())["code"]

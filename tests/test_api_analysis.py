@@ -1,8 +1,7 @@
 """The photo-analysis API: the contract the PWA is built against.
 
-docs/superpowers/specs/2026-09-18-photo-analysis.md is the contract; these pin
-it. The worker thread is off here (a Config built directly never starts it), so
-jobs are run by hand with a stub provider -- nothing talks to a model.
+A directly built Config never starts the worker thread, so jobs are run by hand
+with a stub provider and nothing talks to a model.
 """
 
 import io
@@ -104,9 +103,7 @@ class TestUploading:
         assert upload(client, code)["analysis"] is None
 
     def test_the_worker_does_not_run_in_the_test_suite(self, client):
-        # A Config built directly has auto_analyse off, so no test ever starts a
-        # thread that reaches for a model. If this fails, every upload in the
-        # suite is a call to Ollama.
+        # If this fails, every upload in the suite is a call to Ollama.
         assert client.app.state.analyst is None
 
 

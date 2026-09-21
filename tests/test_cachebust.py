@@ -1,14 +1,10 @@
 """Every asset URL carries the deployed revision, so a deploy cannot be served stale.
 
-Asked for as "use cachebusting for assets". There is no build step to stamp
-filenames, so it happens as files are served: `/app.js` becomes
-`/app.js?v=<revision>` everywhere it is referred to -- in index.html, in the
-service worker's shell list, and in the `import` lines *inside* each module,
-because a versioned entry point importing unversioned modules busts nothing.
-A versioned URL is cached forever; index.html never is.
-
-The hole this closes: on a new deploy the service worker re-fetched its shell,
-and the browser's HTTP cache could answer with last week's app.js.
+There is no build step to stamp filenames, so it happens as files are served:
+`/app.js` becomes `/app.js?v=<revision>` in index.html, in the service worker's
+shell list, and in the `import` lines *inside* each module -- a versioned entry
+point importing unversioned modules busts nothing. A versioned URL is cached
+forever; index.html never is.
 """
 
 import re
@@ -173,7 +169,7 @@ class TestNamingARevisionForAThrowawayServer:
 
 
 class TestTheVersionOnThePage:
-    """Asked for: the version next to the menu (desktop), above the menubar (phone)."""
+    """The version beside the menu on a desktop, above the menubar on a phone."""
 
     def test_the_page_carries_the_version(self, client):
         import movingbox

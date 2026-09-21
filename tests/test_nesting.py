@@ -1,9 +1,7 @@
 """Things inside things: a bag in a box in a crate.
 
-Asked for: nested containers, which generally will not have a label of their
-own. A record with things inside shows them; nesting is arbitrarily deep,
-because the nested box can be opened like any other; nested records stay out of
-the top-level list (for now) but are found by search.
+Nesting is arbitrarily deep. Nested records stay out of the top-level list but
+are found by search.
 """
 
 import pytest
@@ -181,7 +179,6 @@ class TestWhatTheParentShows:
 
 class TestTheLabel:
     def test_a_nested_record_with_no_room_prints_its_containers_room(self, client, conn, config):
-        # A nested record goes where its container goes: the label says so.
         from movingbox.api.labels import _label_for
 
         room = client.post("/api/rooms", json={"name": "Kitchen"}).json()["id"]
@@ -192,9 +189,8 @@ class TestTheLabel:
         assert _label_for(conn, bag, config).room == "Kitchen"
 
     def test_the_containers_room_wins_over_a_room_of_its_own(self, client, conn, config):
-        # A box that was going to the garage and was then put in a crate for the
-        # kitchen goes to the kitchen: it is in the crate. Its own room stays in
-        # the database for when it is taken out again.
+        # A garage box put in a kitchen crate goes to the kitchen. Its own room
+        # stays in the database for when it is taken out again.
         from movingbox.api.labels import _label_for
 
         kitchen = client.post("/api/rooms", json={"name": "Kitchen"}).json()["id"]
@@ -249,9 +245,8 @@ class TestTheListAndSearch:
         assert found[0]["parent_code"] == crate
 
     def test_search_brings_back_the_containers_a_match_is_inside(self, client):
-        # "in search results, put the parent box first. indent subitems." The
-        # page can only group them if the containers come back with them, and
-        # it must not cost a request per result.
+        # The page groups results under their containers, so the containers
+        # come back too, without a request per result.
         crate = made(client, kind="crate", content_summary="kitchen")
         box = made(client, kind="box", content_summary="tea things", parent_code=crate)
         bag = made(client, kind="bag", content_summary="the samovar", parent_code=box)
@@ -294,8 +289,7 @@ class TestTheListAndSearch:
 
         found = client.get("/api/search", params={"q": "samovar"}).json()
 
-        # Context rows are extra; they are not results, and the page counts
-        # results. Matches lead, so a caller reading the first row still gets
+        # Context rows are not results. Matches lead, so the first row is still
         # the best match.
         assert sum(1 for row in found if row["matched"]) == 1
         assert found[0]["matched"] is True
@@ -395,8 +389,7 @@ class TestGatheringTheWholeSubtree:
     """`store.subtree` is the material a summary is built from.
 
     Not just what is directly inside: a crate holding a box of twenty things
-    should be able to say what those things are. The owner asked for exactly
-    this -- "if there are subitems, collect text from those".
+    can say what those things are.
     """
 
     def nest(self, conn, *, depth):
@@ -479,9 +472,8 @@ class TestGatheringTheWholeSubtree:
         assert store.subtree(conn, "B-9999") == []
 
     def test_the_whole_subtree_costs_a_fixed_number_of_queries(self, conn):
-        # Two queries per node on a button someone is waiting on is the thing
-        # being avoided: a crate of five boxes of twenty is eleven round
-        # trips. One recursive CTE plus one pass for the items is the shape.
+        # One recursive CTE plus one pass for the items, not two queries per
+        # node on a button someone is waiting on.
         self.nest(conn, depth=6)
         wide = store.create_box(conn)
         for _ in range(8):

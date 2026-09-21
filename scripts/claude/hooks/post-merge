@@ -1,15 +1,11 @@
 #!/usr/bin/env bash
-# Purpose: redeploy the live service when work lands on main, so that finished
-#          work cannot sit merged-but-undeployed.
+# Purpose: redeploy the live service when work lands on main.
+#          scripts/claude/install-hooks.sh installs a shim into
+#          .git/hooks/post-merge that execs this file.
 #
-#          .git/hooks is not version-controlled, so this file is the hook and
-#          scripts/claude/install-hooks.sh installs a one-line shim into
-#          .git/hooks/post-merge that execs it. install-service.sh runs that
-#          installer, so a normal install wires deployment up as well.
-#
-#          Quiet by design. Hooks are shared by every worktree in the repo, so
-#          this runs after every merge anywhere; only a merge that actually
-#          moves main in the main checkout should print anything at all.
+#          Quiet by design: hooks are shared by every worktree, so this runs
+#          after every merge anywhere, and only a merge that moves main in the
+#          main checkout should print anything.
 #
 # Usage:   fires automatically after `git merge` / `git pull`. Safe to run by
 #          hand from the top of a checkout to test it:
@@ -17,8 +13,8 @@
 #          Set MOVING_NO_DEPLOY=1 to skip (e.g. while bisecting).
 set -uo pipefail
 
-# See the note in deploy.sh: with CDPATH set, a relative `cd` prints where it
-# went, which would end up inside the command substitutions below.
+# CDPATH is set in this user's shell, and a relative `cd` through it prints
+# where it went into the command substitutions below.
 CDPATH=""
 
 # Hooks inherit the git environment of the command that triggered them. GIT_DIR

@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Purpose: put what is on main into the live launchd service, safely and as
-#          often as you like. Normally you never run this by hand: the
-#          post-merge hook (scripts/claude/install-hooks.sh) runs it whenever a
-#          merge moves main in the main checkout.
+# Purpose: put what is on main into the live launchd service. The post-merge
+#          hook (scripts/claude/install-hooks.sh) runs it whenever a merge
+#          moves main in the main checkout.
 #
 # Usage:   scripts/claude/deploy.sh [--if-changed]
 #
@@ -10,26 +9,18 @@
 #                        already healthy on this exact commit. This is what the
 #                        git hook passes.
 #
-# Order of operations, and why:
+# Order: guards -> backup -> uv sync -> tests -> restart -> health -> revision
 #
-#   guards -> backup -> uv sync -> tests -> restart -> health -> version check
-#
-#   The backup comes first, before the test run rather than after it. By the
-#   time this script starts, the merge has already put any new migration file
-#   on disk, and db.migrate() re-reads that directory on every connection -- so
-#   the *old* process, which is still serving requests, will apply a brand new
-#   migration to the live database on its very next request. Taking the backup
-#   first makes that window as short as it can be. A backup taken after a green
-#   test run is a backup taken after the thing it was meant to protect against.
-#
-#   Nothing touches the running service until the tests are green. A failed
-#   deploy leaves the old build serving.
+#   The backup comes before the tests: the merge has already put any new
+#   migration on disk, and db.migrate() re-reads that directory on every
+#   connection, so the *old* process applies it to the live database on its
+#   next request. Nothing touches the running service until the tests are
+#   green; a failed deploy leaves the old build serving.
 set -euo pipefail
 
-# CDPATH is set in this user's shell. When `cd` resolves a *relative* path
-# through it, bash prints where it went -- straight into the surrounding $( ),
-# so `$(cd "$(git rev-parse --git-common-dir)" && pwd -P)` comes back as two
-# lines and every path comparison below silently fails. Clear it first.
+# CDPATH is set in this user's shell, and a `cd` that resolves a relative path
+# through it prints the destination: `$(cd ... && pwd -P)` then returns two
+# lines and every path comparison below silently fails.
 CDPATH=""
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
@@ -40,7 +31,7 @@ LABEL="${MOVING_SERVICE_LABEL:-ca.toybox.moving}"
 PORT="${MOVING_SERVICE_PORT:-8787}"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 HEALTH="http://127.0.0.1:$PORT/health"
-# Read once at startup by the service; see api/app.py:deployed_revision.
+# Read once, at startup, by the service.
 REVISION_FILE="$REPO/var/deployed-revision"
 
 IF_CHANGED=0
@@ -66,16 +57,13 @@ loud() { printf '\n\033[1;31m%s\033[0m\n' "$*" >&2; }
 cd "$REPO"
 
 # --- guard rails ----------------------------------------------------------
-# Deploying the wrong tree is worse than not deploying at all, so every one of
-# these refuses rather than guesses.
+# Deploying the wrong tree is worse than not deploying: refuse, never guess.
 
 command -v git >/dev/null 2>&1 || die "git is not on PATH"
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "$REPO is not a git checkout"
 
-# Never from a worktree. Feature work lives in .claude/worktrees/*, those get
-# deleted, and the launchd agent serves the main checkout -- deploying one
-# would point the service at a directory that is about to vanish. Hooks are
-# shared through the common .git, so this hook fires for worktrees too.
+# Never from a worktree: worktrees get deleted, and the agent serves the main
+# checkout. Hooks live in the common .git, so they fire for worktrees too.
 GIT_DIR_ABS="$(git rev-parse --absolute-git-dir)"
 COMMON_ABS="$(cd "$(git rev-parse --git-common-dir)" && pwd -P)"
 if [[ "$GIT_DIR_ABS" != "$COMMON_ABS" ]]; then
@@ -157,9 +145,8 @@ if ! "$UV" run --project "$REPO" pytest -q; then
 fi
 
 # --- restart --------------------------------------------------------------
-# The revision file has to be written before the restart: the service reads it
-# once at startup, which is exactly what makes /health's answer proof that this
-# process is running this code rather than proof that a file exists.
+# Written before the restart: the service reads it once at startup, which makes
+# /health's answer proof that this process runs this code.
 say "Restart"
 mkdir -p "$REPO/var"
 printf '%s\n' "$REVISION" > "$REVISION_FILE"
@@ -185,8 +172,7 @@ if ! wait_for_health "$HEALTH" 60; then
 fi
 
 # --- prove the new code is what answered ----------------------------------
-# The service reads the revision file once, at startup, so this distinguishes
-# "the new build is serving" from "something is serving".
+# Tells "the new build is serving" from "something is serving".
 SERVED_JSON="$(curl -fsS -m 5 "$HEALTH")" || die "$HEALTH stopped answering mid-check"
 SERVED="$(printf '%s' "$SERVED_JSON" \
   | python3 -c 'import json,sys; print(json.load(sys.stdin).get("revision", ""))' || true)"

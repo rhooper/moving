@@ -2,9 +2,7 @@
 
 The worker is exercised one job at a time through `run_once()`, on the test's
 own thread and with a stub provider -- no sleeping, no model, no races. The
-thread that wraps it in production is covered separately and briefly.
-
-See docs/superpowers/specs/2026-09-18-photo-analysis.md for the rules these pin.
+thread that wraps it in production is covered once, briefly.
 """
 
 import io
@@ -83,7 +81,6 @@ class TestQueueing:
         assert [row["status"] for row in jobs] == ["pending"]
 
     def test_a_loose_thing_is_not_inventoried(self, conn, config):
-        # A bicycle has no contents; there is nothing for the model to list.
         bike = store.create_box(conn, kind="item", content_summary="Bicycle")
         photo = storage.save_photo(conn, config, bike["code"], a_jpeg(), filename="p.jpg")
 
@@ -336,8 +333,6 @@ class TestTheSummary:
     def test_a_photo_described_but_not_itemised_still_gives_the_record_a_summary(
         self, conn, config, box
     ):
-        # Seen for real: a cabinet of labelled drawers came back as one good
-        # sentence and no items, and the record was left saying nothing at all.
         photographed(conn, config, box["code"])
 
         described = saw(summary="A plastic organiser with many labelled drawers")
@@ -367,8 +362,6 @@ class TestTheSummary:
         assert self.summary(conn, mine["code"]) == ("Grandma's tea set", "manual")
 
     def test_what_is_nested_inside_counts_towards_the_summary(self, conn, config, box):
-        # A crate holding three bags is not an empty crate, and its label
-        # should not read as one.
         for _ in range(3):
             store.create_box(conn, kind="bag", parent_code=box["code"])
         photographed(conn, config, box["code"])
@@ -378,11 +371,9 @@ class TestTheSummary:
         assert self.summary(conn, box["code"]) == ("kettle, 3 bags", "auto")
 
     def test_the_background_summary_is_never_written_by_a_model(self):
-        # The worker runs behind a vision call that is already the bottleneck,
-        # so its summary stays plain assembly: instant, offline, the same every
-        # time. Only "From contents" -- which a person is waiting on -- phrases.
-        # Checked on the imports rather than the text, so saying so in a
-        # docstring does not trip it.
+        # The worker already waits on a vision call, so its summary stays plain
+        # assembly; only "From contents", which a person waits on, phrases.
+        # Checked on the imports, so a docstring mentioning it does not trip it.
         import ast
         import inspect
 
@@ -452,8 +443,7 @@ class TestEstimates:
         assert state["total_ms"] >= state["remaining_ms"] > 0
 
     def test_asking_again_does_not_throw_away_what_the_last_run_taught(self, conn, config, box):
-        # Re-queueing used to delete the photo's finished job -- which was the
-        # history. With one photo that put the estimate back to the default.
+        # The finished job is the history the estimate is made from.
         photo = photographed(conn, config, box["code"])
         conn.execute(
             "UPDATE ai_jobs SET status = 'done', duration_ms = 4000, "
@@ -507,11 +497,7 @@ class TestTheThread:
 
 
 class TestWhatItCostAndWhoAnswered:
-    """The budget, from the worker's side.
-
-    Nothing here reaches a model: the cloud half of the pair is a fake that
-    answers or fails on command, as everywhere else in the suite.
-    """
+    """The budget, from the worker's side. The cloud half of the pair is a fake."""
 
     def pair(self, cloud, local):
         from movingbox.vision import hybrid

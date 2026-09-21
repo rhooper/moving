@@ -16,8 +16,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const NAME = "copies_check";
-// These checks create records, print (to the fake printer) and upload photos.
-// Never against the live service: the real database, and real tape.
+// This writes, so never port 8787 -- the live service, with the real database
+// and real tape -- nor any host that is not this machine.
 {
   const target = new URL(process.argv[2] || "http://127.0.0.1:0");
   if ((target.port || "80") === "8787" || !["127.0.0.1", "localhost"].includes(target.hostname)) {
@@ -111,8 +111,7 @@ try {
         await evaluate(`document.getElementById("say").textContent`));
   check("settings: the saved number is the form's new baseline",
         await evaluate(`(() => { const f = document.getElementById("copies-box"); return f.dataset.initial === "3" && f.value === "3"; })()`));
-  // Nonsense never leaves the page: the field's own min and max stop the form
-  // being submitted at all (the server would refuse it too; its tests say so).
+  // The field's own min and max stop the form being submitted at all.
   await evaluate(`(() => { const f = document.getElementById("copies-bag"); f.value = "99";
     f.dispatchEvent(new Event("input", { bubbles: true })); document.getElementById("kind-copies").requestSubmit(); })()`);
   await sleep(500);

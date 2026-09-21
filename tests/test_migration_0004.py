@@ -1,11 +1,8 @@
 """Upgrading a database whose photos predate a box having exactly one cover.
 
-Before this migration ``is_primary`` was set on the first photo uploaded and
-never touched again except by a delete, which promoted the lowest-numbered
-survivor whether or not the deleted photo was the cover. A live database can
-therefore hold boxes with two flagged photos and boxes with none -- both of
-which the unique index added here would reject on its way in, so the migration
-has to repair the rows before it can create the index.
+An older database can hold boxes with two flagged photos and boxes with none.
+The unique index added here rejects both, so the migration repairs the rows
+before creating it.
 """
 
 import io

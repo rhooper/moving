@@ -1,8 +1,7 @@
 """What the cloud tier has cost, and the cap that stops it costing more.
 
-A budget nobody can see is a budget that gets exceeded, so the number is on
-the Settings page. A budget nothing enforces is the same thing, so past the cap
-the cloud tier is simply not offered and reading falls back to the local model.
+Past the cap the cloud tier is not offered and reading falls back to the local
+model.
 """
 
 import pytest
@@ -44,9 +43,8 @@ def read(provider="claude", model="claude-sonnet-5", cost=0.0075, tokens=(2760, 
 
 class TestRecording:
     def test_what_answered_is_written_back_onto_the_job(self, conn):
-        # The job named claude-sonnet-5 when it was queued; the local model is
-        # what actually read the photo. A wrong item has to be traceable to
-        # the model that wrote it.
+        # Queued naming claude-sonnet-5 but read locally: a wrong item has to be
+        # traceable to the model that wrote it.
         job = a_job(conn)
 
         spend.record(conn, job, read(provider="ollama", model="qwen3-vl:4b-instruct", cost=0.0))
@@ -85,7 +83,6 @@ class TestTheRunningTotal:
         assert spend.total_usd(conn) == pytest.approx(0.0225)
 
     def test_a_job_that_failed_after_the_call_still_counts(self, conn):
-        # A reply that cost money and then failed to parse still cost money.
         spend.record(conn, a_job(conn, status="error"), read(cost=0.0075))
 
         assert spend.total_usd(conn) == pytest.approx(0.0075)
@@ -218,8 +215,8 @@ class TestTheMigration:
             conn.close()
 
     def test_jobs_from_before_the_cloud_cost_nothing_rather_than_an_unknown(self, old):
-        # Every job on the live database was local. Nothing to backfill, and a
-        # NULL would make the running total unsummable.
+        # Jobs from before the cloud tier were all local, and a NULL would make
+        # the running total unsummable.
         conn = db.connect(old.db_path)
         try:
             assert spend.total_usd(conn) == 0.0

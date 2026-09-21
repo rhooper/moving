@@ -85,8 +85,8 @@ class TestNextNumber:
         assert client.put("/api/settings/next-number", json={"number": 0}).status_code == 422
 
     def test_it_will_not_walk_back_onto_an_existing_code(self, client):
-        # Reissuing a code that is already on a printed label is the one thing
-        # the counter exists to prevent; setting it by hand must not bypass that.
+        # Reissuing a code already on a printed label is what the counter
+        # exists to prevent.
         client.post("/api/boxes", json={})  # B-0001
 
         response = client.put("/api/settings/next-number", json={"number": 1})
@@ -96,8 +96,6 @@ class TestNextNumber:
 
 
 class TestWhatThePhotoReadingCosts:
-    """A budget nobody can see is a budget that gets exceeded."""
-
     def cloud(self, config):
         return config.replace(
             vision_provider="claude",

@@ -11,11 +11,9 @@ def all_routes(router):
     """Every route, flattened.
 
     `include_router` does not flatten into `app.routes` in this FastAPI
-    version: each included router appears as one `_IncludedRouter` wrapper, and
-    the real routes hang off its `original_router`. Note that the wrapper also
-    has a `routes` attribute which is a *string* -- walking that yields its
-    characters and silently inspects nothing, which is how the first version of
-    this helper passed while testing almost no routes.
+    version: each included router is one `_IncludedRouter` wrapper whose real
+    routes hang off `original_router`. The wrapper's own `routes` attribute is a
+    *string*, so walking it silently inspects nothing.
     """
     children = getattr(router, "routes", None)
     if not isinstance(children, (list, tuple)):
@@ -40,8 +38,7 @@ def uses(dependant, target) -> bool:
 
 
 def test_the_route_walk_actually_finds_routes(config):
-    # Guards the guard: if flattening breaks, the invariant below would pass
-    # vacuously and stop protecting anything.
+    # If flattening breaks, the invariants below pass vacuously.
     paths = {getattr(r, "path", None) for r in all_routes(create_app(config))}
 
     assert "/api/boxes/{code}/photos" in paths
@@ -51,10 +48,8 @@ def test_the_route_walk_actually_finds_routes(config):
 def test_no_route_using_the_database_is_async(config):
     """A sync dependency plus an async endpoint means a cross-thread sqlite handle.
 
-    get_conn is a sync generator dependency, so FastAPI runs it in a
-    threadpool. An `async def` endpoint runs on the event loop instead, so the
-    connection would be created in one thread and used in another -- which
-    sqlite3 rejects outright. Photo upload hit this for real.
+    get_conn runs in FastAPI's threadpool while an `async def` endpoint runs on
+    the event loop, and sqlite3 refuses a connection used across threads.
     """
     offenders = []
     for route in all_routes(create_app(config)):
@@ -75,11 +70,9 @@ def test_no_route_using_the_database_is_async(config):
 def test_no_websocket_takes_a_database_connection(config):
     """The same rule, from the other end.
 
-    A websocket endpoint has no choice about being `async def`, so the
-    invariant above cannot be satisfied by making it sync -- it has to need no
-    database at all. That is what forces the change channel to carry only an
-    event kind and a box code and let clients re-fetch: it is the one shape
-    that needs nothing from sqlite.
+    A websocket endpoint must be `async def`, so it has to need no database at
+    all. That is why the change channel carries only an event kind and a box
+    code, and clients re-fetch.
     """
     sockets = [r for r in all_routes(create_app(config)) if isinstance(r, WebSocketRoute)]
 

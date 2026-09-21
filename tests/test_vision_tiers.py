@@ -1,11 +1,8 @@
 """A quick read by default, and a closer look when asked.
 
-Measured on this machine, on the owner's own photos (2026-09-18): the old
-default, `qwen3-vl:30b`, is the *thinking* checkpoint and spent ~30 s reasoning
-before each answer without being more accurate for it. `qwen3-vl:4b-instruct`
-answered in 7.4 s (median, n=69) with the most specific names of any model and
-no parse failures; `qwen3-vl:8b-instruct` took ~10 s and read handwriting and
-brand names best. So: the 4b reads every photo, and the 8b is the closer look.
+`qwen3-vl:4b-instruct` reads every photo; `qwen3-vl:8b-instruct`, slower but
+best at handwriting and brand names, is the closer look. A bare qwen3-vl tag is
+a *thinking* checkpoint: far slower, and no more accurate.
 """
 
 import io
@@ -84,9 +81,8 @@ class TestTheDefaults:
 
 class TestTheRequest:
     def test_the_model_is_kept_loaded_between_boxes(self):
-        # Ollama unloads after five idle minutes, and boxes in a packing
-        # session are often further apart than that. Per request, so nobody
-        # has to edit a Homebrew plist.
+        # Ollama unloads after five idle minutes, and boxes are often further
+        # apart than that.
         assert ollama.build_request("m", [b"x"])["keep_alive"] == "30m"
 
     def test_the_context_is_sized_for_one_photo_not_a_novel(self):
@@ -95,8 +91,7 @@ class TestTheRequest:
 
     def test_a_reply_that_arrives_in_the_thinking_field_is_still_read(self):
         # Ollama 0.34 with `format` set and thinking off puts the JSON in
-        # `thinking` and leaves `content` empty. 42 of 42 replies were lost
-        # that way in the benchmark, with a usable draft sitting in each.
+        # `thinking` and leaves `content` empty.
         reply = json.dumps({"summary": "tea things", "items": [{"name": "kettle", "qty": 1}]})
 
         draft = ollama.read_response({"message": {"content": "", "thinking": reply}})

@@ -11,16 +11,13 @@
 # Usage:   scripts/claude/install-service.sh [--uninstall]
 set -euo pipefail
 
-# See the note in deploy.sh: with CDPATH set, a relative `cd` prints its target
-# into the surrounding $( ). Nothing here uses a relative cd today; clearing it
-# keeps that from becoming a trap for the next edit.
+# CDPATH is set in this user's shell, and a relative `cd` through it prints its
+# target into the surrounding $( ), corrupting `$(cd ... && pwd)`.
 CDPATH=""
 
-# MOVING_SERVICE_LABEL / MOVING_SERVICE_PORT let a throwaway second instance be
-# installed alongside the real one -- which is how the deploy path gets tested
-# without restarting the service people are using. `tailscale serve` is the one
-# thing a second instance must not touch: there is a single :443 handler for the
-# whole machine, so it is only configured for the default install.
+# MOVING_SERVICE_LABEL / MOVING_SERVICE_PORT install a throwaway second instance
+# beside the real one, to test the deploy path. It must not touch `tailscale
+# serve`: there is a single :443 handler for the whole machine.
 DEFAULT_LABEL="ca.toybox.moving"
 DEFAULT_PORT=8787
 LABEL="${MOVING_SERVICE_LABEL:-$DEFAULT_LABEL}"
@@ -151,10 +148,9 @@ reload_agent "$BACKUP_LABEL" "$BACKUP_PLIST"
 echo
 "$UV" run --project "$REPO" moving backup
 
-# serve, not funnel: reachable from your own tailnet devices, never the public
-# internet. Only for the default instance: there is one :443 handler per
-# machine, so pointing it at a second instance would silently take the real one
-# off the tailnet URL that is printed on every label.
+# serve, not funnel: tailnet devices only, never the public internet. Default
+# instance only: pointing the one :443 handler at a second instance would take
+# the real one off the URL printed on every label.
 if (( IS_DEFAULT_INSTANCE )); then
   tailscale serve --bg "$PORT" >/dev/null
   echo
@@ -184,9 +180,7 @@ else
 fi
 
 # --- automatic redeploys ---------------------------------------------------
-# .git/hooks is not version-controlled, so the post-merge hook has to be
-# installed, and this is the one command everybody already runs. Without it,
-# merged work sits undeployed until somebody remembers to come back here.
+# .git/hooks is not version-controlled, so the post-merge hook is installed here.
 echo
 "$REPO/scripts/claude/install-hooks.sh"
 

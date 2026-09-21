@@ -1,9 +1,8 @@
 """Upgrading a database that predates per-prefix code counters.
 
-The live database had a single 'box_code' counter at 3 with B-0001..B-0003
-already printed onto tape. Without the migration the new lookup for
-'box_code:B' finds nothing, restarts at 1, and the next box tries to claim
-B-0001 -- a code that is already stuck to a different box.
+Before 0002 there was one global 'box_code' counter. Without the migration the
+lookup for 'box_code:B' finds nothing, restarts at 1, and the next box claims a
+code already stuck to a different box.
 """
 
 import sqlite3
@@ -17,13 +16,7 @@ from .schema_history import roll_back_to
 
 
 def a_v1_database(path):
-    """A database as it looked before 0002: one global counter, no `kind`.
-
-    Every later migration has to be undone, not just 0002. Setting
-    user_version back to 1 makes the runner replay all of them, and a replayed
-    0003 fails with "duplicate column name: kind" if its column is still
-    there — which is a fault in this helper, not in the migration.
-    """
+    """A database as it looked before 0002: one global counter, no `kind`."""
     conn = db.connect(path)
     for _ in range(3):
         store.create_box(conn)

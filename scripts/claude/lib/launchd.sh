@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
 # Purpose: launchd and health-check helpers shared by install-service.sh and
-#          deploy.sh. Source it; it is not runnable on its own.
-#
-#          It exists so there is exactly one implementation of the bootout /
-#          bootstrap dance -- getting that wrong takes the live service down.
+#          deploy.sh, so there is one implementation of the bootout/bootstrap
+#          dance -- getting it wrong takes the live service down. Source it;
+#          it is not runnable on its own.
 
-# `launchctl bootout` returns before the job is actually gone, and bootstrapping
-# the same label while the old one is still tearing down fails with
-# "Bootstrap failed: 5: Input/output error" -- having already unloaded the
-# running service, so the failure leaves nothing listening. Wait for the label
-# to disappear, then retry the bootstrap a few times.
+# `launchctl bootout` returns before the job is gone, and bootstrapping the same
+# label while it tears down fails with "Bootstrap failed: 5: Input/output error"
+# -- after the running service was unloaded, leaving nothing listening. So wait
+# for the label to disappear, then retry the bootstrap a few times.
 reload_agent() {
   local label="$1" plist="$2" domain="gui/$(id -u)"
 
@@ -30,12 +28,10 @@ reload_agent() {
 }
 
 # The pid launchd currently has for a label, empty if it is not running.
-# Used to show that a restart really did replace the process.
 #
-# "Not running" must not be an error. Callers run under `set -euo pipefail`, and
-# `launchctl print` exits non-zero for a label that is not loaded -- which is
-# exactly the case where a deploy most needs to keep going. Returning 0 with no
-# output here is what keeps a down service recoverable.
+# "Not running" must not be an error: callers run under `set -euo pipefail`,
+# and `launchctl print` exits non-zero for a label that is not loaded -- the
+# very case where a deploy most needs to keep going.
 agent_pid() {
   local out
   out="$(launchctl print "gui/$(id -u)/$1" 2>/dev/null)" || return 0

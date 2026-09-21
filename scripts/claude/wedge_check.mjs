@@ -125,10 +125,9 @@ check("Print focused: the reader's Return did NOT press Print",
       await evaluate(`JSON.stringify(window.__writes)`));
 
 // --- a pushbutton has the focus: it is a button, though it is an <input> ---
-// The kind, size and rooms are rows of radios. Whichever was tapped last keeps
-// the focus, exactly as Print does -- and an <input> used to mean "somebody is
-// typing here", which would have dropped the scan and let its Return submit
-// the form the radio is in.
+// Whichever radio was tapped last keeps the focus, as Print does. Taken for
+// typing, the scan would be dropped and its Return would submit the radio's
+// form.
 await goto(`#/b/${B}`);
 await waitFor('.seg[data-name="kind"] input:checked');
 await evaluate(`document.querySelector('.seg[data-name="kind"] input:checked').focus()`);

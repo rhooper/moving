@@ -9,8 +9,7 @@ from movingbox.labels import printer
 
 class TestStatus:
     def test_the_fake_backend_says_it_prints_nothing(self, config):
-        # It returns success, so the UI has to be told that no tape came out --
-        # this is exactly what made the Print button look broken.
+        # It returns success, so the UI has to be told that no tape came out.
         state = printer.status(config)
 
         assert state["backend"] == "fake"
@@ -72,7 +71,6 @@ class TestPrintFailures:
         assert "No such device" in detail
 
     def test_a_failed_print_is_not_recorded_as_printed(self, client, monkeypatch):
-        # A print count that rises when nothing came out is worse than useless.
         code = client.post("/api/boxes", json={"content_summary": "pots and pans"}).json()["code"]
 
         class Broken:

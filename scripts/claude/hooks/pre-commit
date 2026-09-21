@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# Purpose: bump the patch version on every commit, so the number moves by
-#          itself ("auto-update version number on commit"). A commit that
-#          stages src/movingbox/version.py itself -- `make version-minor`,
-#          a merge carrying someone else's bump -- is left alone.
+# Purpose: bump the patch version on every commit. A commit that stages
+#          src/movingbox/version.py itself -- `make version-minor`, a merge
+#          carrying someone else's bump -- is left alone.
 # Date:    2026-09-20
 # Installed as a shim by scripts/claude/install-hooks.sh; the shim runs this
 # copy from whichever checkout is committing, so a worktree bumps its own file.
 set -euo pipefail
-CDPATH=""   # see deploy.sh: with CDPATH set, a relative cd prints its target
+CDPATH=""   # set in this user's shell; a relative cd through it prints its target
 
 FILE="src/movingbox/version.py"
 [ -f "$FILE" ] || exit 0

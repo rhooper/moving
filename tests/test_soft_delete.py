@@ -1,9 +1,8 @@
 """Deleting is reversible; only a deliberate purge destroys anything.
 
-Mid-move, an accidental delete on a phone is a real prospect and a permanent
-one is unrecoverable. So a delete marks the record and keeps everything —
-rows, photos, files — and a second, explicit action is what actually removes
-them.
+An accidental delete on a phone mid-move is likely, and a permanent one is
+unrecoverable. So a delete marks the record and keeps everything -- rows,
+photos, files -- and only a second, explicit action removes them.
 """
 
 import io
@@ -62,7 +61,6 @@ class TestDeleting:
 
         store.delete_box(conn, config, box["code"])
 
-        # Nothing is destroyed by a reversible action.
         assert full.is_file()
 
     def test_the_items_are_kept(self, config, conn, box):
@@ -146,8 +144,6 @@ class TestPurging:
         assert not thumb.exists()
 
     def test_a_living_record_cannot_be_purged_by_accident(self, config, conn, box):
-        # Purging is the destructive one; it only applies to something already
-        # in the bin.
         with pytest.raises(store.NotDeleted):
             store.purge_box(conn, config, box["code"])
 
@@ -180,9 +176,8 @@ class TestOverHttp:
         assert client.get(f"/api/boxes/{code}").status_code == 200
 
     def test_a_deleted_record_is_still_reachable_by_its_code(self, client, code):
-        # Reachable only if you know the code -- it is out of the list and out
-        # of search. Returning 404 here would mean scanning a box you had just
-        # deleted by mistake told you it never existed, with no way back.
+        # Out of the list and search, but a 404 would tell someone who scanned
+        # a box deleted by mistake that it never existed, with no way back.
         client.delete(f"/api/boxes/{code}")
 
         found = client.get(f"/api/boxes/{code}")
@@ -199,9 +194,8 @@ class TestOverHttp:
         assert [b["code"] for b in client.get("/api/boxes/deleted").json()] == [code]
 
     def test_scanning_a_deleted_label_still_finds_it(self, client, code):
-        # You deleted it by mistake, then scanned the box to check. Landing on
-        # "no such box" would be the wrong answer to a question you can still
-        # fix.
+        # Deleted by mistake, then scanned to check: "no such box" would be the
+        # wrong answer to something that can still be fixed.
         client.delete(f"/api/boxes/{code}")
 
         assert client.get(f"/b/{code}", follow_redirects=False).status_code == 307

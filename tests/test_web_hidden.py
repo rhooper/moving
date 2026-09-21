@@ -2,9 +2,7 @@
 
 The UA stylesheet's `[hidden] { display: none }` loses to any author display
 rule, so `el.hidden = true` on an element styled `display: flex` does nothing.
-That shipped for real: the nav printer badge showed "Printer offline" forever
-while the printer sat there online. The stylesheet carries an author-level
-override; this pins it.
+The stylesheet carries an author-level override; this pins it.
 """
 
 import re

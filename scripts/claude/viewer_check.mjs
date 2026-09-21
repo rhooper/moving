@@ -1,13 +1,10 @@
 #!/usr/bin/env node
-// Purpose: the photo viewer, clicked for real at phone width. A tap opens the
-//          viewer rather than a new tab; opened while the photo is still being
-//          read it says so, then fills in BY ITSELF when the job ends; Escape,
-//          Close and a tap outside close it, a tap inside does not; the
-//          thumbnail is still a real link; nothing throws in the page. And the
-//          button that runs the ordinary read again: what it says after a quick
-//          read and after a closer look, that pressing it runs the QUICK read,
-//          that re-reading takes nothing away from the record, and that a
-//          single thing's photo offers no read at all.
+// Purpose: the photo viewer, clicked for real at phone width: a tap opens it
+//          rather than a new tab; opened mid-read it says so, then fills in BY
+//          ITSELF; Escape, Close and a tap outside close it, a tap inside does
+//          not; the thumbnail is still a real link. And "read again": it runs
+//          the QUICK read, takes nothing away from the record, and is not
+//          offered for a single thing's photo.
 // Date:    2026-09-18
 // Usage:   node scripts/claude/viewer_check.mjs <base-url> <CODE> <photo.jpg> <out-dir>
 //          WRITES: uploads a photo. Refuses the live service. Needs the stub
@@ -19,8 +16,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const NAME = "viewer_check";
-// These checks create records, print (to the fake printer) and upload photos.
-// Never against the live service: the real database, and real tape.
+// This writes, so never port 8787 -- the live service, with the real database
+// and real tape -- nor any host that is not this machine.
 {
   const target = new URL(process.argv[2] || "http://127.0.0.1:0");
   if ((target.port || "80") === "8787" || !["127.0.0.1", "localhost"].includes(target.hostname)) {

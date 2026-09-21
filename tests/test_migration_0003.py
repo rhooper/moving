@@ -1,7 +1,7 @@
 """Upgrading a database that predates kinds.
 
-Everything recorded before this feature was a box, and the labels for those are
-already on tape. The upgrade must not change what any of them is.
+Everything recorded before kinds was a box, with its label already on tape, so
+the upgrade must not change what any of them is.
 """
 
 from contextlib import closing

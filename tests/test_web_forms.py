@@ -2,10 +2,7 @@
 
 A <form> with no submit listener still submits -- natively. The browser
 reloads the page with the fields in the query string and saves nothing, which
-looks exactly like a save that silently failed. That shipped: the box page's
-summary form was drawn, its handler never landed, and "Save summary" did
-nothing for as long as it existed. There is no JS linter here, so this is the
-guard.
+looks exactly like a save that silently failed. A linter cannot see that.
 """
 
 import re

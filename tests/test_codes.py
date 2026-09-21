@@ -38,8 +38,8 @@ def test_the_sequence_advances_within_a_prefix(conn):
 
 
 def test_changing_the_prefix_starts_that_prefix_at_one(conn):
-    # Switching to a new prefix should give CAM-001, not CAM-0005 continuing
-    # some global count. Codes stay unique because the prefix differs.
+    # CAM-001, not CAM-0005 continuing a global count; the prefix keeps codes
+    # unique.
     codes.set_format(conn, prefix="B", separator="-", digits=4)
     db.next_box_code(conn)
     db.next_box_code(conn)

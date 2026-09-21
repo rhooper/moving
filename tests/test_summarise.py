@@ -91,9 +91,8 @@ def named(contents):
 class TestWhatOneNestedRecordContributes:
     """The rule is: the most concrete text that record has.
 
-    Never a summary *and* the items it was made from -- that is the same
-    contents twice, once sharp and once blurred, and blurring compounds with
-    every level.
+    Never a summary *and* the items it was made from: that is the same contents
+    twice, once sharp and once blurred, and the blur compounds at every level.
     """
 
     def test_a_summary_a_person_typed_wins_over_its_items(self):
@@ -139,7 +138,6 @@ class TestGatheringAWholeSubtree:
         assert named(summarise.contents(nodes)) == [("kettle", 1)]
 
     def test_a_childs_items_reach_the_container(self):
-        # The whole point: a crate holding a box of things says what they are.
         nodes = [node(0, "crate"), node(1, "box", size="large", items=[("book", 4), ("album", 2)])]
 
         assert named(summarise.contents(nodes)) == [("book", 4), ("album", 2)]
@@ -154,8 +152,7 @@ class TestGatheringAWholeSubtree:
         assert named(summarise.contents(nodes)) == [("glove", 2)]
 
     def test_a_container_that_holds_something_does_not_also_say_it_is_a_box(self):
-        # The complaint that started this: the crate said "large box" where it
-        # could have said what was in the box. What is inside speaks for it.
+        # What is inside speaks for it, rather than "large box".
         nodes = [
             node(0, "crate", box_id=1),
             node(1, "box", box_id=2, parent_id=1, size="large"),
@@ -174,8 +171,7 @@ class TestGatheringAWholeSubtree:
         assert named(summarise.contents(nodes)) == [("large box", 1)]
 
     def test_three_empty_bags_still_read_as_three_bags(self):
-        # The thing that must not regress: nesting three empty bags gives one
-        # counted phrase, not three lines.
+        # One counted phrase, not three lines.
         nodes = [node(0, "crate"), node(1), node(1), node(1)]
 
         assert summarise.from_subtree(nodes) == "3 bags"

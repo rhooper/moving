@@ -1,7 +1,7 @@
 """Fire concurrent requests at a running server, the way the phone does.
 
-The PWA loads a box page with four parallel requests, which is what exposed the
-cross-thread sqlite failure. Sequential curl never reproduced it.
+Parallel requests are what expose cross-thread sqlite failures; sequential curl
+does not.
 
 Usage: uv run python scripts/claude/hammer.py [base_url] [rounds]
 """

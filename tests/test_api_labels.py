@@ -1,8 +1,7 @@
 """Label preview and print endpoints.
 
-Boxes here are created with a summary: printing a box whose contents are not
-recorded is refused (see test_print_gate.py), and these tests are about the
-printing path rather than that gate.
+Boxes are created with a summary because printing a box with no recorded
+contents is refused (test_print_gate.py).
 """
 
 import io
@@ -32,8 +31,6 @@ def test_the_preview_is_a_png(client):
 
 
 def test_the_preview_qr_resolves_to_this_boxs_page(client, config):
-    # End to end: a box created over HTTP produces a label whose QR, read by a
-    # scanner, points back at that box on the configured host.
     code = client.post("/api/boxes", json={"content_summary": "kettle"}).json()["code"]
 
     response = client.get(f"/api/labels/preview/{code}.png")
@@ -71,8 +68,7 @@ def test_printing_writes_through_the_fake_backend(client, config):
 def test_printing_is_recorded_on_the_box(client):
     code = client.post("/api/boxes", json={"content_summary": "pots and pans"}).json()["code"]
 
-    # One copy, said out loud: the default is two (test_label_copies.py), and
-    # this test is about the record, not the default.
+    # The default is two copies; this test is about the record, not the default.
     client.post("/api/labels/print", json={"codes": [code], "copies": 1})
 
     box = client.get(f"/api/boxes/{code}").json()
@@ -83,8 +79,6 @@ def test_printing_is_recorded_on_the_box(client):
 
 
 def test_reprinting_increments_rather_than_resets(client):
-    # Labels get lost and boxes get re-taped; knowing a label was reprinted
-    # explains why two labels with the same code exist.
     code = client.post("/api/boxes", json={"content_summary": "pots and pans"}).json()["code"]
 
     client.post("/api/labels/print", json={"codes": [code], "copies": 1})
@@ -109,15 +103,13 @@ def test_printing_an_unknown_box_is_404_and_prints_nothing(client, config):
     response = client.post("/api/labels/print", json={"codes": [good, "B-9999"]})
 
     assert response.status_code == 404
-    # The whole request is rejected: printing half a batch wastes tape and
-    # leaves you unsure which labels came out.
+    # Half a batch would waste tape and leave you unsure which labels came out.
     assert not (config.label_preview_dir / f"{good}.png").exists()
 
 
 def test_the_itemised_contents_never_reach_the_tape(client):
-    # The list lives in the app, one scan away; the tape is for finding the
-    # box from across a room. So itemising a box must not change its label:
-    # same box, before and after items are added, byte-identical preview.
+    # The list is one scan away in the app; adding items must leave the
+    # preview byte-identical.
     code = client.post("/api/boxes", json={"content_summary": "pots and pans"}).json()["code"]
     before = client.get(f"/api/labels/preview/{code}.png").content
 
