@@ -244,8 +244,72 @@ class TestTheListAndSearch:
 
         found = client.get("/api/search", params={"q": "samovar"}).json()
 
-        assert codes(found) == [bag]
+        # The match leads; the crate comes with it so the page can group them.
+        assert codes(found) == [bag, crate]
         assert found[0]["parent_code"] == crate
+
+    def test_search_brings_back_the_containers_a_match_is_inside(self, client):
+        # "in search results, put the parent box first. indent subitems." The
+        # page can only group them if the containers come back with them, and
+        # it must not cost a request per result.
+        crate = made(client, kind="crate", content_summary="kitchen")
+        box = made(client, kind="box", content_summary="tea things", parent_code=crate)
+        bag = made(client, kind="bag", content_summary="the samovar", parent_code=box)
+
+        found = client.get("/api/search", params={"q": "samovar"}).json()
+
+        # Matches first, in relevance order, then the containers they need.
+        assert codes(found)[0] == bag
+        assert sorted(codes(found)) == sorted([bag, box, crate])
+        seen = {row["code"]: row for row in found}
+        assert seen[bag]["matched"] is True
+        assert seen[box]["matched"] is False and seen[crate]["matched"] is False
+        assert seen[bag]["ancestry"] == [crate, box]
+        assert seen[box]["ancestry"] == [crate]
+        assert seen[crate]["ancestry"] == []
+
+    def test_a_container_that_matched_comes_back_once_and_as_a_match(self, client):
+        # The case that would draw a record twice: it is both a result and the
+        # place another result lives.
+        crate = made(client, kind="crate", content_summary="kitchen crate")
+        bag = made(client, kind="bag", content_summary="kitchen cutlery", parent_code=crate)
+
+        found = client.get("/api/search", params={"q": "kitchen"}).json()
+
+        assert sorted(codes(found)) == sorted([crate, bag])
+        assert {row["code"]: row["matched"] for row in found} == {crate: True, bag: True}
+
+    def test_a_top_level_match_needs_no_context_and_says_so(self, client):
+        loose = made(client, kind="box", content_summary="a lone kettle")
+
+        found = client.get("/api/search", params={"q": "kettle"}).json()
+
+        assert codes(found) == [loose]
+        assert found[0]["ancestry"] == [] and found[0]["matched"] is True
+
+    def test_the_matches_keep_their_order_and_a_container_is_not_counted_as_one(self, client):
+        # Whatever else comes back, the heading counts what was found.
+        crate = made(client, kind="crate", content_summary="kitchen")
+        made(client, kind="bag", content_summary="samovar", parent_code=crate)
+
+        found = client.get("/api/search", params={"q": "samovar"}).json()
+
+        # Context rows are extra; they are not results, and the page counts
+        # results. Matches lead, so a caller reading the first row still gets
+        # the best match.
+        assert sum(1 for row in found if row["matched"]) == 1
+        assert found[0]["matched"] is True
+        assert [row["matched"] for row in found] == sorted(
+            (row["matched"] for row in found), reverse=True
+        )
+
+    def test_browsing_is_untouched_by_any_of_it(self, client):
+        crate = made(client, kind="crate")
+        made(client, kind="bag", parent_code=crate)
+
+        rows = client.get("/api/boxes").json()
+
+        assert codes(rows) == [crate]
 
     def test_taking_something_out_puts_it_back_in_the_list(self, client):
         crate = made(client, kind="crate")

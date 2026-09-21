@@ -697,6 +697,58 @@ try {
   await waitFor(`!document.querySelector("dialog.adder")`, "the refusal dialog to close");
   await camera(true);
 
+  // --- search results, grouped and indented, on a 320px screen ------------
+  //
+  // "in search results, put the parent box first. indent subitems. then we
+  // don't need in B-xxxx." A fresh chain, five deep, so the cap on the indent
+  // is pressed rather than reasoned about -- and at the narrowest screen this
+  // app is used on, because that is where an indent goes wrong.
+  let deepest = (await api("/boxes", "POST", { kind: "crate", content_summary: "outermost" })).code;
+  const chain = [deepest];
+  for (const level of ["second", "third", "fourth"]) {
+    deepest = (await api("/boxes", "POST", { kind: "box", content_summary: level, parent_code: deepest })).code;
+    chain.push(deepest);
+  }
+  const found = (await api("/boxes", "POST", { kind: "bag", content_summary: "a vermillion zither", parent_code: deepest })).code;
+  chain.push(found);
+
+  await send("Emulation.setDeviceMetricsOverride", { width: 320, height: 640, deviceScaleFactor: 0, mobile: true });
+  await goto("#/search/zither", `${q("#boxlist")} && ${q("#boxlist")}.children.length === 5`);
+  await sleep(200);
+  const drawn = await evaluate(`(() => {
+    const rows = Array.from(document.querySelectorAll("#boxlist li"));
+    const doc = document.documentElement;
+    return {
+      keys: rows.map((li) => li.dataset.key),
+      inset: rows.map((li) => Math.round(parseFloat(getComputedStyle(li.querySelector("a")).paddingLeft))),
+      context: rows.map((li) => li.hasAttribute("data-context")),
+      status: rows.map((li) => li.querySelector(".st").textContent),
+      at: document.querySelectorAll("#boxlist .at").length,
+      onList: getComputedStyle(rows[0]).borderBottomWidth,
+      onLink: getComputedStyle(rows[0].querySelector("a")).borderBottomWidth,
+      overflow: doc.scrollWidth - doc.clientWidth,
+      right: Math.max(...rows.map((li) => li.querySelector(".w").getBoundingClientRect().right)),
+    };
+  })()`);
+
+  check("search: the containers come first, outermost first, the match last",
+        JSON.stringify(drawn.keys) === JSON.stringify(chain), drawn.keys.join(" "));
+  check("search: each step is indented further than the one it is inside",
+        drawn.inset[0] === 0 && drawn.inset[1] > 0 && drawn.inset[2] > drawn.inset[1] && drawn.inset[3] > drawn.inset[2],
+        drawn.inset.join(" "));
+  check("search: the indent is capped, so a deeper chain stops walking right",
+        drawn.inset[4] === drawn.inset[3], drawn.inset.join(" "));
+  check("search: the containers are marked as context, the match is not",
+        JSON.stringify(drawn.context) === JSON.stringify([true, true, true, true, false]), JSON.stringify(drawn.context));
+  check("search: nothing says 'in B-xxxx' any more", drawn.at === 0, String(drawn.at));
+  check("search: a row inside something shows no packing status, a top-level one does",
+        drawn.status[0] !== "" && drawn.status.slice(1).every((s) => s === ""), JSON.stringify(drawn.status));
+  check("search: the rule under a row is the link's, so it steps in with the indent",
+        drawn.onList === "0px" && drawn.onLink !== "0px", `${drawn.onList} / ${drawn.onLink}`);
+  check("search: at 320px nothing is pushed off the right-hand edge",
+        drawn.overflow <= 0 && drawn.right <= 320, `overflow ${drawn.overflow}, right edge ${drawn.right}`);
+  await send("Emulation.clearDeviceMetricsOverride");
+
   check("nothing threw in the page", thrown.length === 0, thrown.join(" | "));
 } catch (error) { check(`harness: ${error.message}`, false); }
 

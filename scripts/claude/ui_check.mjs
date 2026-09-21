@@ -450,13 +450,37 @@ const IN_NESTED = async () => {
     check("but can still be put inside something", Boolean($("#container-code")));
   }
 
-  const found = await fetch("/api/search?q=samovar").then((r) => r.json());
-  const nested = found.find((b) => b.parent_code);
-  if (nested) {
-    await open("#/search/samovar", "#boxlist");
-    const at = $(`#boxlist li[data-key="${nested.code}"] .at`);
-    check("a nested search result says where it is, with a link to the container",
-          at && !at.hidden && at.querySelector("a")?.getAttribute("href") === `#/b/${nested.parent_code}`, at?.textContent);
+  // "in search results, put the parent box first. indent subitems. then we
+  // don't need in B-xxxx." Searched for by code, so this runs against
+  // whatever nesting the server actually has.
+  const inner = full.children[0];
+  if (inner) {
+    const query = encodeURIComponent(inner.code);
+    const found = await fetch(`/api/search?q=${query}`).then((r) => r.json());
+    const context = found.find((b) => b.code === holder.code && b.matched === false);
+    check("search brings back the container a match is inside",
+          Boolean(context), found.map((b) => `${b.code}:${b.matched}`).join(" "));
+    await open(`#/search/${query}`, "#boxlist");
+    const keys = Array.from(document.querySelectorAll("#boxlist li")).map((li) => li.dataset.key);
+    const inset = (code) => {
+      const link = $(`#boxlist li[data-key="${code}"] > a`);
+      return link ? parseFloat(getComputedStyle(link).paddingLeft) : -1;
+    };
+    check("the container is drawn above what was found inside it",
+          keys.includes(holder.code) && keys.indexOf(holder.code) < keys.indexOf(inner.code), keys.join(" "));
+    check("and what was found inside it is indented under it",
+          inset(inner.code) > inset(holder.code), `${inset(holder.code)} -> ${inset(inner.code)}`);
+    if (context) {
+      check("a container that did not itself match is marked as context",
+            $(`#boxlist li[data-key="${holder.code}"]`)?.hasAttribute("data-context"));
+    }
+    check("no row says 'in B-xxxx' any more", !$("#boxlist .at"));
+    check("a row inside something shows no packing status",
+          $(`#boxlist li[data-key="${inner.code}"] .st`)?.textContent === "",
+          $(`#boxlist li[data-key="${inner.code}"] .w`)?.innerText);
+    check("while a top-level row still has one",
+          $(`#boxlist li[data-key="${holder.code}"] .st`)?.textContent !== "",
+          $(`#boxlist li[data-key="${holder.code}"] .w`)?.innerText);
   }
   return results;
 };

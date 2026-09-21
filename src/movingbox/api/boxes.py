@@ -334,4 +334,11 @@ def search_boxes(
     limit: int = Query(default=50, le=500),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
-    return store.list_boxes(conn, q=q, limit=limit)
+    """Matching records, and the containers they are inside.
+
+    A context row (`matched: false`) is not a result -- it is where a result
+    lives, so the page can put the container first and indent what is inside
+    it. `ancestry` carries the whole chain, outermost first. See
+    `store.search_with_containers`.
+    """
+    return store.search_with_containers(conn, q, limit=limit)

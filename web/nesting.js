@@ -104,6 +104,50 @@ export function addedInside(made, photoError) {
   };
 }
 
+// --- search results, read as a tree ------------------------------------------------
+//
+// "in search results, put the parent box first. indent subitems. then we don't
+// need in B-xxxx." The position says what that line used to say -- and says it
+// better, since the line named one level however deep the thing really was.
+//
+// Search is the one view that looks inside containers (browsing shows the top
+// level only), so this arranges the view whose whole job is finding a thing
+// wherever it is: it must not hide a match, drop one, or show one twice when
+// both a record and its container matched.
+//
+// The server sends the matches *and* the containers they are in, each row
+// carrying `matched` and its `ancestry` (codes, outermost first). Arranging
+// them is the page's job, so how much chain to show and how deep to indent can
+// change without touching the API.
+export function groupMatches(rows) {
+  const all = rows || [];
+  const byCode = new Map(all.map((row) => [row.code, row]));
+  // Only ancestors actually in the results count. Depth is the number of steps
+  // *shown*, so a container missing from the set cannot indent a row off the
+  // right-hand edge of a phone.
+  const chainOf = (row) => (row.ancestry || []).filter((code) => byCode.has(code));
+
+  const out = [];
+  const placed = new Set();
+  const place = (row) => {
+    // Marked before its containers are walked, so a cycle in the data -- which
+    // the store forbids, but this cannot assume -- stops rather than hangs.
+    if (!row || placed.has(row.code)) return;
+    placed.add(row.code);
+    for (const code of chainOf(row)) place(byCode.get(code));
+    // `context` is the row's own flag, never how it came to be placed: a
+    // container that matched *and* holds a match is a match, shown once.
+    // Explicitly `=== false`, so a list that flags nothing at all --
+    // browsing, or a container's contents -- is all matches, and one
+    // path can draw every list there is.
+    out.push({ row, depth: chainOf(row).length, context: row.matched === false });
+  };
+  // In the order search returned them, so the best match still leads -- and a
+  // group takes the place of the first match inside it.
+  for (const row of all) place(row);
+  return out;
+}
+
 // --- the viewfinder in the add dialog ----------------------------------------------
 //
 // "can we use javascript to have a live camera immediately during adding a

@@ -7,7 +7,7 @@ import { test } from "node:test";
 
 import {
   addedInside, addInsideRequest, blockedDelete, cameraTrouble, describe, editorSections, frameSize,
-  inheritedRoom, kindsToAddInside, mayHold, notYetFragile, trail,
+  groupMatches, inheritedRoom, kindsToAddInside, mayHold, notYetFragile, trail,
 } from "../web/nesting.js";
 
 // --- naming a container ----------------------------------------------------------
@@ -346,4 +346,89 @@ test("a frame with no size yet is not a frame", () => {
   for (const bad of [[0, 0], [640, 0], [Number.NaN, 480]]) {
     assert.equal(frameSize(...bad), null);
   }
+});
+
+// --- search results read as a tree -------------------------------------------------
+//
+// "in search results, put the parent box first. indent subitems. then we don't
+// need in B-xxxx." The position says what the line used to say. Search is the
+// one view that looks inside containers, so the rule that arranges it must not
+// hide a match, drop one, or show one twice.
+
+const hit = (code, ancestry = []) => ({ code, ancestry, matched: true });
+const around = (code, ancestry = []) => ({ code, ancestry, matched: false });
+const shown = (rows) => groupMatches(rows).map((r) => `${" ".repeat(r.depth)}${r.row.code}${r.context ? "*" : ""}`);
+
+test("matches that are inside nothing are a flat list, in the order they came", () => {
+  // Relevance order, which is what search sorted them into.
+  assert.deepEqual(shown([hit("B-0003"), hit("B-0001"), hit("B-0002")]),
+                   ["B-0003", "B-0001", "B-0002"]);
+});
+
+test("the container comes first and what matched inside it is indented under it", () => {
+  const rows = [hit("B-0002", ["B-0001"]), hit("B-0003", ["B-0001"]), around("B-0001")];
+
+  // The crate is context -- it did not match -- and both bags sit under it.
+  assert.deepEqual(shown(rows), ["B-0001*", " B-0002", " B-0003"]);
+});
+
+test("a whole chain is walked, each step one deeper", () => {
+  const rows = [hit("B-0004", ["B-0001", "B-0002", "B-0003"]),
+                around("B-0001"), around("B-0002", ["B-0001"]),
+                around("B-0003", ["B-0001", "B-0002"])];
+
+  assert.deepEqual(shown(rows), ["B-0001*", " B-0002*", "  B-0003*", "   B-0004"]);
+});
+
+test("a container that matched as well appears once, as a match and not as context", () => {
+  // The case that would show a record twice: it is both a result and the
+  // place another result lives.
+  const rows = [hit("B-0001"), hit("B-0002", ["B-0001"])];
+
+  assert.deepEqual(shown(rows), ["B-0001", " B-0002"]);
+});
+
+test("nothing is dropped: every row comes out exactly once", () => {
+  const rows = [hit("B-0004", ["B-0001", "B-0002"]), hit("B-0001"), around("B-0002", ["B-0001"]),
+                hit("B-0009"), hit("B-0005", ["B-0001"])];
+
+  const out = groupMatches(rows);
+
+  assert.equal(out.length, rows.length);
+  assert.deepEqual(out.map((r) => r.row.code).sort(), rows.map((r) => r.code).sort());
+});
+
+test("groups keep the order of the best match inside them", () => {
+  // B-0009 matched before anything in the crate did, so it stays above it.
+  const rows = [hit("B-0009"), hit("B-0003", ["B-0001"]), around("B-0001")];
+
+  assert.deepEqual(shown(rows), ["B-0009", "B-0001*", " B-0003"]);
+});
+
+test("an ancestor that is not in the results does not leave a gap", () => {
+  // Defensive: depth counts the steps actually shown, so a missing one cannot
+  // push a row off the right of a phone.
+  assert.deepEqual(shown([hit("B-0004", ["B-0404", "B-0002"]), around("B-0002")]),
+                   ["B-0002*", " B-0004"]);
+});
+
+test("nothing found is nothing shown", () => {
+  assert.deepEqual(groupMatches([]), []);
+  assert.deepEqual(groupMatches(null), []);
+});
+
+test("a list that flags nothing is all matches, flat", () => {
+  // Browsing and a container's contents carry no `matched` at all, so one
+  // path can draw every list there is.
+  assert.deepEqual(shown([{ code: "B-0001" }, { code: "B-0002" }]), ["B-0001", "B-0002"]);
+});
+
+test("a row is handed back whole, so the list draws it as it draws any row", () => {
+  const row = { code: "B-0002", ancestry: ["B-0001"], matched: true, kind: "bag", content_summary: "cutlery" };
+
+  const [, under] = groupMatches([row, around("B-0001")]);
+
+  assert.equal(under.row, row);
+  assert.equal(under.depth, 1);
+  assert.equal(under.context, false);
 });

@@ -17,7 +17,7 @@ import {
 } from "/live.js";
 import {
   addedInside, addInsideRequest, blockedDelete, cameraTrouble, describe, editorSections, frameSize,
-  inheritedRoom, kindsToAddInside, mayHold, notYetFragile, trail,
+  groupMatches, inheritedRoom, kindsToAddInside, mayHold, notYetFragile, trail,
 } from "/nesting.js";
 import { choose, chosen, restrict, segmented } from "/segmented.js";
 import { splitItems } from "/text.js";
@@ -1951,14 +1951,17 @@ function rowFor(box) {
     link.lastElementChild.append(line);
   }
   row.append(link);
-  // Where a nested record is, for a search result. Its own link, after the
-  // row's: a link cannot sit inside a link.
-  const at = document.createElement("span");
-  at.className = "at";
-  at.hidden = true;
-  at.append("in ", document.createElement("a"));
-  row.append(at);
   return row;
+}
+
+// Where the row sits in a group of search results: `depth` steps in from the
+// left, `data-context` says it is here to say where a match is rather than
+// because it matched. The number is honest however deep it goes; the
+// stylesheet is what stops the indent walking off a narrow screen.
+function placeRow(row, { depth = 0, context = false } = {}) {
+  if (depth) row.style.setProperty("--depth", depth);
+  else row.style.removeProperty("--depth");
+  row.toggleAttribute("data-context", context);
 }
 
 function fillRow(row, box) {
@@ -1971,12 +1974,6 @@ function fillRow(row, box) {
   setText(where.querySelector(".in"), said.inside);
   setIcon(row.querySelector("span.t .tk"), kindIcon(box));
   setThumb(row.querySelector("span.t img"), coverUrl(box));
-  const at = row.querySelector(".at");
-  const parent = box.parent_code || "";
-  at.hidden = !parent;
-  const link = at.querySelector("a");
-  setText(link, parent);
-  link.setAttribute("href", `#/b/${encodeURIComponent(parent)}`);
 }
 
 // Removing the attribute rather than setting src="" -- an empty src makes the
@@ -1996,8 +1993,20 @@ function setText(node, value) {
   if (node && node.textContent !== value) node.textContent = value;
 }
 
+// Search results arrive with the containers they are inside (`matched` false
+// on those), so the list is drawn as groups: the container first, then what
+// was found in it, indented. Every other list -- browsing, a container's
+// contents -- flags nothing, and groupMatches hands it back flat, so there is
+// one path and the rows cannot be built two ways.
 const patchBoxList = (list, boxes) =>
-  reconcile(list, boxes, { key: (box) => box.code, create: rowFor, update: fillRow });
+  reconcile(list, groupMatches(boxes), {
+    key: (found) => found.row.code,
+    create: (found) => rowFor(found.row),
+    update: (node, found) => {
+      fillRow(node, found.row);
+      placeRow(node, found);
+    },
+  });
 
 // Which page the browser thinks it is on. A background refresh has to prove
 // it is still the right one before it paints: tapping a row starts a
@@ -2022,21 +2031,12 @@ async function refreshBoxes(query, at) {
 async function viewBoxes(query) {
   const boxes = await api(boxesPath(query));
 
-  // Must match rowFor/fillRow above element for element: a live refresh
-  // patches these same rows in place rather than rebuilding them.
+  // The rows themselves are built by rowFor/fillRow, below, rather than
+  // written out again here: this was a template that had to match them
+  // element for element, and a list drawn two ways is a list that ends up
+  // disagreeing with itself.
   const list = boxes.length
-    ? `<ul class="boxlist" id="boxlist">${boxes.map((b) => `
-        <li data-key="${escape(b.code)}"><a href="#/b/${escape(b.code)}">
-          <span class="t">${iconMarkup(kindIcon(b), "i tk")}${coverUrl(b)
-            ? `<img src="${escape(coverUrl(b))}" alt="" loading="lazy">`
-            : '<img alt="" loading="lazy" hidden>'}</span>
-          <span class="c">${escape(b.code)}</span>
-          <span class="s">${escape(b.content_summary || "Nothing written down yet")}</span>
-          <span class="w"><span class="k">${escape(rowStatus(b).kind)}</span><span
-            class="st">${escape(rowStatus(b).status)}</span><span
-            class="in">${escape(rowStatus(b).inside)}</span></span>
-        </a><span class="at"${b.parent_code ? "" : " hidden"}>in <a
-          href="#/b/${escape(b.parent_code || "")}">${escape(b.parent_code || "")}</a></span></li>`).join("")}</ul>`
+    ? `<ul class="boxlist" id="boxlist"></ul>`
     : query
       ? `<div class="empty"><p>Nothing matches “${escape(query)}”.</p></div>`
       : `<div class="empty">
@@ -2054,6 +2054,8 @@ async function viewBoxes(query) {
       <h2 id="list-heading">${escape(listHeading(boxes, query))}</h2>
       ${list}
     </div>`);
+
+  if (boxes.length) patchBoxList(document.getElementById("boxlist"), boxes);
 
   document.getElementById("search").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -2439,10 +2441,10 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
   function drawChildren() {
     const list = document.getElementById("inside");
     if (!list) return;   // a single thing: nothing goes inside it
-    // The rows say where they are only on a search result; here, where they
-    // are is the page they are on.
-    const rows = children.map((child) => ({ ...child, parent_code: null }));
-    reconcile(list, rows, { key: (child) => child.code, create: rowFor, update: fillRow });
+    // Drawn by the list's own rows, parent_code and all: being inside
+    // something is what takes the packing status off them (rowStatus), and
+    // these are as inside as a row gets.
+    patchBoxList(list, children);
     document.getElementById("inside-empty").hidden = children.length > 0;
     // A container holding things cannot become a single thing, and cannot be
     // deleted: the server refuses both, so neither is offered.

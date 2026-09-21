@@ -286,6 +286,49 @@ test("nothing inside means no line, not '0 inside'", async () => {
                    { kind: "large tub", status: "packed", inside: "2 inside" });
 });
 
+// --- a nested record's packing status is its container's -----------------------------
+//
+// "if its a subitem of a box, don't show the packing status, since we can
+// assume they're closed." A bag inside a sealed crate has no packing state
+// worth reading: it goes where the crate goes and is as closed as the crate
+// is, so the cell was repeating the container's state, badly.
+
+test("something inside a container does not carry a packing status", async () => {
+  const { rowStatus } = await import("../web/covers.js");
+
+  const said = rowStatus({ kind: "bag", status: "open", parent_code: "B-0001" });
+
+  assert.equal(said.status, "");
+  assert.equal(said.kind, "bag");
+});
+
+test("a top-level record still says how far along it is", async () => {
+  const { rowStatus } = await import("../web/covers.js");
+
+  for (const loose of [null, undefined, ""]) {
+    assert.equal(rowStatus({ kind: "box", status: "packed", parent_code: loose }).status, "packed");
+  }
+});
+
+test("the rule is the same function on both draw paths, in and back out again", async () => {
+  // The bug this guards happened here once: the first draw showed one thing
+  // and the live update overwrote it with another. A row put into a container
+  // and taken out again must read the same way each time, whichever path drew.
+  const { rowStatus } = await import("../web/covers.js");
+  const bag = { kind: "bag", status: "packed", child_count: 2 };
+
+  const loose = rowStatus({ ...bag, parent_code: null });
+  const inside = rowStatus({ ...bag, parent_code: "B-0001" });
+  const outAgain = rowStatus({ ...bag, parent_code: null });
+
+  assert.equal(loose.status, "packed");
+  assert.equal(inside.status, "");
+  assert.deepEqual(outAgain, loose);
+  // What it is, and what is in it, are the same either way.
+  assert.equal(inside.kind, "bag");
+  assert.equal(inside.inside, "2 inside");
+});
+
 test("where it is right now is not what this cell is for", async () => {
   // The cell used to show the location when there was one, which hid the
   // status. The location lives on the record page.
