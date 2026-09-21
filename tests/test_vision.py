@@ -5,9 +5,12 @@ canned responses. They never call a model: the point is that our parsing is
 correct and defensive, not that qwen3-vl is any good.
 """
 
+import base64
+import io
 import json
 
 import pytest
+from PIL import Image
 
 from movingbox.vision import base, ollama
 
@@ -151,3 +154,48 @@ class TestOllamaErrors:
 
         assert "http://localhost:11434" in message
         assert "running" in message.lower()
+
+
+def a_jpeg(size) -> bytes:
+    buffer = io.BytesIO()
+    Image.new("RGB", size, (120, 90, 60)).save(buffer, format="JPEG")
+    return buffer.getvalue()
+
+
+class TestWhatTheLocalModelIsSent:
+    # Photos are kept larger than the local model was tuned for; 2048 on the
+    # long edge is where it reads small text without running out of context.
+    def test_a_photo_kept_larger_is_shrunk_to_the_local_model_s_size(self):
+        sent = ollama.for_local(a_jpeg((2048, 2731)))
+
+        assert Image.open(io.BytesIO(sent)).size == (1536, 2048)
+
+    def test_a_photo_that_already_fits_is_sent_as_it_is(self):
+        original = a_jpeg((1536, 2048))
+
+        assert ollama.for_local(original) is original
+
+    def test_a_photo_that_cannot_be_read_is_refused_not_passed_on(self):
+        with pytest.raises(base.DraftUnreadable):
+            ollama.for_local(b"not an image")
+
+    def test_the_request_carries_the_shrunk_photo(self, monkeypatch):
+        sent = {}
+
+        class Reply:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"message": {"content": json.dumps(a_reply())}}
+
+        def post(url, json, timeout):
+            sent.update(json)
+            return Reply()
+
+        monkeypatch.setattr(ollama.httpx, "post", post)
+
+        ollama.OllamaProvider("http://ollama").draft([a_jpeg((2048, 2731))], model="m")
+
+        image = base64.b64decode(user_message(sent)["images"][0])
+        assert Image.open(io.BytesIO(image)).size == (1536, 2048)
