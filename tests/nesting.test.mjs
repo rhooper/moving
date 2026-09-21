@@ -248,6 +248,30 @@ test("the summary is named for what the record is", () => {
   assert.equal(named(lampShape), "What it is");
 });
 
+// --- the photos in the sub-item editor ------------------------------------------
+//
+// "for the popup contents view, show image thumbs and show the full view on
+// demand." Unlike the other sections this one is not an input, so there is
+// nothing to fold *open* to: a record with no photos has no photo section at
+// all, the way a lamp has no size.
+
+test("a record with photos shows them, last, and open", () => {
+  const seen = editorSections(bare, [], bagShape, [{ id: 1 }, { id: 2 }]);
+  assert.deepEqual(seen.at(-1), { key: "photos", legend: "Photos", open: true });
+});
+
+test("a record with no photos has no photo section at all", () => {
+  for (const none of [[], null, undefined]) {
+    assert.ok(!editorSections(bare, [], bagShape, none).some((s) => s.key === "photos"));
+  }
+});
+
+test("photos are not about holding contents: a single thing has them too", () => {
+  const lamp = { ...bare, kind: "item" };
+  const keys = editorSections(lamp, [], lampShape, [{ id: 1 }]).map((s) => s.key);
+  assert.deepEqual(keys, ["summary", "kind", "source", "handling", "photos"]);
+});
+
 test("a record the server has not described yet is still all there", () => {
   // Every field missing rather than empty: nothing throws, nothing opens.
   assert.deepEqual(openOf({ code: "B-0009", kind: "bag" }, undefined, bagShape), ["kind"]);
