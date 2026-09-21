@@ -125,10 +125,14 @@ class TestWhatIsSent:
         assert sent["thinking"] == {"type": "disabled"}
         assert "effort" not in sent["output_config"]
 
-    def test_the_closer_look_thinks(self):
+    def test_the_closer_look_does_not_think_either(self):
+        # It did, adaptively, until it was measured: three photos read both
+        # ways through the app found the same items (4/4, 2/2, 7/7) for the
+        # same money, and thinking off was the faster of the two. What the
+        # closer look still gets is the bigger model and a spend of `effort`.
         sent = claude.build_request("claude-opus-5", [a_jpeg()], detail=True)
 
-        assert sent["thinking"] == {"type": "adaptive"}
+        assert sent["thinking"] == {"type": "disabled"}
         assert sent["output_config"]["effort"] == claude.DETAIL_EFFORT
 
     def test_the_detail_model_gets_the_careful_request(self):
@@ -136,7 +140,7 @@ class TestWhatIsSent:
 
         model.draft([a_jpeg()], model="claude-opus-5")
 
-        assert client.messages.sent[0]["thinking"] == {"type": "adaptive"}
+        assert client.messages.sent[0]["thinking"] == {"type": "disabled"}
 
 
 # --- the reply ------------------------------------------------------------

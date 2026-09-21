@@ -226,14 +226,23 @@ Details that are decisions, not gaps:
   prose. `read_response` still goes through `base.parse`, for the half that
   matters: a reply with no usable draft raises instead of reading as "the model
   saw an empty box".
-- **No thinking on the quick tier** (`thinking: {"type": "disabled"}`). Naming
-  what is in a photograph is perception, and thinking would add seconds and
-  output tokens to every one of a thousand photos. The closer look keeps it,
-  adaptive at `effort: "medium"` -- explicitly disabling thinking on that model
-  tier is documented to leak stray tags into the reply, and `high` (the
-  default) spends more than reading a photograph is worth. **Whether adaptive
-  thinking actually reads better there is untested**: the key has never
-  authenticated, so no closer look has run in the cloud.
+- **Neither tier thinks** (`thinking: {"type": "disabled"}`). Naming what is in
+  a photograph is perception, not reasoning. The closer look was left
+  *adaptive* at first, against a documented risk that disabling thinking on
+  that model tier leaks stray tags into a reply being parsed as JSON -- and
+  then it was measured (2026-09-21), three photos of loose electronics read
+  both ways through the app, on a copy of the database:
+
+  | | items found | output tokens | cost | time |
+  |---|---|---|---|---|
+  | adaptive | 4 / 2 / 7 | 619 | $0.0595 | 16.9 s |
+  | disabled | 4 / 2 / 7 | 648 | $0.0602 | **14.4 s** |
+
+  Identical readings, the same money, and *faster* without it; no stray tags
+  in any of the three. Adaptive thinking was barely engaging, so it was buying
+  latency and nothing else. `effort: "medium"` stays -- it is a separate knob
+  and only thinking was measured. Three photos is a small sample, and the
+  honest claim is "no benefit visible", not "proven identical".
 - **Photos are shrunk to 1568 px on the long edge before sending**, because the
   API resizes anything larger anyway -- so the reading is unchanged and both
   the upload and the token count become predictable. What is *stored* stays at

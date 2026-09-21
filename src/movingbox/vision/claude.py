@@ -53,10 +53,9 @@ TOKENS_PER_PIXEL = 750
 MAX_TOKENS = 2048
 DETAIL_MAX_TOKENS = 8192
 
-#: How hard the closer look tries. Thinking is left adaptive rather than
-#: disabled -- on this model tier, explicitly disabling it is documented to
-#: leak stray tags into the visible reply -- but `high` (the default) spends
-#: more than reading a photograph is worth.
+#: How hard the closer look tries. `high` (the default) spends more than
+#: reading a photograph is worth. Untested against `low`; `effort` and
+#: `thinking` are separate knobs and only the latter has been measured.
 DETAIL_EFFORT = "medium"
 
 #: 60 s is generous for one photo and one screenful of JSON, and short enough
@@ -188,7 +187,16 @@ def build_request(model: str, images: list[bytes], *, detail: bool) -> dict[str,
         "model": model,
         "max_tokens": DETAIL_MAX_TOKENS if detail else MAX_TOKENS,
         "system": base.SYSTEM,
-        "thinking": {"type": "adaptive"} if detail else {"type": "disabled"},
+        # Neither tier thinks. Naming what is in a photograph is perception,
+        # not reasoning. The closer look was left adaptive at first, against a
+        # documented risk that disabling it on this tier leaks stray tags into
+        # a reply being parsed as JSON -- then measured (2026-09-21, three
+        # photos of loose electronics, each read both ways through the app):
+        # identical item counts 4/4, 2/2, 7/7; 619 vs 648 output tokens;
+        # $0.0595 vs $0.0602; and thinking *off* was faster, 14.4 s against
+        # 16.9 s. No stray tags in any of the three. Adaptive thinking was
+        # barely engaging, so it was buying latency and nothing else.
+        "thinking": {"type": "disabled"},
         "output_config": output_config,
         "messages": [{"role": "user", "content": blocks}],
     }
