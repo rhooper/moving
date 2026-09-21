@@ -74,6 +74,9 @@ run viewer_check   node scripts/claude/viewer_check.mjs "$B" "$VIEW" "$T/p.jpg" 
 run copies_check   node scripts/claude/copies_check.mjs "$B"
 run autosave_check node scripts/claude/autosave_check.mjs "$B"
 run nesting_check  node scripts/claude/nesting_check.mjs "$B"
+# Its own server, on a free port, restarted under new revisions: a deploy as
+# an open page sees one. It never touches the one above.
+run reload_check   node scripts/claude/reload_check.mjs
 
 TRACEBACKS=$(grep -a -c Traceback "$T/server.log")
 echo "server tracebacks: $TRACEBACKS"
