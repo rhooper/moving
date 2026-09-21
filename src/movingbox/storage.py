@@ -18,8 +18,11 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from . import renditions, search, store
 from .config import Config
 
-#: Long edge for the stored image. Ample for reading a label in a box.
-FULL_MAX = 2048
+#: The kept image: 2048 on the short edge, so a person can zoom into a drawer
+#: label, and never over 4096 on the long edge, so a panorama stays sane. Each
+#: model is sent its own smaller copy (vision/claude.py, vision/ollama.py).
+FULL_SHORT = 2048
+FULL_LONG = 4096
 #: Long edge for the list thumbnail.
 THUMB_MAX = renditions.THUMB_MAX
 JPEG_QUALITY = 82
@@ -39,6 +42,20 @@ def _prepare(data: bytes) -> Image.Image:
     # Applies the orientation tag and drops it.
     image = ImageOps.exif_transpose(image)
     return image.convert("RGB")
+
+
+def kept_size(width: int, height: int) -> tuple[int, int]:
+    """The size a photo is kept at. Never grown."""
+    scale = min(1.0, FULL_SHORT / min(width, height), FULL_LONG / max(width, height))
+    return max(1, round(width * scale)), max(1, round(height * scale))
+
+
+def _write_full(image: Image.Image, path: Path) -> tuple[int, int]:
+    size = kept_size(*image.size)
+    copy = image if size == image.size else image.resize(size, Image.LANCZOS)
+    # No exif= argument: a fresh JPEG carries no metadata from the original.
+    copy.save(path, format="JPEG", quality=JPEG_QUALITY, optimize=True)
+    return copy.size
 
 
 def _write(image: Image.Image, path: Path, longest: int) -> tuple[int, int]:
@@ -77,7 +94,7 @@ def save_photo(
     stem = f"{box['code']}-{digest[:12]}"
     full_name, thumb_name = f"{stem}.jpg", f"{stem}-thumb.jpg"
 
-    width, height = _write(image, config.photo_dir / full_name, FULL_MAX)
+    width, height = _write_full(image, config.photo_dir / full_name)
     _write(image, config.photo_dir / thumb_name, THUMB_MAX)
     # From the stored file, not `image`, so every path that makes a strip
     # makes the same bytes.

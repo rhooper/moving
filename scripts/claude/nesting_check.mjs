@@ -661,11 +661,16 @@ try {
   seen = await viewfinder();
   check("the shutter keeps a still and offers another go",
         seen.still && !seen.live && seen.retake && !seen.shutter, JSON.stringify(seen));
-  const keptEdge = Math.max(seen.stillWidth, seen.stillHeight);
+  // What the server keeps: 2048 on the short edge, within 4096 on the long.
+  const streamShort = Math.min(seen.frames, seen.framesHigh);
+  const scale = Math.min(1, 2048 / streamShort, 4096 / streamEdge);
+  const expected = [Math.round(seen.frames * scale), Math.round(seen.framesHigh * scale)];
   check("the frame kept is no bigger than the server would keep anyway",
-        keptEdge > 0 && keptEdge <= 2048, `${seen.stillWidth} x ${seen.stillHeight}`);
-  check("and no smaller than the stream allows: the full stream, down to 2048",
-        keptEdge === Math.min(2048, streamEdge), `kept ${keptEdge}, stream ${streamEdge}`);
+        Math.min(seen.stillWidth, seen.stillHeight) <= 2048 && Math.max(seen.stillWidth, seen.stillHeight) <= 4096,
+        `${seen.stillWidth} x ${seen.stillHeight}`);
+  check("and no smaller than the stream allows: the whole stream, to 2048 on the short edge",
+        seen.stillWidth === expected[0] && seen.stillHeight === expected[1],
+        `kept ${seen.stillWidth} x ${seen.stillHeight}, expected ${expected.join(" x ")} from ${seen.frames} x ${seen.framesHigh}`);
   check("and the line says what it is for", /read in the background/.test(seen.said), seen.said);
 
   await click("#adder-retake");

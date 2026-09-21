@@ -314,10 +314,14 @@ test("every one of them points at the way that still works", () => {
 //
 // The server keeps 2048 px at most, so there is no point uploading more.
 
-test("a big frame comes down to what the server would keep", () => {
-  assert.deepEqual(frameSize(4032, 3024), { width: 2048, height: 1536 });
-  // Held upright, the long edge is the height.
-  assert.deepEqual(frameSize(3024, 4032), { width: 1536, height: 2048 });
+test("a big frame comes down to what the server keeps: 2048 on the short edge", () => {
+  assert.deepEqual(frameSize(4032, 3024), { width: 2731, height: 2048 });
+  // Held upright, the short edge is the width.
+  assert.deepEqual(frameSize(3024, 4032), { width: 2048, height: 2731 });
+});
+
+test("a very wide frame is held to 4096 on its long edge", () => {
+  assert.deepEqual(frameSize(8000, 1000), { width: 4096, height: 512 });
 });
 
 test("a small frame is left alone rather than blown up", () => {
@@ -327,10 +331,10 @@ test("a small frame is left alone rather than blown up", () => {
 });
 
 test("the shape is kept, to whole pixels", () => {
-  const { width, height } = frameSize(3000, 2001);
-  assert.equal(width, 2048);
-  assert.equal(height, Math.round(2001 * (2048 / 3000)));
-  assert.ok(Number.isInteger(height));
+  const { width, height } = frameSize(3500, 2333);
+  assert.equal(height, 2048);
+  assert.equal(width, Math.round(3500 * (2048 / 2333)));
+  assert.ok(Number.isInteger(width));
 });
 
 test("a frame with no size yet is not a frame", () => {

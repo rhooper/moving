@@ -202,9 +202,11 @@ purpose headers, the browser checks (`*_check.mjs`), `hooks/`, `lib/launchd.sh`.
   thumbnail, renames strips into place, and is idempotent; missing strips are
   also made on request. `--prune` is off by default: an old service may still
   advertise old strips.
-- Photos are normalised on upload: 2048 px, EXIF orientation baked in, all
-  other metadata stripped (GPS; the database gets exported), deduplicated by
-  sha256 so retries are harmless.
+- Photos are normalised on upload: **2048 px on the short edge, within 4096 on
+  the long** (`storage.kept_size`, and `frameSize` in the live camera, which
+  must agree), EXIF orientation baked in, all other metadata stripped (GPS; the
+  database gets exported), deduplicated by sha256 so retries are harmless. Kept
+  larger than any model reads, so a person can zoom into a drawer label.
 - Measuring traps: under `srcset`, `naturalWidth` is density-corrected (decode
   `currentSrc` instead); a CDP screenshot `clip` is in document coordinates.
 
@@ -382,14 +384,21 @@ Each is a choice; changing one is a decision, not the fixing of a gap.
   unreachable or over budget all fall back in `vision/hybrid.py`, because on
   moving day the Mac rides in a van without internet. **No key is supported.**
 - Why the cloud: the local 4b averaged 19.6 s a photo (92 s worst, 5 of 47
-  errored); Sonnet, 4.3 s at $0.0082 ($2.50-8 for the move); a closer look ~$0.02.
+  errored); Sonnet, 4.3 s at $0.0082 when photos were sent at 1568 -- now
+  ~$0.013 for a new photo sent at 1658x2212 ($4-13 for the move).
 - **Neither tier thinks** (`thinking: disabled`): measured on the closer look,
   the same readings and cost, and faster. The closer look's `effort: "medium"` is unmeasured.
 - **The API is asked for the shape** (`output_config.format`); **`base.parse`
   is forgiving of the reply and strict about the outcome** -- no usable JSON
   raises `DraftUnreadable`, never an empty draft that reads as an empty box.
-- **Photos go to the API at 1568 px** (its own limit) **and are stored at
-  2048**: at 1024 the models stop reading small text and start inventing.
+- **Each model is sent its own copy, sized for it.** The cloud tier fits the
+  API's *high-resolution* tier (Claude 4.7 and later): at most 2576 px on the
+  long edge and 4,784 visual tokens, one token per 28x28 patch
+  (`claude.fitted`, checked against the API docs' own table). The old 1568 px
+  cap is the *standard* tier's, and cost the model half its pixels. The local
+  model gets 2048 on the long edge (`ollama.for_local`), where it was measured
+  reading small text within its 8192-token context; it is never sent the
+  larger kept file. At 1024 the models stop reading small text and invent.
 - **`base.Reading` says who answered and at what cost** ("Read by X" in the
   viewer); a paid call that could not be read is still charged to the job.
 - **The cap is config, not a Settings field** (`MOVING_VISION_BUDGET_USD`,

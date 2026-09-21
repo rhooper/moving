@@ -43,15 +43,30 @@ def test_a_thumbnail_is_written_alongside(config, conn_with_box):
         assert max(image.size) <= storage.THUMB_MAX
 
 
-def test_a_large_photo_is_downscaled_for_storage(config, conn_with_box):
-    # Phone cameras produce 4000 px images; these are inventory snapshots.
+def test_a_phone_photo_is_kept_at_2048_on_its_short_edge(config, conn_with_box):
+    # Kept larger than any model reads, so a person can zoom into a drawer
+    # label; each model is sent its own smaller copy.
     conn, code = conn_with_box
 
     photo = storage.save_photo(conn, config, code, a_jpeg((4032, 3024)), filename="big.jpg")
 
     with Image.open(config.photo_dir / photo["filename"]) as image:
-        assert max(image.size) <= storage.FULL_MAX
-    assert photo["width"] <= storage.FULL_MAX
+        assert image.size == (2731, 2048)
+    assert (photo["width"], photo["height"]) == (2731, 2048)
+
+
+@pytest.mark.parametrize(
+    "size, kept",
+    [
+        ((4032, 3024), (2731, 2048)),
+        ((3024, 4032), (2048, 2731)),
+        ((1600, 1200), (1600, 1200)),
+        ((8000, 1000), (4096, 512)),
+    ],
+)
+def test_the_kept_size_is_2048_on_the_short_edge_within_4096(size, kept):
+    # The last case is a panorama: its long edge is what stops it.
+    assert storage.kept_size(*size) == kept
 
 
 def test_the_same_photo_uploaded_twice_is_stored_once(config, conn_with_box):

@@ -149,13 +149,13 @@ export function streamQuality(width, height) {
   return { edge, enough: edge >= ENOUGH_EDGE, size: `${w} × ${h}` };
 }
 
-// Down to `limit` on the long edge (the server keeps no more) and never up;
-// null before the video has dimensions.
-export function frameSize(width, height, limit = 2048) {
+// What the server keeps (storage.kept_size): 2048 on the short edge, never
+// over 4096 on the long; never up. null before the video has dimensions.
+export function frameSize(width, height) {
   const w = Number(width);
   const h = Number(height);
   if (!(w > 0) || !(h > 0)) return null;
-  const scale = Math.min(1, limit / Math.max(w, h));
+  const scale = Math.min(1, 2048 / Math.min(w, h), 4096 / Math.max(w, h));
   return { width: Math.round(w * scale), height: Math.round(h * scale) };
 }
 
