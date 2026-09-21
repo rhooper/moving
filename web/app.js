@@ -19,6 +19,9 @@ import {
   addedInside, addInsideRequest, blockedDelete, cameraTrouble, describe, editorSections, frameSize,
   groupMatches, inheritedRoom, kindsToAddInside, mayHold, notYetFragile, trail,
 } from "/nesting.js";
+import {
+  CHECK_MS, liveRevision, nextStep, readTried, rememberTried, reloadBlocked, runningRevision,
+} from "/reload.js";
 import { choose, chosen, restrict, segmented } from "/segmented.js";
 import { splitItems } from "/text.js";
 import { KeyBuffer, entered } from "/wedge.js";
@@ -43,7 +46,26 @@ const keyStore = {
   },
 };
 
+// The person's own writes still out -- an upload, a print, a new record. A
+// reload would abort one and lose its answer, so it waits them out
+// (reload.js, `busy`). Not the autosaver's: those are keepalive, so they
+// survive the page going, and a reload waits for them through idle() instead.
+let writing = 0;
+
 async function request(url, options = {}) {
+  const counted = (options.method || "GET") !== "GET" && !options.keepalive;
+  if (!counted) return send(url, options);
+  writing += 1;
+  try {
+    return await send(url, options);
+  } finally {
+    writing -= 1;
+    // A reload that was asked for and waited on this may go now.
+    if (!writing) reloadIfAsked();
+  }
+}
+
+async function send(url, options) {
   const headers = { ...options.headers };
   // Only declare JSON for a string body. Setting it for FormData would
   // override the multipart content-type and strip the boundary the browser
@@ -59,7 +81,7 @@ async function request(url, options = {}) {
     const entered = prompt("This server needs an access key.");
     if (entered) {
       keyStore.set(entered);
-      return request(url, options);
+      return send(url, options);
     }
     throw new Error("An access key is required to use this server.");
   }
@@ -450,6 +472,7 @@ function editSession(code) {
       session.page?.heard(key, state);
       // Nothing left owing, and nothing on screen: let the session go.
       retire(session);
+      if (state === "saved") reloadIfAsked();
     },
     // Retry a server that could not be reached; do not pester one that
     // understood the request and refused it.
@@ -3060,7 +3083,7 @@ function watch(next) {
   view = { ...next, clientId, at: here() };
   // Whatever was just drawn is current by definition.
   pending = false;
-  notice.hidden = true;
+  showNotice();
   forgetParts();
 }
 
@@ -3088,7 +3111,7 @@ function requestRefresh() {
   if (document.hidden) { pending = true; return; }
   if (holdRefresh(holdState())) {
     pending = true;
-    notice.hidden = false;
+    showNotice();
     scheduleFlush();
     return;
   }
@@ -3098,7 +3121,7 @@ function requestRefresh() {
 async function runRefresh() {
   if (!view || !view.refresh) return;
   pending = false;
-  notice.hidden = true;
+  showNotice();
   const target = view;
   try {
     await target.refresh(target.at);
@@ -3177,7 +3200,160 @@ function flush() {
 }
 
 const notice = document.getElementById("live");
-notice.addEventListener("click", () => runRefresh());
+// One banner, two reasons. A newer app wins: a reload brings everything up to
+// date, so a refresh held behind it has nothing left to say.
+notice.addEventListener("click", () => (updateTo ? reloadWhenSafe("asked") : runRefresh()));
+
+function showNotice() {
+  if (updateTo) {
+    // Says what is happening. "Changed on another device" would be false.
+    notice.textContent = askedToReload
+      ? "App updated — reloading once everything is saved"
+      : "App updated — tap to reload";
+    notice.hidden = false;
+    return;
+  }
+  notice.textContent = "Changed on another device — tap to refresh";
+  notice.hidden = !pending;
+}
+
+// --- keeping up with deploys ------------------------------------------------
+//
+// "add auto-reloading when the version changes -- probably needs a periodic
+// check." Every deploy restarts the service; an open page keeps running the
+// old app.js until it is reloaded. What to decide is reload.js's, and tested
+// there. This is when the questions are asked, and what is done with the
+// answers.
+//
+// When: a deploy drops the socket, so its reconnect checks at once; so does
+// the page becoming visible again, which is a phone being picked up; and a
+// timer (reload.js CHECK_MS) catches what those miss -- only while visible.
+//
+// What: an idle page reloads itself. One in use does not: a reload is the most
+// violent refresh there is, so it waits for everything a refresh waits for,
+// plus an open dialog, a write still out, and every session's saves -- which
+// are committed and waited for, the same rule as leaving a record. Until then
+// the banner says the app was updated, and the reload happens at the next
+// safe moment: a tap on the banner, leaving the current view, or a later check
+// that finds the page idle. Not on becoming hidden: a hidden page can be
+// frozen before the saves it must wait for have landed, and the camera in the
+// add dialog (with a photo taken in it) would go with it; coming back is the
+// same moment from the person's side, and is checked.
+
+// The revision this page was served as. Null on a dev server, which serves
+// modules unversioned: then none of this runs, or it would reload forever.
+const running = runningRevision(import.meta.url);
+let updateTo = null;         // a newer revision the server is running, once seen
+let offerOnly = false;       // already reloaded towards it once: offer, never force
+let askedToReload = false;   // the banner was tapped and something had to land first
+let reloading = false;
+let checkTimer = null;
+
+// sessionStorage's accessor itself can throw (a private window, blocked site
+// data); reload.js reads an unusable one as "cannot remember".
+function tabStorage() {
+  try { return sessionStorage; } catch { return undefined; }
+}
+
+async function checkRevision() {
+  if (!running || document.hidden) return;
+  let live = null;
+  try {
+    // no-store, and the service worker lets /health through: an answer kept
+    // anywhere would be read back as "still the revision you are running".
+    const response = await fetch("/health", { cache: "no-store" });
+    if (response.ok) live = liveRevision(await response.json());
+  } catch { /* down, mid-deploy: cannot tell, which is not "changed" */ }
+  const step = nextStep({ running, live, tried: readTried(tabStorage()) });
+  if (step === "off" || step === "wait") return;
+  updateTo = step === "current" ? null : live;
+  offerOnly = step === "offer";
+  if (!updateTo) askedToReload = false;
+  if (step === "reload") reloadWhenSafe("idle");
+  else showNotice();
+}
+
+// What a reload would destroy right now, for reloadBlocked. `held` is the
+// live refresh's own hold, not a second opinion on it. `owed` is only asked
+// once the saves have been committed and waited for.
+function reloadState({ settled = false } = {}) {
+  return {
+    held: holdRefresh(holdState()),
+    dialog: Boolean(document.querySelector("dialog[open]")),
+    busy: writing > 0,
+    owed: settled && Array.from(sessions.values()).some((session) => session.auto.unsaved()),
+  };
+}
+
+// Resolves true once the reload has been started, false when it must wait
+// (and the banner then says so). `moment` is reload.js's: "idle", "asked" or
+// "leaving".
+async function reloadWhenSafe(moment) {
+  if (!updateTo || reloading) return false;
+  if (offerOnly && moment !== "asked") { showNotice(); return false; }
+  if (moment === "asked") askedToReload = true;
+  if (reloadBlocked(reloadState(), moment)) { showNotice(); return false; }
+  reloading = true;
+  // Never lose typing: send whatever is waiting, in every session -- a modal's
+  // too -- and wait for it to land. Reloading after only sending it is the
+  // commit-then-redraw mistake: the new page could fetch the record before the
+  // save arrived and show the old text as current.
+  everySession((session) => session.auto.commitAll());
+  await Promise.all(Array.from(sessions.values(), (session) => session.auto.idle()));
+  const blocked = reloadBlocked(reloadState({ settled: true }), moment)
+    // Remembered before it is made, so the page it lands on knows it tried.
+    // A tab that cannot remember does not reload by itself.
+    || (!rememberTried(tabStorage(), updateTo) && moment !== "asked");
+  if (blocked) {
+    reloading = false;
+    showNotice();
+    return false;
+  }
+  await freshWorker();
+  location.reload();
+  return true;
+}
+
+// A tapped banner whose reload was waiting on a save or a request goes ahead
+// by itself once that lands, rather than asking to be tapped again.
+function reloadIfAsked() {
+  if (askedToReload && !reloading) reloadWhenSafe("asked");
+}
+
+// A reload is answered by the service worker that controls the page, and
+// until the new one has taken over that is the old one, serving the old shell
+// from its cache -- the reload would land on the very code it was meant to
+// replace. So ask for the update and wait for the handover first; a few
+// seconds at most, and a failure of any of it just lets the reload go ahead.
+async function freshWorker() {
+  const workers = navigator.serviceWorker;
+  if (!workers?.controller) return;
+  try {
+    const registration = await workers.getRegistration();
+    if (!registration) return;
+    const handover = new Promise((resolve) => {
+      workers.addEventListener("controllerchange", resolve, { once: true });
+    });
+    await registration.update();
+    if (!registration.installing && !registration.waiting) return;
+    await Promise.race([handover, new Promise((resolve) => setTimeout(resolve, 5000))]);
+  } catch { /* no worker to update: nothing stands in the reload's way */ }
+}
+
+// The timer runs only while the page can be seen: a phone in a pocket does
+// not spend battery asking.
+function pollWhileVisible() {
+  clearInterval(checkTimer);
+  checkTimer = document.hidden ? null : setInterval(checkRevision, CHECK_MS);
+}
+
+if (running) {
+  pollWhileVisible();
+  document.addEventListener("visibilitychange", () => {
+    pollWhileVisible();
+    checkRevision();
+  });
+}
 
 addEventListener("pointerdown", () => {
   pointerDown = true;
@@ -3217,6 +3393,8 @@ const alsoWatching = new Set();
 
 const live = new LiveChannel({
   url: socketUrl,
+  // A deploy drops the socket; coming back is the first sign of new code.
+  onOpen: () => checkRevision(),
   onEvent: (event) => {
     for (const watcher of Array.from(alsoWatching)) watcher(event);
     // Also drops this device's own echo: whoever made a change here has
@@ -3476,11 +3654,15 @@ async function route() {
   // than inheriting the previous page's idea of what to redraw.
   view = null;
   pending = false;
-  notice.hidden = true;
+  showNotice();
   forgetParts();
   // Leaving a record inside the pause autosave waits out: send it now. (If
   // this is the same record being opened again, the session is picked up.)
   leaveEveryRecord();
+  // And a moment to catch up with a deploy: the page is being replaced
+  // anyway, so a reload costs nothing this navigation was not about to. It
+  // lands on the new route, since the hash has already changed.
+  if (updateTo && (await reloadWhenSafe("leaving"))) return;
   for (const [pattern, handler] of routes) {
     const match = hash.match(pattern);
     if (match) {

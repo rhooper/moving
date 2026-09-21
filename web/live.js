@@ -222,9 +222,13 @@ export function reconcile(parent, items, { key, create, update }) {
  * that callers have exactly one path for "something may have changed".
  */
 export class LiveChannel {
-  constructor({ url, onEvent, pollMs = POLL_MS, fallbackAfter = FALLBACK_AFTER }) {
+  constructor({ url, onEvent, onOpen = () => {}, pollMs = POLL_MS, fallbackAfter = FALLBACK_AFTER }) {
     this.url = url;
     this.onEvent = onEvent;
+    // Every time a socket opens. A deploy restarts the service, which drops
+    // the socket, so the reconnect is the first sign that new code may be
+    // running -- the page checks its revision here (see reload.js).
+    this.onOpen = onOpen;
     this.pollMs = pollMs;
     this.fallbackAfter = fallbackAfter;
     this.failures = 0;
@@ -283,6 +287,7 @@ export class LiveChannel {
     socket.onopen = () => {
       this.failures = 0;
       this.stopPolling();
+      this.onOpen();
     };
     socket.onmessage = (message) => {
       let event;
