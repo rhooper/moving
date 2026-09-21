@@ -17,6 +17,7 @@ const SHELL = [
   "/segmented.js",
   "/text.js",
   "/covers.js",
+  "/reload.js",
   "/wedge.js",
   "/jsQR.js",
   "/Inter.ttf",
@@ -49,6 +50,10 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin !== location.origin) return;
   if (url.pathname.startsWith("/api/")) return;   // always live
+  // How an open page learns a deploy happened (reload.js). Cached, the first
+  // answer would be the only one: every later check would read the revision
+  // the page is already running, and it would never reload.
+  if (url.pathname === "/health") return;
   if (url.pathname.startsWith("/b/")) return;     // redirect must be followed
 
   event.respondWith(

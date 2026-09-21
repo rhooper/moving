@@ -248,9 +248,15 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.include_router(settings_routes.router, dependencies=[Depends(require_api_key)])
 
     @app.get("/health")
-    def health() -> dict[str, str]:
+    def health(response: Response) -> dict[str, str]:
         # revision says which commit is running; version is for a human
         # reading a bug report ("saw it on 0.4.2").
+        #
+        # An open page asks this to learn that a deploy happened (web/reload.js),
+        # so no cache anywhere may keep an answer: one kept would be read back
+        # as "still the revision you are running", and the page would never
+        # reload. The service worker lets it through for the same reason.
+        response.headers["Cache-Control"] = "no-store"
         return {
             "status": "ok",
             "revision": app.state.revision,
