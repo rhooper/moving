@@ -1,20 +1,7 @@
-"""What the cloud tier has cost, and the cap that stops it costing more.
+"""What the cloud tier has cost, and the cap past which photos are read locally.
 
-A move was funded at $20-30, on the understanding that models are chosen on
-merit rather than on price. Two things follow, and they are the whole of this
-module:
-
-- **The number is visible.** A budget nobody can see is a budget that gets
-  exceeded. Settings shows the running total against the cap, broken down by
-  model, and says plainly when photos are being read locally.
-- **The cap is enforced.** Past it the cloud tier is simply not offered and
-  reading falls back to the local model. A budget nothing enforces is the same
-  thing as one nobody can see.
-
-The total is summed from `ai_jobs` rather than kept in a counter: the jobs are
-the record, they survive every restart, and a counter would be one more thing
-to get out of step. Every job costs its own row, so there is nothing to
-reconcile.
+The total is summed from `ai_jobs`, never kept in a counter: the jobs are the
+record, and they survive every restart.
 """
 
 from __future__ import annotations
@@ -27,14 +14,9 @@ from .vision import base
 
 
 def record(conn: sqlite3.Connection, job_id: int, reading: base.Reading | None) -> None:
-    """Write back who answered and what it cost.
+    """Write back who answered and what it cost, over the model the job was queued with.
 
-    `provider` and `model` were set when the job was queued, naming what would
-    be *tried* first. With a fallback in play that is not necessarily what
-    answered, and a wrong item has to be traceable to the model that wrote it.
-
-    A provider that reported nothing leaves the row as it was: a reading of
-    "unknown" is worse than the guess already on it.
+    With no reading, the row is left as it was.
     """
     if reading is None:
         return
@@ -56,22 +38,13 @@ def record(conn: sqlite3.Connection, job_id: int, reading: base.Reading | None) 
 
 
 def total_usd(conn: sqlite3.Connection) -> float:
-    """Every dollar this database has ever spent on reading photos.
-
-    Failed jobs included: a reply that cost money and then failed to parse
-    still cost money, and a budget that forgave those would drift.
-    """
+    """Every dollar this database has ever spent on reading photos, failed jobs included."""
     row = conn.execute("SELECT COALESCE(SUM(cost_usd), 0.0) AS spent FROM ai_jobs").fetchone()
     return float(row["spent"] or 0.0)
 
 
 def over_cap(conn: sqlite3.Connection, config: Config) -> bool:
-    """Whether the cloud tier is withdrawn.
-
-    False for a local-only setup whatever has been spent: there is no cloud
-    tier to withdraw, and saying "over budget" about the free one would be a
-    lie on the Settings page.
-    """
+    """Whether the cloud tier is withdrawn. Always False without a cloud tier."""
     if config.vision_provider != "claude":
         return False
     return total_usd(conn) >= config.vision_budget_usd
@@ -100,9 +73,8 @@ RECENT = 10
 def recent_reads(conn: sqlite3.Connection, config: Config) -> tuple[int, int]:
     """Of the last few photos read, how many, and how many read locally.
 
-    A key that is set and refused looks exactly like a key that works, right
-    up until you compare the items. This is what turns that into something the
-    Settings page can say out loud.
+    A refused key looks like a working one until the items are compared; this
+    lets Settings say so.
     """
     rows = conn.execute(
         """
@@ -118,8 +90,7 @@ def recent_reads(conn: sqlite3.Connection, config: Config) -> tuple[int, int]:
 def status(conn: sqlite3.Connection, config: Config) -> dict[str, Any]:
     """Everything the Settings page says about the cloud tier.
 
-    Carries whether there *is* a key, never the key: `key` is a boolean, and
-    nothing in this dict is built from the value.
+    `key` says whether there is one; nothing here is built from its value.
     """
     spent = total_usd(conn)
     over = over_cap(conn, config)
@@ -140,12 +111,7 @@ def status(conn: sqlite3.Connection, config: Config) -> dict[str, Any]:
         "over": over,
         "photos": counted["n"],
         "by_model": by_model(conn),
-        # Of the last few photos read, how many and how many by the local
-        # model. Configured for the cloud and still reading locally means
-        # something is wrong that no amount of budget will fix.
         "recent_reads": reads,
         "recent_local": locally,
-        # The one thing somebody actually wants to know from this panel: are
-        # my photos being read by the good model right now, or not?
         "reading_locally": config.vision_provider != "claude" or not has_key or over,
     }
