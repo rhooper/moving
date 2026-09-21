@@ -76,7 +76,7 @@ class PrintRequest(Strict):
     codes: list[str] = Field(min_length=1)
     #: Omitted: the kind's own number (prefs.label_copies); a stub prints one.
     copies: int | None = Field(default=None, ge=1, le=10)
-    height: int | None = None  # exact cut height; omit to fit content
+    height: int | None = None  # portrait only: exact cut height; omit to fit content
     orientation: Literal["landscape", "portrait"] | None = None
     #: Print a box whose contents are not recorded.
     allow_empty: bool = False

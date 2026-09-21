@@ -107,7 +107,8 @@ def _with_nesting(conn: sqlite3.Connection, box: dict) -> dict:
 
 
 def _brief(box: dict) -> dict:
-    # A nested record inherits its container's room, and offers to make it fragile.
+    # The page needs a container's room (a nested record inherits it) and
+    # whether it is already fragile.
     return {
         key: box[key]
         for key in ("code", "kind", "content_summary", "destination_room_id", "fragile", "size")

@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-#: Long enough to be useful on a label, short enough to fit one.
+#: Characters kept of a model's summary. The label prints what fits.
 SUMMARY_MAX = 240
 #: A box with more than this many distinct things in it is a box of "misc".
 ITEMS_MAX = 40

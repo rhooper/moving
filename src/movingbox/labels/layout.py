@@ -475,7 +475,7 @@ def _render_landscape(data: LabelData) -> Image.Image:
 # the tape's width, printer.to_raster passes it through unrotated.
 STUB_LENGTH = 300  # 1 inch at 300 dpi
 STUB_CODE_SIZE = 105  # fits B-0042 beside the QR; longer codes shrink
-STUB_QR_MODULE = 7  # the largest whole module size that fits in an inch
+STUB_QR_MODULE = 7  # 259 px for the codes in use, inside the stub's 300
 
 
 def render_stub(data: LabelData) -> Image.Image:

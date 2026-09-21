@@ -1,8 +1,8 @@
 """Where the Anthropic API key comes from, and where it must never go.
 
 Sources, most specific first: ``ANTHROPIC_API_KEY`` in the environment, then
-``.env`` in the project root. Neither is a working configuration, not an
-error: the hybrid reads photos locally.
+``.env`` in the project root. Having neither is a working configuration, not
+an error: the hybrid reads photos locally.
 
 The value is read once, at startup, into `Config` (kept out of its `repr`). It
 is never logged, never put in an exception message (`vision.claude.redact`

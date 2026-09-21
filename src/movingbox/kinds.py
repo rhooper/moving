@@ -1,7 +1,7 @@
 """What a labelled record is: a container with contents, or a single thing.
 
-Every kind is one row in `boxes`, so codes, scanning, search and export need no
-special cases.
+Every record, whatever its kind, is a row in `boxes`, so codes, scanning,
+search and export need no special cases.
 """
 
 from __future__ import annotations

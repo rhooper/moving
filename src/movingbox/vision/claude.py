@@ -146,8 +146,8 @@ def build_request(model: str, images: list[bytes], *, detail: bool) -> dict[str,
         "model": model,
         "max_tokens": DETAIL_MAX_TOKENS if detail else MAX_TOKENS,
         "system": base.SYSTEM,
-        # Neither tier thinks: naming what is in a photo is perception. Measured
-        # on the closer look too: same items, faster, no stray tags.
+        # Neither tier thinks: naming what is in a photo is perception. Checked
+        # on the closer look's model: no stray tags leak into the reply.
         "thinking": {"type": "disabled"},
         "output_config": output_config,
         "messages": [{"role": "user", "content": blocks}],

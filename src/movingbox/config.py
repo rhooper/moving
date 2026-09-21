@@ -31,8 +31,8 @@ class Config:
     printer_model: str = "QL-800"
     printer_queue: str | None = None  # CUPS queue name, for the cups_raw backend
     label_id: str = "62"  # 62 mm continuous DK-2205; 696 printable dots
-    #: "landscape" is a fixed 3.3 inches along the tape; "portrait" is the older
-    #: cut-to-content form.
+    #: "landscape" is a fixed 990 x 696 px (3.3 in along 62 mm tape) with no
+    #: item list; "portrait" is the older form, cut to its content.
     label_orientation: str = "landscape"
     ollama_url: str = "http://localhost:11434"
     #: Reads every uploaded photo. Keep the "-instruct": the bare qwen3-vl tags

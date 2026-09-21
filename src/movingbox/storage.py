@@ -150,7 +150,7 @@ def set_caption(conn: sqlite3.Connection, photo_id: int, caption: str | None) ->
 def set_cover(conn: sqlite3.Connection, photo_id: int) -> dict[str, Any]:
     """Make this photo the one its box is shown with.
 
-    Demote first: a unique index allows one cover per box (migration 0003).
+    Demote first: a unique index allows one cover per box (migration 0004).
     No reindex: ``is_primary`` is not indexed.
     """
     photo = get_photo(conn, photo_id)

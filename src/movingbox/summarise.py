@@ -9,7 +9,7 @@ from typing import Any
 
 from . import kinds
 
-#: Matches the label renderer's cap.
+#: Characters; the same cap as a model's summary (vision.base.SUMMARY_MAX).
 MAX_LENGTH = 240
 
 #: Words already plural or unchanged in the plural.
