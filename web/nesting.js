@@ -130,6 +130,25 @@ export function cameraTrouble(error, { secure = true } = {}) {
   }
 }
 
+// With no size asked for, the browser gives its default 640x480. Square, so
+// it reads the same whichever way the phone is held; the browser picks its
+// nearest real mode.
+export const CAMERA_REQUEST = {
+  video: { facingMode: { ideal: "environment" }, width: { ideal: 4096 }, height: { ideal: 4096 } },
+};
+
+// 1080p (1920) is within 6% of the 2048 kept; 1024 is where the model was
+// measured to stop reading small text. Below 1920, say so.
+const ENOUGH_EDGE = 1920;
+
+export function streamQuality(width, height) {
+  const w = Number(width) || 0;
+  const h = Number(height) || 0;
+  const edge = Math.max(w, h);
+  if (!edge) return null;
+  return { edge, enough: edge >= ENOUGH_EDGE, size: `${w} × ${h}` };
+}
+
 // Down to `limit` on the long edge (the server keeps no more) and never up;
 // null before the video has dimensions.
 export function frameSize(width, height, limit = 2048) {

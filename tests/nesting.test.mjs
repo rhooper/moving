@@ -6,7 +6,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  addedInside, addInsideRequest, blockedDelete, cameraTrouble, describe, editorSections, frameSize,
+  addedInside, addInsideRequest, blockedDelete, cameraTrouble, CAMERA_REQUEST, describe, editorSections, frameSize,
+  streamQuality,
   groupMatches, inheritedRoom, kindsToAddInside, mayHold, notYetFragile, trail,
 } from "../web/nesting.js";
 
@@ -421,4 +422,24 @@ test("a row is handed back whole, so the list draws it as it draws any row", () 
   assert.equal(under.row, row);
   assert.equal(under.depth, 1);
   assert.equal(under.context, false);
+});
+
+test("the live camera asks for a size, not only for the back camera", () => {
+  // With no size asked for, the browser hands back its default 640x480.
+  const video = CAMERA_REQUEST.video;
+  assert.deepEqual(video.facingMode, { ideal: "environment" });
+  assert.ok(video.width.ideal >= 2048 && video.height.ideal >= 2048);
+});
+
+test("a stream says what size it is, and whether it is enough", () => {
+  assert.deepEqual(streamQuality(3840, 2160), { edge: 3840, enough: true, size: "3840 × 2160" });
+  assert.deepEqual(streamQuality(1920, 1080), { edge: 1920, enough: true, size: "1920 × 1080" });
+  assert.deepEqual(streamQuality(1080, 1920), { edge: 1920, enough: true, size: "1080 × 1920" });
+  assert.equal(streamQuality(1280, 720).enough, false);
+  assert.equal(streamQuality(640, 480).enough, false);
+});
+
+test("a stream with no dimensions yet says nothing", () => {
+  assert.equal(streamQuality(0, 0), null);
+  assert.equal(streamQuality(undefined, undefined), null);
 });

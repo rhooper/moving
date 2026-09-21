@@ -16,7 +16,8 @@ import {
   reconcile,
 } from "/live.js";
 import {
-  addedInside, addInsideRequest, blockedDelete, cameraTrouble, describe, editorSections, frameSize,
+  addedInside, addInsideRequest, blockedDelete, cameraTrouble, CAMERA_REQUEST, describe, editorSections,
+  frameSize, streamQuality,
   groupMatches, inheritedRoom, kindsToAddInside, mayHold, notYetFragile, trail,
 } from "/nesting.js";
 import {
@@ -719,7 +720,16 @@ function addInside({ parent, kinds, rooms, shape }) {
     shots.hidden = false;
     shutter.hidden = false;
     retake.hidden = true;
-    say("Point it at what is going in, then take the photo.");
+    say(viewfinderLine());
+  }
+
+  function viewfinderLine() {
+    const point = "Point it at what is going in, then take the photo.";
+    const got = streamQuality(cam.videoWidth, cam.videoHeight);
+    if (!got) return point;
+    if (got.enough) return `${point} Camera: ${got.size}.`;
+    return `${point} This camera only gives ${got.size}, so small labels may not be readable. `
+      + "For detail, tap Choose a photo and use the phone's own camera.";
   }
 
   function showPhoto(url, note) {
@@ -739,15 +749,14 @@ function addInside({ parent, kinds, rooms, shape }) {
     if (!window.isSecureContext) { say(cameraTrouble(null, { secure: false })); return; }
     say("Starting the camera…");
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: "environment" } },
-      });
+      stream = await navigator.mediaDevices.getUserMedia(CAMERA_REQUEST);
     } catch (error) {
       say(cameraTrouble(error));
       return;
     }
     if (!dialog.isConnected) { release(); return; }   // closed while it was asking
     cam.srcObject = stream;
+    cam.addEventListener("resize", () => { if (!cam.hidden) say(viewfinderLine()); });
     await cam.play().catch(() => { /* autoplay refused; the frames still come */ });
     showViewfinder();
   }
