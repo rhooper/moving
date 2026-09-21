@@ -74,11 +74,29 @@ def provider(*answers, detail_model="claude-opus-5"):
 
 
 class TestWhatIsSent:
-    def test_a_stored_photo_is_shrunk_to_the_api_s_own_ceiling(self):
-        data, media_type = claude.for_api(a_jpeg((1536, 2048)))
+    # The high-resolution tier (Claude 4.7 and later) reads up to 2576 px on the
+    # long edge and 4784 visual tokens. These cases are the API documentation's
+    # own table, so the rule is checked against the published numbers.
+    @pytest.mark.parametrize(
+        "size, sent",
+        [((1920, 1080), (1920, 1080)), ((2000, 1500), (2000, 1500)), ((3840, 2160), (2576, 1449))],
+    )
+    def test_a_photo_is_sent_at_the_largest_size_the_model_reads(self, size, sent):
+        assert claude.fitted(*size) == sent
 
+    def test_a_stored_photo_is_sent_whole_not_shrunk_to_1568(self):
+        data, _ = claude.for_api(a_jpeg((1536, 2048)))
+
+        assert Image.open(io.BytesIO(data)).size == (1536, 2048)
+
+    def test_a_photo_kept_larger_than_the_model_reads_is_shrunk_to_fit(self):
+        data, media_type = claude.for_api(a_jpeg((2048, 2731)))
+
+        width, height = Image.open(io.BytesIO(data)).size
         assert media_type == "image/jpeg"
-        assert Image.open(io.BytesIO(data)).size == (1176, 1568)
+        assert max(width, height) <= claude.MAX_LONG_EDGE
+        assert claude.image_tokens(width, height) <= claude.MAX_VISUAL_TOKENS
+        assert abs(width / height - 2048 / 2731) < 0.01
 
     def test_a_photo_that_already_fits_is_sent_as_it_is(self):
         original = a_png((400, 300))
@@ -88,9 +106,12 @@ class TestWhatIsSent:
         assert data is original
         assert media_type == "image/png"
 
-    def test_the_token_cost_of_a_picture_is_its_area(self):
-        # 1176 x 1568 is what a stored 1536 x 2048 photo becomes.
-        assert claude.image_tokens(1176, 1568) == 2459
+    @pytest.mark.parametrize(
+        "size, tokens",
+        [((1920, 1080), 2691), ((2000, 1500), 3888), ((2576, 1449), 4784), ((1536, 2048), 4070)],
+    )
+    def test_the_token_cost_is_one_per_28_pixel_patch(self, size, tokens):
+        assert claude.image_tokens(*size) == tokens
 
     def test_the_request_carries_the_picture_then_the_instruction(self):
         model, client = provider(reply())

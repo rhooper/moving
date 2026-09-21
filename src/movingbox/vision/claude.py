@@ -19,11 +19,13 @@ from PIL import Image, UnidentifiedImageError
 
 from . import base
 
-#: The API resizes any image whose long edge is over this.
-API_MAX_EDGE = 1568
+#: The high-resolution tier (Claude 4.7 and later): an image over either limit
+#: is shrunk by the API, so it is shrunk here to exactly fit, and no further.
+MAX_LONG_EDGE = 2576
+MAX_VISUAL_TOKENS = 4784
 
-#: An image costs about width x height / 750 input tokens.
-TOKENS_PER_PIXEL = 750
+#: One visual token per square patch this many pixels across.
+PATCH = 28
 
 #: Room for the reply; the draft itself is ~200 tokens.
 MAX_TOKENS = 2048
@@ -76,11 +78,28 @@ _MEDIA_TYPES = {"JPEG": "image/jpeg", "PNG": "image/png", "GIF": "image/gif", "W
 
 
 def image_tokens(width: int, height: int) -> int:
-    """Roughly what an image of this size costs in input tokens."""
-    return math.ceil(width * height / TOKENS_PER_PIXEL)
+    """What an image of this size costs in visual tokens."""
+    return math.ceil(width / PATCH) * math.ceil(height / PATCH)
 
 
-def for_api(data: bytes, max_edge: int = API_MAX_EDGE) -> tuple[bytes, str]:
+def _scaled(width: int, height: int, long_side: int) -> tuple[int, int]:
+    # Integer arithmetic: 3840x2160 must land on 1449, not 1448.999...
+    if width >= height:
+        return long_side, height * long_side // width
+    return width * long_side // height, long_side
+
+
+def fitted(width: int, height: int) -> tuple[int, int]:
+    """The largest size of this shape the model reads without shrinking it. Never grows."""
+    long_side = min(max(width, height), MAX_LONG_EDGE)
+    size = _scaled(width, height, long_side)
+    while image_tokens(*size) > MAX_VISUAL_TOKENS:
+        long_side -= 1
+        size = _scaled(width, height, long_side)
+    return size
+
+
+def for_api(data: bytes) -> tuple[bytes, str]:
     """The bytes to send and their media type. Shrinks; never grows or re-encodes."""
     try:
         image = Image.open(io.BytesIO(data))
@@ -88,11 +107,11 @@ def for_api(data: bytes, max_edge: int = API_MAX_EDGE) -> tuple[bytes, str]:
     except (UnidentifiedImageError, OSError) as bad:
         raise base.DraftUnreadable("that photo could not be decoded") from bad
 
-    if max(image.size) <= max_edge:
+    size = fitted(*image.size)
+    if size == image.size:
         return data, _MEDIA_TYPES.get(image.format or "", "image/jpeg")
 
-    shrunk = image.convert("RGB")
-    shrunk.thumbnail((max_edge, max_edge), Image.LANCZOS)
+    shrunk = image.convert("RGB").resize(size, Image.LANCZOS)
     buffer = io.BytesIO()
     shrunk.save(buffer, format="JPEG", quality=88, optimize=True)
     return buffer.getvalue(), "image/jpeg"
