@@ -284,8 +284,14 @@ try {
             && !d.querySelector('.seg[data-name="size"]'); })()`));
   check("the picker no longer forces the camera app: the live one is the camera now",
         !(await evaluate(`document.querySelector("#adder-shot").hasAttribute("capture")`)));
+  // Every kind the server knows, in its order -- asked of the server rather
+  // than written out here, because a literal list broke the day Parts arrived.
+  const knownKinds = (await evaluate(`fetch("/api/settings/kinds").then((r) => r.json())
+    .then((ks) => ks.map((k) => k.kind).join())`));
+  const offeredKinds = await evaluate(`[...document.querySelectorAll('dialog.adder .seg[data-name="kind"] input')].map((r) => r.value).join()`);
   check("every kind is offered, single things included",
-        (await evaluate(`[...document.querySelectorAll('dialog.adder .seg[data-name="kind"] input')].map((r) => r.value).join()`)) === "box,tub,crate,bag,item,furniture");
+        offeredKinds === knownKinds && knownKinds.includes("item") && knownKinds.includes("furniture"),
+        `offered=${offeredKinds} known=${knownKinds}`);
   await click(`dialog.adder .seg[data-name="kind"] input[value="bag"] + span`);
   await click(`dialog.adder .seg[data-name="source_room_id"] input[value="${source.id}"] + span`);
   const doc = await send("DOM.getDocument");

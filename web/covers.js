@@ -188,6 +188,7 @@ export function rowStatus(box) {
 
 const KIND_ICONS = {
   box: "i-box",
+  parts: "i-parts",
   tub: "i-tub",
   crate: "i-crate",
   bag: "i-bag",

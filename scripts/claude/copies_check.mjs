@@ -92,7 +92,7 @@ try {
   const shown = JSON.parse(await evaluate(`JSON.stringify(Object.fromEntries(
     [...document.querySelectorAll("#kind-copies input[type=number]")].map((f) => [f.name, f.value])))`));
   check("settings: each kind shows the number asked for",
-        JSON.stringify(shown) === JSON.stringify({ box: "2", tub: "2", crate: "2", bag: "1", item: "1", furniture: "1" }),
+        JSON.stringify(shown) === JSON.stringify({ box: "2", parts: "1", tub: "2", crate: "2", bag: "1", item: "1", furniture: "1" }),
         JSON.stringify(shown));
   check("settings: every number has a label naming its kind",
         await evaluate(`[...document.querySelectorAll("#kind-copies input[type=number]")].every((f) => f.labels?.length === 1 && f.labels[0].textContent.trim() !== "")`));

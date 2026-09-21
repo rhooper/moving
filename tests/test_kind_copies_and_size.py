@@ -51,7 +51,7 @@ def kinds_listed(client):
     return {k["kind"]: k for k in client.get("/api/settings/kinds").json()}
 
 
-WANTED = {"box": 2, "crate": 2, "tub": 2, "bag": 1, "item": 1, "furniture": 1}
+WANTED = {"box": 2, "parts": 1, "crate": 2, "tub": 2, "bag": 1, "item": 1, "furniture": 1}
 
 
 class TestCopiesPerKind:

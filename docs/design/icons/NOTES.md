@@ -24,6 +24,7 @@ Nav
 Kinds
 
 - `box` — a cardboard box with its flaps up.
+- `parts` — a compartmented organizer: three small bins over two wide ones. Added 2026-09-21 for the Parts kind, which on the owner's own photos is exactly this -- "clear plastic divided parts box". Irregular on purpose, since a regular 2x2 grid reads as a window, and wider than tall for the same reason as `tub` and `bag`. Distinct from `crate`, whose knockouts are horizontal slats only. Soft at 24 px the way `crate` is: odd coordinates land on half pixels at 1.5x.
 - `tub` — a plastic tub: wide, low, tapered, lid off and hovering. Drawn wider than tall on purpose; taller than wide it is a bin.
 - `crate` — a slatted crate: posts and three boards.
 - `bag` — a bag by its handle. Body wider than tall on purpose; square it is a padlock.
