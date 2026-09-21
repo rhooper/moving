@@ -649,6 +649,33 @@ not set) but don't undo on clear". Each step of `path` carries the container's
     The `>`/`v` marker is drawn rather than inherited -- the default triangle
     differs between browsers, and this is used on Firefox -- which takes three
     rules, one per browser's way of drawing it.
+  - **Its photos are the record page's own strip** (`photosPart` through
+    `reconcile`), asked for as "for the popup contents view, show image thumbs
+    and show the full view on demand". Mounting it is the whole feature: the
+    WeakMap of each figure's latest photo, the `data-key` per figure, the
+    repaint of an open viewer as a reading lands and the tap that opens
+    `viewPhoto` all come with it, and its write buttons ("Read again", "Look
+    closer") work from inside the modal. A record with no photos has no photo
+    section at all -- there is no input there to fold. The first photo to
+    arrive is the one live update that rebuilds the body, since until then
+    there was no section to draw into.
+  - **A dialog over a dialog: Escape reaches every open one, not just the
+    top.** Measured in Chrome (2026-09-20) with a scratch page of two modal
+    dialogs. They *stack* correctly -- the later `showModal()` paints above
+    and takes focus -- but one Escape fired `cancel` on both, so the photo
+    viewer took the modal down with it through the close path that commits
+    and waits. Two fixes were tried and disproved: `preventDefault()` in the
+    top dialog's own `cancel` (the one underneath still fired), and asking
+    "am I topmost?" *inside* `cancel` (by then the top dialog has cleared its
+    own `open` while still in the document, so the one underneath reads as
+    topmost). What works is `closesOnEscape`: take the key in a capture-phase
+    keydown, where nothing has closed yet and `dialog[open]` still tells the
+    truth, and let only the dialog on top act. **Every dialog here uses it** --
+    the viewer, `confirmed()`, `failed()` and both modals -- because a
+    confirmation raised from inside a modal had the same bug waiting. The
+    viewer also puts the focus back on the thumbnail itself: a dialog restores
+    it natively, but this one opens over half-typed fields and the strip under
+    it redraws in place while a photo is being read.
 
 **FastAPI's `include_router` does not flatten into `app.routes`** in this
 version: each included router is one `_IncludedRouter` wrapper whose real
