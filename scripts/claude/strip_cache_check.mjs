@@ -1,22 +1,20 @@
 #!/usr/bin/env node
 // Purpose: prove that a regenerated strip image is actually FETCHED by a phone
-//          that already has the old one -- and that the naive way, rewriting an
-//          id-keyed URL's bytes in place, is not. The service worker answers
-//          photos from its own cache without asking the network, and photos are
-//          cached for a year, so a URL whose bytes change is never fetched
-//          again. renditions.py puts a version derived from the recipe in the
-//          strip's URL; this is the evidence that it works.
+//          that already has the old one, and that rewriting an id-keyed URL's
+//          bytes in place is not. The service worker answers photos from its
+//          own cache and photos are cached for a year, so a URL whose bytes
+//          change is never fetched again; the strip's URL carries a version
+//          derived from the recipe.
 //
-//          One Chrome, one service worker, one set of caches, spanning two
+//          One Chrome, one service worker, one set of caches, across two
 //          servers on the same origin: the recipe as shipped, then a changed
-//          recipe shipped the only way one can be -- with a deploy, so a new
-//          revision, a new sw.js, and the old worker's cache wiped. What goes
-//          stale then is the HTTP cache underneath it, the subtler of the two
-//          layers ("reload it twice", in CLAUDE.md).
+//          recipe shipped with a deploy -- a new revision, a new sw.js, the old
+//          worker's cache wiped. What can go stale then is the HTTP cache
+//          beneath it.
 //
 //          The control rewrites the list thumbnail in place under its
-//          unchanged URL between the two, and must see it stay stale. Without
-//          that, a pass would prove nothing about the trap.
+//          unchanged URL and must see it stay stale; without that a pass would
+//          prove nothing.
 // Date:    2026-09-21
 // Usage:   node scripts/claude/strip_cache_check.mjs
 //          Its own throwaway database and photos; never the live service.
@@ -87,7 +85,7 @@ const check = (name, ok, detail = "") => {
 };
 
 // Pre-migrate: a brand-new database can 500 once when a page's first two
-// requests race to create the schema (CLAUDE.md).
+// requests race to create the schema.
 execFileSync("uv", ["run", "moving", "seed-rooms"], { cwd: ROOT, env, stdio: "ignore" });
 
 const profile = mkdtempSync(join(tmpdir(), "strip-cache-chrome-"));

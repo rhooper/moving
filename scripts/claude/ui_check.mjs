@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 // Purpose: click through the box page in a real (headless) browser and check
 //          that its forms behave -- the thing `node --check` and the static
-//          guards cannot see. Written after three patches to web/app.js
-//          half-landed and shipped dead buttons.
+//          guards cannot see.
 // Date:    2026-09-18
 // Usage:   node scripts/claude/ui_check.mjs [base-url] [box-code]
 //          defaults: http://127.0.0.1:8788  B-0004   (i.e. `make run`)
 //
-// Saves nothing, on a page that now saves by itself: fields are changed and put
+// Saves nothing, on a page that saves by itself: fields are changed and put
 // straight back inside the pause autosave waits out, and every write the page
 // attempts is counted to prove that none was made. Needs Node 22+ (global
 // WebSocket) and Google Chrome. No npm packages.
@@ -63,10 +62,9 @@ const IN_PAGE = async () => {
 
   await wait(() => $("#summary-form"), "the box page");
 
-  // The record page saves itself as it is edited, so from the first line this
-  // counts every write the page attempts. Everything below is arranged to
-  // cause none: fields are changed and put back *at once*, inside the pause
-  // autosave waits out, and never focused, so nothing is ever left.
+  // Every write the page attempts is counted from here. Everything below is
+  // arranged to cause none: fields are changed and put back *at once*, and
+  // never focused, so nothing is ever left.
   const writes = [];
   const realFetch = window.fetch;
   window.fetch = (url, options = {}) => {
@@ -170,13 +168,13 @@ const IN_PAGE = async () => {
   check("typing and putting it straight back saved nothing", writes.length === 0, writes.join("; "));
   check("and left the fields as they were", field.value === saved && where.value === whereBefore);
 
-  // "From contents" writes now, so it is looked at and not pressed. The
-  // pickers save the moment they change, so they are not touched either.
-  // scripts/claude/autosave_check.mjs does all of that, against a throwaway.
+  // "From contents" writes, so it is looked at and not pressed; nor are the
+  // pickers, which save the moment they change. autosave_check.mjs presses
+  // them, against a throwaway.
   check("From contents is offered on a record that holds contents",
         Boolean($("#suggest")) === Boolean($("#items")));
 
-  // Photos are read automatically now; the manual draft button and its review
+  // Photos are read automatically; the manual draft button and its review
   // panel must be gone, not merely unreachable.
   check("the Draft contents button is gone", !$("#draft-btn") && !$("#draft-panel"));
 
@@ -324,10 +322,9 @@ const IN_PAGE = async () => {
   $("#container-code").value = "";
   $("#container-code").dataset.initial = "";
 
-  // The icon family (docs/design/icons), inlined once as a <symbol> sprite and
-  // referenced with <use>. A <use> pointing at a symbol that is not there
-  // draws nothing at all, in silence -- no console error, no broken-image box
-  // -- so the marks are resolved and measured here rather than trusted.
+  // A <use> pointing at a symbol that is not there draws nothing, silently --
+  // no console error, no broken-image box -- so the marks are resolved and
+  // measured here rather than trusted.
   const marks = Array.from(document.querySelectorAll("svg.i use"));
   check("every mark on the record resolves to a symbol in the sprite",
         marks.length > 0 && marks.every((u) => document.querySelector(u.getAttribute("href"))?.tagName === "symbol"),
@@ -395,8 +392,6 @@ const IN_NESTED = async () => {
         Array.from(document.querySelectorAll("#boxlist li")).every((li) => (li.querySelector(".in").textContent !== "")
           === (rows.find((b) => b.code === li.dataset.key)?.child_count > 0)));
   check("nested records are not in the top-level list", rows.every((b) => !b.parent_code));
-  // The empty thumbnail was the same open box on every row, which said
-  // nothing about the row it was on. It draws the record's own kind now.
   check("a row with no photo draws what the record is",
         rows.every((b) => $(`#boxlist li[data-key="${b.code}"] .t .tk use`)?.getAttribute("href") === `#i-${b.kind}`),
         rows.map((b) => `${b.kind}:${$(`#boxlist li[data-key="${b.code}"] .t .tk use`)?.getAttribute("href")}`).join(" "));
@@ -409,9 +404,8 @@ const IN_NESTED = async () => {
           const row = $(`#inside li[data-key="${k.code}"]`);
           return row && row.querySelector(".in").textContent === (k.child_count ? `${k.child_count} inside` : "");
         }), Array.from(document.querySelectorAll("#inside li .in")).map((i) => i.textContent).join(","));
-  // The things inside a container are the things in your hands; the list is
-  // the index. Measured, because --thumb is a token the nested list overrides
-  // and a typo there is silently the list's own size.
+  // Measured, because --thumb is a token the nested list overrides, and a typo
+  // there silently falls back to the list's own size.
   const insideThumb = Math.round($("#inside li .t").getBoundingClientRect().width);
   check("a row inside a container is drawn half again the size of a list row",
         insideThumb === Math.round(listThumb * 1.5), `${insideThumb} vs ${listThumb}`);
@@ -450,9 +444,7 @@ const IN_NESTED = async () => {
     check("but can still be put inside something", Boolean($("#container-code")));
   }
 
-  // "in search results, put the parent box first. indent subitems. then we
-  // don't need in B-xxxx." Searched for by code, so this runs against
-  // whatever nesting the server actually has.
+  // Searched for by code, so this runs against whatever nesting the server has.
   const inner = full.children[0];
   if (inner) {
     const query = encodeURIComponent(inner.code);
@@ -485,10 +477,8 @@ const IN_NESTED = async () => {
   return results;
 };
 
-// The new-record form. Looks, never submits: creating would write a real row.
-// Settings, for the one section on it that is arithmetic and wording rather
-// than a form: what reading photos has cost, against the cap. Read-only, like
-// everything else in this file.
+// Settings, for its one section that is arithmetic rather than a form: what
+// reading photos has cost, against the cap.
 const IN_SETTINGS = async () => {
   const wait = async (test, what) => {
     for (let i = 0; i < 100; i++) {
@@ -506,15 +496,10 @@ const IN_SETTINGS = async () => {
 
   check("Settings says what is reading photos",
         section.textContent.includes(spend.local_model), section.textContent.slice(0, 120));
-  // This check runs against a throwaway server (no key, so "local") and
-  // against the live service (a key that may be working or refused), so it
-  // pins the panel to what the server actually reports rather than to one
-  // deployment's state -- a panel that disagrees with /api/settings/spend is
-  // the bug worth catching, not a panel reporting an honest "failing".
-  // The rule itself is unit-tested; what this checks is that the panel renders
-  // the rule rather than a template's guess at it. It runs against a throwaway
-  // server (no key, so "local") and against the live service (a key that may
-  // be working or refused), so it must not pin one deployment's answer.
+  // The rule is unit-tested; this checks that the panel renders it. This runs
+  // against a throwaway (no key, so "local") and the live service (a key that
+  // may work or be refused), so it pins the panel to what /api/settings/spend
+  // reports, not to one deployment's answer.
   const { readingWith } = await import("/covers.js");
   const expected = readingWith(spend).state;
   check("the panel draws the state the rule derives from the server's numbers",
@@ -538,6 +523,7 @@ const IN_SETTINGS = async () => {
   return results;
 };
 
+// The new-record form. Looks, never submits: creating would write a real row.
 const IN_NEW = async () => {
   const wait = async (test, what) => {
     for (let i = 0; i < 100; i++) {
@@ -584,9 +570,8 @@ const IN_NEW = async () => {
         desktop ? (at.top >= bar.top - 1 && at.bottom <= bar.bottom + 1)
                 : (at.bottom <= bar.top + 1 && at.right > window.innerWidth / 2),
         JSON.stringify({ at, bar, innerWidth: window.innerWidth }));
-  // The bar: a mark over the word on a phone, beside it on a desktop, and
-  // never instead of it -- "Items" and "New" are not guessable from a list
-  // glyph and a plus, and the bar has the room for both.
+  // The bar: a mark over the word on a phone, beside it on a desktop, never
+  // instead of it -- "Items" and "New" are not guessable from a glyph.
   const tabs = Array.from(document.querySelectorAll("nav.bar a"));
   check("every tab in the bar keeps its word and wears a mark",
         tabs.length === 4 && tabs.every((a) => a.querySelector("svg.i use") && a.querySelector("span")?.textContent.trim()),
@@ -599,9 +584,8 @@ const IN_NEW = async () => {
         Math.round(mark.width) === (desktop ? 20 : 24), String(mark.width));
   check("stacking it did not push the word out of the bar",
         tabs.every((a) => a.getBoundingClientRect().bottom <= bar.bottom + 1));
-  // Which tab you are on. `toggleAttribute` wrote aria-current="" here for
-  // months, and the stylesheet asks for [aria-current="page"] -- so the bar
-  // never marked the current page and nobody noticed until the marks arrived.
+  // Which tab you are on: the stylesheet asks for [aria-current="page"], and
+  // an empty aria-current marks nothing.
   const here = tabs.filter((a) => a.getAttribute("aria-current") === "page");
   check("the bar says which page you are on",
         here.length === 1 && here[0].getAttribute("href") === location.hash,
@@ -709,10 +693,8 @@ try {
     routed(m);
   };
   await send("Runtime.enable");
-  // A headless page does not have the focus (document.hasFocus() is false),
-  // and an unfocused page moves activeElement about without firing a single
-  // focus or blur event. Blur is what saves a rename, so without this the
-  // check below fails against code that works in every real browser.
+  // A headless page does not have the focus, and an unfocused page fires no
+  // focus or blur events. Blur is what saves a rename.
   await send("Emulation.setFocusEmulationEnabled", { enabled: true });
 
   await send("Page.enable");
@@ -753,11 +735,9 @@ try {
   }
   results.push(...fourth.result.result.value);
 
-  // The browse list at a phone's width. Search results were already checked
-  // at 320px (nesting_check); the list itself never was, and a screenshot
-  // cannot answer it -- a narrow --window-size does not narrow the layout, so
-  // the right-hand edge looks cropped whether or not anything overflows. Only
-  // an emulated viewport says. Read-only, so it runs against the live service.
+  // The browse list at a phone's width. A narrow --window-size does not narrow
+  // the layout, so only an emulated viewport can say whether anything
+  // overflows. Read-only, so it runs against the live service too.
   for (const width of [320, 400]) {
     await send("Emulation.setDeviceMetricsOverride", { width, height: 700, deviceScaleFactor: 0, mobile: true });
     await send("Page.navigate", { url: `${base}/#/` });

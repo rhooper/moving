@@ -1,29 +1,19 @@
 #!/usr/bin/env node
-// Purpose: two things about a record inside a container, pressed for real.
-//          It goes where the container goes: no destination row of its own,
-//          the band and a line saying whose room it is, the row back in place
-//          when it is taken out. And fragile climbs: marking it fragile offers
-//          to mark the containers too (accepted here, and seen on the
-//          container), clearing it touches nothing, putting a fragile thing
-//          inside something offers again, and so does creating one inside with
-//          Fragile ticked. Uses the page's own dialog, clicked, not stubbed.
-//          And adding something inside from the container's page: the dialog
-//          asks for a kind, a photo and a source, Add makes it and the row
-//          appears without leaving the page, Add and open lands on it, Cancel
-//          makes nothing, and a photo that fails to upload (failed at the
-//          network) leaves the record standing with a visible message.
-//          And tapping one of those rows: it opens that record's editor over
-//          the container as a modal, folds away the sections it has nothing
-//          in, saves itself, keeps its own undo stack while the page behind
-//          keeps the container's, commits what is pending when it closes, and
-//          takes a change from elsewhere in place, shows the record's photos
-//          as thumbs and opens the full viewer over itself on a tap -- one
-//          Escape closing only the viewer, leaving the modal and its
-//          half-typed field alone. And the live viewfinder in
-//          the add dialog: it comes up by itself, the shutter keeps a frame
-//          that really uploads, every track is stopped when the dialog closes,
-//          and a refused camera leaves an honest line and a working file
-//          picker.
+// Purpose: a record inside a container, pressed for real:
+//          - it goes where the container goes: no destination row, the band
+//            and a line naming whose room it is, its row back when taken out;
+//          - fragile climbs: marking it offers to mark the containers too
+//            (accepted here), clearing touches nothing, and moving or creating
+//            a fragile thing inside offers again -- the page's own dialog;
+//          - adding inside from the container's page: Add, Add and open,
+//            Cancel, and a photo upload failed at the network;
+//          - tapping a row opens its editor as a modal over the container:
+//            empty sections folded, its own undo stack, pending edits committed
+//            on close, changes from elsewhere taken in place, and the photo
+//            viewer over it, where one Escape closes only the viewer;
+//          - the live viewfinder in the add dialog: the shutter's frame
+//            uploads, every track stops on close, and a refused camera leaves
+//            a working file picker.
 // Date:    2026-09-20
 // Usage:   node scripts/claude/nesting_check.mjs <base-url>
 //          WRITES: creates records and marks them. Refuses the live service.
@@ -55,8 +45,8 @@ function png(size, [r, g, b]) {
 }
 
 const NAME = "nesting_check";
-// This check creates records and marks them fragile. Never against the live
-// service: the real database, with labels in circulation.
+// This writes, so never port 8787 -- the live service, with the real database
+// and labels in circulation -- nor any host that is not this machine.
 {
   const target = new URL(process.argv[2] || "http://127.0.0.1:0");
   if ((target.port || "80") === "8787" || !["127.0.0.1", "localhost"].includes(target.hostname)) {
@@ -179,9 +169,7 @@ try {
   check("nested: the band shows the inherited room", (await band()) === kitchen.name, await band());
   check("nested: the line links to that container", (await evaluate(`${q("#goes-with a")}?.getAttribute("href")`)) === `#/b/${crate}`);
 
-  // The way out of a nested record: the link a thumb reaches for with the
-  // other hand holding the box. Both places it appears have to be a full tap
-  // tall and set at the body size, not as a caption.
+  // Both places the way out appears must be a full tap tall, at body size.
   const crumb = await reach("#trail a");
   check("nested: the breadcrumb out is a tap-sized target, at the body size",
         crumb && crumb.h >= 48 && crumb.size >= 16, JSON.stringify(crumb));
@@ -284,8 +272,8 @@ try {
             && !d.querySelector('.seg[data-name="size"]'); })()`));
   check("the picker no longer forces the camera app: the live one is the camera now",
         !(await evaluate(`document.querySelector("#adder-shot").hasAttribute("capture")`)));
-  // Every kind the server knows, in its order -- asked of the server rather
-  // than written out here, because a literal list broke the day Parts arrived.
+  // Every kind the server knows, in its order: asked, so a new kind cannot
+  // break this.
   const knownKinds = (await evaluate(`fetch("/api/settings/kinds").then((r) => r.json())
     .then((ks) => ks.map((k) => k.kind).join())`));
   const offeredKinds = await evaluate(`[...document.querySelectorAll('dialog.adder .seg[data-name="kind"] input')].map((r) => r.value).join()`);
@@ -505,9 +493,8 @@ try {
 
   // --- photo thumbs in the modal, and the viewer over it ---
   //
-  // "for the popup contents view, show image thumbs and show the full view on
-  // demand." The strip is the record page's own (`photosPart`), so a tap
-  // already opens `viewPhoto` -- over the modal, which is the interesting part.
+  // The strip is the record page's own (`photosPart`), so a tap opens
+  // `viewPhoto` -- over the modal, which is what is being checked.
   const otherShot = join(profile, "another.png");
   writeFileSync(otherShot, png(80, [70, 120, 190]));
   const pictured = (await api("/boxes", "POST", {
@@ -592,7 +579,7 @@ try {
   await sleep(400);
   check("a scan with the viewer over the modal goes nowhere", (await evaluate("location.hash")) === parked);
 
-  // The heart of it: one Escape closes the top one only.
+  // One Escape closes the top one only.
   await press("Escape", "Escape", 27);
   await sleep(400);
   pics = await shelf();
@@ -705,10 +692,8 @@ try {
 
   // --- search results, grouped and indented, on a 320px screen ------------
   //
-  // "in search results, put the parent box first. indent subitems. then we
-  // don't need in B-xxxx." A fresh chain, five deep, so the cap on the indent
-  // is pressed rather than reasoned about -- and at the narrowest screen this
-  // app is used on, because that is where an indent goes wrong.
+  // A fresh chain, five deep, so the cap on the indent is pressed rather than
+  // reasoned about, at the narrowest screen this app is used on.
   let deepest = (await api("/boxes", "POST", { kind: "crate", content_summary: "outermost" })).code;
   const chain = [deepest];
   for (const level of ["second", "third", "fourth"]) {
