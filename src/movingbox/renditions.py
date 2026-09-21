@@ -1,36 +1,17 @@
-"""Derived images: made from the stored full photo, and never from each other.
+"""Derived images, made from the stored full photo and never from each other.
 
-The full image is the record -- uploads are deduplicated by its hash, and
-nothing here ever writes it. Everything in this module is derived from it, so
-all of it can be thrown away and remade.
+The full image is the record and is never written here; everything derived can
+be thrown away and remade. The list thumbnail is small; the strip (the photo
+strip and the sub-item modal) gets its own larger, sharpened image.
 
-**Why there are two sizes.** Measured in headless Chrome at a 412 px viewport
-(2026-09-21), how many device pixels each source pixel had to cover:
+A strip URL names one set of bytes forever, since the service worker and a
+year-long cache never refetch it:
 
-    list row cover     42 x 42 css    0.42 at 3x   fine -- 2.4x oversupplied
-    nested rows        64 x 64 css    0.64 at 3x   fine
-    photo strip       186 x 248 css   1.86 at 3x   upscaled, and soft
-    sub-item modal    160 x 213 css   1.60 at 3x   upscaled, and soft
-
-The list was never the problem, so its thumbnail is left exactly as it was:
-same size, no sharpening, same bytes. Growing that one to suit the strip would
-have taken a screenful of forty rows from about 1.0 MB to 3.4 MB for nothing
-visible. The strip gets its own image instead.
-
-**The rule the design rests on: a strip URL names one set of bytes, forever.**
-The service worker answers from its cache without asking the network, and the
-photo route is cached for a year, so a URL whose bytes change is simply never
-fetched again -- the phone keeps the old soft image indefinitely. So:
-
-- the version in the URL is a hash of the *recipe* (size, sharpening,
-  quality). Change the recipe and every strip gets a new URL, which is a cache
-  miss everywhere. It is derived, never typed: a hand-bumped version is one
-  nobody bumps, which is how sw.js once kept phones on a stale app;
-- every path that makes a strip -- an upload, `moving thumbnails`, a request
-  for one not yet made -- renders it from the same stored file with the same
-  recipe, so it is the same bytes whichever made it;
-- a request for any other version is a 404, never "the current one instead".
-  A fallback under a versioned URL would be cached as that version for a year.
+- the version in the URL is a hash of the recipe, so changing the recipe
+  changes every URL;
+- every path that makes a strip renders it from the same stored file with the
+  same recipe, so it is the same bytes whichever made it;
+- a request for any other version is a 404, never the current bytes.
 """
 
 from __future__ import annotations
@@ -46,28 +27,15 @@ from typing import Any
 
 from PIL import Image, ImageFilter
 
-#: Long edge of the list thumbnail. Unchanged: see the table above.
+#: Long edge of the list thumbnail. Its URL is not versioned, so existing
+#: thumbnails are never regenerated.
 THUMB_MAX = 400
 
-#: Long edge of the strip image. A portrait strip figure is 186 css px wide on
-#: the phone, 558 device px at 3x; 800 on the long edge is 600 across. The
-#: desktop strip is 252 css px, 504 at 2x. 1000 would cover a 3.5x screen too,
-#: at 45% more bytes for a difference nobody could see at that size.
+#: Long edge of the strip image: covers the phone's strip figure at 3x.
 STRIP_MAX = 800
 
-#: Unsharp mask after the downscale: (radius, percent, threshold). Chosen by
-#: looking -- the same crops of real photos, drawn at the strip's device-pixel
-#: size, side by side. Resolution did most of the work: 800 px alone turned
-#: "22-18AWG 0.5-1.5mm2" on a parts box from a smear into print. Sharpening is
-#: the refinement on top.
-#:
-#: - radius 0.8: matched to what a 2.5x downscale loses, about a pixel of edge;
-#:   at 1.5 the letters grew visible light halos.
-#: - percent 80: at 50 it was indistinguishable from none; at 120 the flat
-#:   cardboard of a box began to speckle -- JPEG noise, amplified.
-#: - threshold 3: leaves low-contrast differences (grain, compression noise)
-#:   alone, and every edge worth keeping is far above it. 2 let the cardboard
-#:   grain through; 4 kept the text as crisp and nothing more.
+#: Unsharp mask after the downscale: (radius, percent, threshold), tuned by eye.
+#: A larger radius halos text; more percent or less threshold speckles cardboard.
 UNSHARP = (0.8, 80, 3)
 
 #: The same quality the stored photos use.
@@ -93,9 +61,7 @@ VERSION = version()
 def fitted(width: int, height: int, longest: int) -> tuple[int, int]:
     """The size `Image.thumbnail((longest, longest))` produces, without an image.
 
-    Mirrors Pillow's own rounding, which picks whichever of floor and ceil keeps
-    the aspect closest. srcset's width descriptors are made from this, so they
-    describe the image actually served rather than an approximation of it.
+    Mirrors Pillow's rounding exactly, so srcset widths describe the image served.
     """
     if longest >= width and longest >= height:
         return width, height
@@ -115,9 +81,7 @@ def fitted(width: int, height: int, longest: int) -> tuple[int, int]:
 def strip_name(filename: str, v: str | None = None) -> str:
     """The strip's filename, beside the full image it was made from.
 
-    `v` defaults to the version in force *now*, looked up on each call. A
-    default of `VERSION` would be bound once, at import, and a changed recipe
-    would then write under a filename its own URL could never find.
+    `v` defaults to `VERSION` looked up at call time, not bound at import.
     """
     return f"{Path(filename).stem}-strip-{v or VERSION}.jpg"
 
@@ -125,8 +89,7 @@ def strip_name(filename: str, v: str | None = None) -> str:
 def strip_files(photo_dir: Path, filename: str) -> list[Path]:
     """Every strip on disk for this photo, of any recipe.
 
-    Matched exactly rather than by a loose glob, so another photo whose name
-    happens to start with this one's is never taken for it.
+    Matched exactly, so a photo whose name starts with this one's is not taken for it.
     """
     stem = Path(filename).stem
     pattern = re.compile(rf"{re.escape(stem)}-strip-[0-9a-f]{{{_VERSION_LENGTH}}}\.jpg")
@@ -138,9 +101,8 @@ def strip_files(photo_dir: Path, filename: str) -> list[Path]:
 def render_strip(full: Image.Image) -> Image.Image:
     """The strip image, from the full photo.
 
-    Works on a loaded copy, so Pillow's JPEG draft shortcut can never apply:
-    it would decode at a reduced scale when handed an unread file, and the
-    same photo would then make different bytes depending on how it was opened.
+    Works on a loaded copy: Pillow's JPEG draft mode on an unread file would
+    make different bytes from the same photo.
     """
     image = full.convert("RGB")
     image.thumbnail((STRIP_MAX, STRIP_MAX), Image.LANCZOS)
@@ -148,13 +110,10 @@ def render_strip(full: Image.Image) -> Image.Image:
 
 
 def write_strip(photo_dir: Path, filename: str) -> bool:
-    """Make this photo's strip if it is not there yet. True if one was written.
+    """Make this photo's strip, from the full image, if it is not there yet.
 
-    From the **full image**, never from the old thumbnail -- remaking a
-    thumbnail from a thumbnail compounds the blur. Written beside the target
-    under a hidden name and renamed into place, which is atomic on one
-    filesystem: the service may be serving this directory at the time, and a
-    reader must never see half a JPEG.
+    Returns True if one was written. Renamed into place, so a reader never sees
+    half a JPEG.
     """
     target = photo_dir / strip_name(filename)
     if target.is_file():
@@ -176,13 +135,9 @@ def write_strip(photo_dir: Path, filename: str) -> bool:
 
 
 def srcset(photo: dict[str, Any]) -> str:
-    """The images a photo can be drawn from, for an `<img srcset>`.
+    """The thumbnail and the strip, each with its real width, for an `<img srcset>`.
 
-    The thumbnail and the strip, each described by its real width, so the
-    browser picks by the space the image fills and the screen's density: a 3x
-    phone takes the strip, a 1x desktop the thumbnail. Built from the row
-    alone -- the strip needs no existence check, because a request for one not
-    yet made makes it.
+    No existence check: a request for a strip not yet made makes it.
     """
     width, height = photo.get("width"), photo.get("height")
     if not width or not height:
@@ -192,8 +147,7 @@ def srcset(photo: dict[str, Any]) -> str:
     strip_width, _ = fitted(width, height, STRIP_MAX)
     thumb = f"/photos/{photo_id}/thumb {thumb_width}w"
     if strip_width <= thumb_width:
-        # A photo too small to have a larger version: two candidates of one
-        # width is not a choice, and a duplicate descriptor is invalid.
+        # Too small for a larger version; a duplicate width descriptor is invalid.
         return thumb
     return f"{thumb}, /photos/{photo_id}/strip?v={VERSION} {strip_width}w"
 
@@ -201,15 +155,10 @@ def srcset(photo: dict[str, Any]) -> str:
 def backfill(
     conn: sqlite3.Connection, photo_dir: Path, *, dry_run: bool = False, prune: bool = False
 ) -> dict[str, Any]:
-    """Make every photo's strip that is missing. What `moving thumbnails` runs.
+    """Make every missing strip (`moving thumbnails`). Safe to re-run, and while serving.
 
-    Safe to re-run and safe while the service is running: it only ever *reads*
-    the database, never touches a full image or a list thumbnail, and each
-    strip is renamed into place whole. A strip already there is left alone, so
-    a second run does nothing.
-
-    `prune` also removes strips of an older recipe. Off by default: a copy of
-    the service still running the old code would be advertising exactly those.
+    `prune` also removes strips of an older recipe -- which a service still
+    running the old code would be advertising.
     """
     report: dict[str, Any] = {"made": 0, "present": 0, "pruned": 0, "missing": []}
     for row in conn.execute("SELECT id, filename FROM photos ORDER BY id"):

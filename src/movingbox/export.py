@@ -1,8 +1,4 @@
-"""Exports, so the data outlives the application.
-
-Rooms are written as names, not ids, and items are nested inside their box. An
-export that still needs the database to be interpretable is not an export.
-"""
+"""Exports that are readable without the database: rooms by name, items nested in their box."""
 
 from __future__ import annotations
 
@@ -36,8 +32,7 @@ CSV_COLUMNS = [
     "sealed_at",
 ]
 
-#: Boxes with no destination still have to appear, or they go missing from the
-#: count the movers are working to.
+#: The manifest's group for boxes with no destination, so they are still counted.
 UNASSIGNED = "Unassigned"
 
 
@@ -129,12 +124,7 @@ def manifest(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 
 
 def manifest_totals(groups: list[dict[str, Any]]) -> dict[str, Any]:
-    """Totals across a manifest, including how much of it is unknown.
-
-    ``weight_kg`` is the sum of *known* weights. Reporting it without
-    ``unweighed`` invites someone to load-plan from a number that silently
-    omits most of the boxes.
-    """
+    """Totals across a manifest. ``weight_kg`` sums *known* weights; see ``unweighed``."""
     return {
         "boxes": sum(g["count"] for g in groups),
         "weight_kg": round(sum(g["weight_kg"] for g in groups), 1),

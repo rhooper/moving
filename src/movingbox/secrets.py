@@ -1,37 +1,13 @@
-"""The `.env` file: where the Anthropic API key comes from, and where it must
-never go.
+"""Where the Anthropic API key comes from, and where it must never go.
 
-Two sources, most specific first:
+Sources, most specific first: ``ANTHROPIC_API_KEY`` in the environment, then
+``.env`` in the project root. Having neither is a working configuration, not
+an error: the hybrid reads photos locally.
 
-1. ``ANTHROPIC_API_KEY`` in the environment -- a test, a throwaway server, or
-   anyone who would rather export it by hand.
-2. **`.env` in the project root**, parsed for ``ANTHROPIC_API_KEY=...``.
-3. Neither, which is **not an error**: the hybrid falls back to the local
-   model, so an absent key degrades the *reading* rather than breaking the
-   app. Somebody who starts the service before putting the key in place gets
-   working local analysis, not an outage. This is the design, not an error
-   path, and it is the most important line in this module.
-
-`.env` rather than a keychain, a plist variable or a secret manager, because
-the hazard list for this project is short and `.env` is already off all of it:
-`.gitignore` lists it under "Local secrets", so it cannot be committed by
-accident; backups use SQLite's online backup API against the database alone
-and never sweep the working tree; and `export.py` writes database contents,
-not files.
-
-The grammar is `KEY=VALUE`, `#` comments and blank lines, with surrounding
-quotes stripped -- parsed here rather than by adding python-dotenv, because
-this project keeps a deliberately thin dependency list and that is the whole
-of it. Keys the app does not know are ignored, since the file will grow other
-settings.
-
-The value is read **once, at startup**, into `Config`. It is never logged,
-never put in an exception message (`vision.claude.redact` scrubs any that a
-reply quotes back), never announced as an event, never served by a route, and
-never written to the database. `Config` keeps it out of its own `repr` so a
-traceback cannot spill it into var/log. Nothing here ever reports *part* of a
-value: a malformed file says the file is malformed, and a rejected key says
-the key was rejected.
+The value is read once, at startup, into `Config` (kept out of its `repr`). It
+is never logged, never put in an exception message (`vision.claude.redact`
+scrubs any a reply quotes back), never sent as an event, never served by a
+route and never written to the database. Nothing reports *part* of a value.
 """
 
 from __future__ import annotations
@@ -43,18 +19,12 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-#: Names the app reads out of the file. Anything else is somebody else's
-#: setting and is left alone rather than warned about.
+#: Names the app reads out of the file; others are left alone.
 KNOWN = ("ANTHROPIC_API_KEY",)
 
 
 def parse(text: str) -> dict[str, str]:
-    """`KEY=VALUE` lines, `#` comments, blank lines, optional quotes.
-
-    A line that is not one of those is skipped rather than fatal: half a file
-    of settings should not stop the app, and the one thing that matters --
-    whether there is a key -- answers itself.
-    """
+    """`KEY=VALUE` lines, `#` comments, blank lines, optional quotes. Other lines are skipped."""
     found: dict[str, str] = {}
     for line in text.splitlines():
         line = line.strip()
@@ -71,10 +41,8 @@ def parse(text: str) -> dict[str, str]:
             # A quoted value keeps whatever is inside the quotes, `#` included.
             value = value[1:-1]
         else:
-            # An unquoted value ends at a trailing comment. This matters more
-            # than it looks: an API key with " # mine" still on the end is
-            # sent verbatim and comes back as a 401, which reads as a bad key
-            # rather than as a bad line.
+            # An unquoted value ends at a trailing comment; a key sent with
+            # " # mine" on the end comes back as a 401 that reads as a bad key.
             value = value.split(" #", 1)[0].split("\t#", 1)[0].strip()
         found[name] = value
     return found
@@ -87,7 +55,7 @@ def read(path: Path) -> dict[str, str]:
     except FileNotFoundError:
         return {}
     except OSError as unreadable:
-        # Named, never quoted: the reason can mention the path, not the file.
+        # The path and the reason, never the contents.
         log.warning("could not read %s: %s", path, unreadable.strerror)
         return {}
 
@@ -96,8 +64,7 @@ def read(path: Path) -> dict[str, str]:
     except OSError:
         mode = 0
     if mode & (stat.S_IRGRP | stat.S_IROTH):
-        # Not fatal -- refusing to start over a file mode would be worse than
-        # the exposure -- but nobody notices this until it matters.
+        # A warning, not a refusal to start.
         log.warning("%s is readable by other users; run: chmod 600 %s", path, path)
 
     return parse(text)

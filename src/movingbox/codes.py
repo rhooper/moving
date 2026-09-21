@@ -1,16 +1,8 @@
-"""Box code format: prefix, separator and number length.
+"""Box code format: prefix, separator and number length (``CAM-001``, ``D001``, ``B-0001``).
 
-``CAM-001``, ``D001``, ``Z06-001``, ``B-0001`` are all expressible.
-
-The format lives in the ``settings`` table, not in the environment. Codes
-belong to the data: a database restored onto another machine has to keep
-issuing codes that match the labels already stuck to boxes, and an env var
-would not travel with it.
-
-Each prefix carries its own counter, so switching to ``CAM`` starts at
-``CAM-001`` rather than continuing some global count -- while switching *back*
-to a previous prefix resumes where it left off, because a reused code would
-point an already-printed label at a different box.
+Stored in the database, so a restored database keeps issuing codes that match
+existing labels. Each prefix has its own counter, so returning to an old prefix
+resumes it and never reuses a code.
 """
 
 from __future__ import annotations
@@ -24,12 +16,9 @@ DEFAULT_SEPARATOR = "-"
 DEFAULT_DIGITS = 4
 
 MAX_DIGITS = 12
-#: Letters and digits only: the code goes in a URL path and is read back off a
-#: label, so 'Z06' is fine but punctuation is not.
+#: Letters and digits only: the code goes in a URL path and is read off a label.
 PREFIX_PATTERN = re.compile(r"^[A-Za-z0-9]{1,12}$")
-#: A separator must survive being a URL path segment and being read off tape.
-#: A slash would split the segment the scanner reads; a space would break the
-#: URL entirely.
+#: Safe in a single URL path segment.
 ALLOWED_SEPARATORS = {"", "-", "_", "."}
 
 
@@ -75,12 +64,7 @@ def set_format(
 
 
 def kind_prefix(conn: sqlite3.Connection, kind: str) -> str:
-    """The prefix for a kind, falling back to the global one.
-
-    Optional on purpose: one sequence for everything is the simplest thing that
-    works, and 'I-0007' beside 'B-0042' is only worth it if you want to tell a
-    loose item from a box at a glance.
-    """
+    """The prefix for a kind, falling back to the global one."""
     return _setting(conn, f"code_prefix:{kind}", "") or get_format(conn)["prefix"]
 
 
@@ -122,8 +106,5 @@ def set_sequence(conn: sqlite3.Connection, number: int) -> int:
 
 
 def render(number: int, *, prefix: str, separator: str, digits: int) -> str:
-    """Format one number. Padding is a minimum, never a ceiling.
-
-    Box 1000 in a 3-digit format is ``1000``, not ``000``.
-    """
+    """Format one number. Padding is a minimum: 1000 in a 3-digit format is ``1000``."""
     return f"{prefix}{separator}{number:0{digits}d}"

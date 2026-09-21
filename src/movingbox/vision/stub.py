@@ -1,12 +1,7 @@
-"""A vision provider that sees the same thing every time.
-
-For building and checking the UI without a model: it waits, then returns a
-fixed draft. Deterministic, offline, and as slow as you tell it to be -- which
-matters, because the thing being checked is usually the countdown.
+"""A vision provider that waits, then returns a fixed draft, for checking the UI.
 
 Selected with ``MOVING_VISION_PROVIDER=stub``; ``MOVING_VISION_STUB_SECONDS``
-sets the wait. Never the default, and never used by the test suite, which
-passes its own providers in directly.
+sets the wait.
 """
 
 from __future__ import annotations

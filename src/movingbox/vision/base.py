@@ -1,13 +1,8 @@
 """The draft a vision model produces, and how a model's reply becomes one.
 
-Parsing is deliberately forgiving. Small local models wrap JSON in markdown
-fences, prepend "Sure! Here is...", and invent quantities like "lots" no matter
-how firmly the prompt forbids it. None of that should cost the user their
-photo, so the reply is mined for JSON and every field is coerced.
-
-Parsing is *not* forgiving about producing nothing: a reply with no readable
-JSON raises, rather than silently handing back an empty draft that looks like
-"the model saw an empty box".
+Parsing is forgiving of the reply -- JSON is mined out of fences and prose, and
+every field is coerced -- but strict about the outcome: a reply with no usable
+draft raises rather than reading as "the model saw an empty box".
 """
 
 from __future__ import annotations
@@ -17,7 +12,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-#: Long enough to be useful on a label, short enough to fit one.
+#: Characters kept of a model's summary. The label prints what fits.
 SUMMARY_MAX = 240
 #: A box with more than this many distinct things in it is a box of "misc".
 ITEMS_MAX = 40
@@ -47,12 +42,9 @@ class BoxDraft:
 
 @dataclass(frozen=True)
 class Reading:
-    """Who actually answered, and what it cost.
+    """Who actually answered, and what it cost (zero for a local model).
 
-    A hybrid setup falls back, so the model named on a job when it was queued
-    is not necessarily the one that produced the draft -- and a wrong item has
-    to be traceable to the model that wrote it. Tokens and dollars are zero for
-    a local model, which is the honest number rather than a missing one.
+    With a fallback, this can differ from the model a job named when queued.
     """
 
     provider: str
@@ -65,9 +57,8 @@ class Reading:
 class VisionProvider(Protocol):
     name: str
 
-    #: What the last `draft` cost, where the provider knows. Read with
-    #: `getattr(provider, "last", None)`: a provider need not keep one, and a
-    #: provider that says nothing about cost cost nothing.
+    #: What the last `draft` cost. Optional: read with
+    #: `getattr(provider, "last", None)`; absent means it cost nothing.
     last: Reading | None
 
     def draft(self, images: list[bytes], *, model: str) -> BoxDraft: ...

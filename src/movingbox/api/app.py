@@ -25,26 +25,18 @@ from . import assets, events
 
 WEB_ROOT = ROOT / "web"
 
-#: Written by scripts/claude/deploy.sh (and install-service.sh) with the commit
-#: being deployed, just before the launchd agent is restarted. Gitignored along
-#: with the rest of var/.
+#: Written by scripts/claude/deploy.sh just before the service restarts.
 REVISION_FILE = ROOT / "var" / "deployed-revision"
 
 
 def deployed_revision() -> str:
     """The commit this process was started from, or ``"unknown"``.
 
-    Read **once, at startup** rather than per request, and that is the whole
-    point: a value re-read on each request would report the new commit the
-    moment the file was written, whether or not the restart that was supposed
-    to follow ever happened. Read at startup, /health answering with the new
-    revision is proof that this process is running that code -- which is what
-    the deploy script checks before calling a deploy successful.
+    Call once, at startup: re-read per request, /health would report the new
+    commit as soon as the file was written, whether or not the restart happened.
     """
-    # The environment wins, for one purpose: the browser checks run a
-    # throwaway server, which has no deploy behind it, and they must load the
-    # app the way production serves it -- every asset URL versioned -- or the
-    # rewriting in assets.py is only ever exercised on the live site.
+    # Lets a throwaway server (the browser checks) serve versioned asset URLs
+    # the way production does.
     named = os.environ.get("MOVING_REVISION", "").strip()
     if named:
         return named
@@ -61,26 +53,17 @@ def get_config(request: Request) -> Config:
 def get_events(
     request: Request, x_client_id: str | None = Header(default=None)
 ) -> events.Publisher:
-    """The change channel, bound to the device that made this request.
-
-    Tagging each event with its origin is what lets that device ignore its own
-    echo: it has already redrawn from the response it got, and redrawing again
-    a moment later is how a half-typed item name disappears.
-    """
+    """The change channel, tagged with the requesting device so it can ignore its own echo."""
     return events.Publisher(request.app.state.events, origin=x_client_id)
 
 
 def get_conn(config: Config = Depends(get_config)) -> Iterator[sqlite3.Connection]:
     """One connection per request, never shared between requests.
 
-    Per-request isolation is necessary but **not sufficient**: a single request
-    does not stay on one thread. FastAPI runs this generator's setup, the
-    endpoint body, and its teardown on potentially three different threadpool
-    workers, so the connection itself must tolerate the handoff -- see the
-    check_same_thread note in db.connect().
-
-    WAL mode makes the per-request open cheap and keeps readers from blocking
-    the writer.
+    Setup, endpoint and teardown may each run on a different threadpool worker,
+    so the connection must tolerate the handoff (see db.connect). Routes taking
+    this must be sync ``def``: an ``async def`` endpoint runs on the event loop,
+    and sqlite refuses a handle that crosses to it.
     """
     conn = db.connect(config.db_path)
     try:
@@ -90,14 +73,11 @@ def get_conn(config: Config = Depends(get_config)) -> Iterator[sqlite3.Connectio
 
 
 def build_vision_provider(config: Config):
-    """The configured vision provider. One place, for routes and the worker.
+    """The configured vision provider, for routes and the worker.
 
-    Built per use rather than at startup so Ollama coming back up -- or an
-    API that was unreachable a minute ago -- does not need a restart.
-
-    "claude" is a *pair*: the cloud tier with the local model behind it. With
-    no key it is still a pair, with nothing to try first, which is how an
-    unauthenticated service reads photos locally instead of failing.
+    Built per use so a provider that comes back up needs no restart. "claude"
+    is the cloud tier with the local model behind it; with no key it is still a
+    pair, with nothing to try first, so photos are read locally.
     """
     if config.vision_provider == "stub":
         from ..vision.stub import StubProvider
@@ -122,17 +102,15 @@ def build_vision_provider(config: Config):
 
 
 def get_vision_provider(config: Config = Depends(get_config)):
-    """The vision provider for drafting. Overridden in tests with a stub."""
+    """Overridden in tests with a stub."""
     return build_vision_provider(config)
 
 
 def build_phraser(config: Config):
-    """The thing that writes the "From contents" line, or None to assemble it.
+    """The "From contents" phraser, or None to assemble the line without a model.
 
-    None is not a failure: the endpoint assembles the line exactly as it always
-    did. It is what a Config built directly gives -- which is every test, so
-    nothing in the suite can reach a model -- and what the owner gets by
-    setting MOVING_PHRASE_SUMMARIES=0.
+    A Config built directly (every test) gives None, so the suite never reaches
+    a model.
     """
     if not config.phrase_summaries:
         return None
@@ -147,7 +125,7 @@ def build_phraser(config: Config):
 
 
 def get_phraser(config: Config = Depends(get_config)):
-    """The summary phraser. Overridden in tests that want one."""
+    """Overridden in tests that want one."""
     return build_phraser(config)
 
 
@@ -160,11 +138,9 @@ def require_api_key(
     config: Config = Depends(get_config),
     x_api_key: str | None = Header(default=None),
 ) -> None:
-    """Guard the /api surface when a key is configured.
+    """Guard the /api surface when a key is configured; with none, it is open.
 
-    With no key set the API is open, which is the right default for a tool that
-    normally runs on localhost behind Tailscale. `/b/{code}` is deliberately not
-    guarded: a QR code is opened by a stock camera app that cannot send headers.
+    `/b/{code}` is not guarded: a stock camera app opening a QR cannot send headers.
     """
     if config.api_key is None:
         return
@@ -173,12 +149,10 @@ def require_api_key(
 
 
 async def _until_the_client_goes(socket: WebSocket) -> None:
-    """Finish when the browser hangs up.
+    """Finish when the browser hangs up; anything it sends is discarded.
 
-    Nothing else ever reads this socket, so without a reader a phone that
-    walked out of range would leave the sending coroutine parked on its queue
-    until the next heartbeat failed. Anything the client sends is discarded:
-    the channel is one-way by design.
+    Without a reader, a vanished client would leave the sender parked on its
+    queue until the next heartbeat failed.
     """
     try:
         while True:
@@ -193,29 +167,15 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        # The printer switches itself off after a while, and the only way to
-        # stop it is to tell it once -- the setting persists in the printer.
-        # So: wait for it to appear, say so, and stop. A daemon thread, and
-        # stopped on shutdown, so it never holds the service up.
         watcher = printing.AutoOffWatcher(settings)
         app.state.printer_watcher = watcher
         watcher.start()
 
-        # "From contents" is a button someone is standing over, so the model
-        # behind it has to be in memory already: a cold load is several
-        # seconds against a warm answer's third of one. Ollama unloads after
-        # half an hour, and boxes are packed further apart than that, so this
-        # pings it back awake for as long as the app is up. It does nothing
-        # unless the config asks (a Config built directly never does), and
-        # nothing it does can fail startup.
         warmer = phrasing.Warmer(settings)
         app.state.summary_warmer = warmer
         warmer.start()
 
-        # Photo analysis runs here rather than in the request that uploaded the
-        # photo: a vision model takes seconds to tens of seconds, and nobody
-        # should hold a phone still for that. Off unless the config asks -- a
-        # Config built directly, as every test builds one, never starts it.
+        # Off in a Config built directly, so no test starts the worker.
         if settings.auto_analyse:
             app.state.analyst = analysis.Analyst(
                 settings,
@@ -249,13 +209,8 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     @app.get("/health")
     def health(response: Response) -> dict[str, str]:
-        # revision says which commit is running; version is for a human
-        # reading a bug report ("saw it on 0.4.2").
-        #
-        # An open page asks this to learn that a deploy happened (web/reload.js),
-        # so no cache anywhere may keep an answer: one kept would be read back
-        # as "still the revision you are running", and the page would never
-        # reload. The service worker lets it through for the same reason.
+        # web/reload.js polls this to notice a deploy; a cached answer would
+        # hide one.
         response.headers["Cache-Control"] = "no-store"
         return {
             "status": "ok",
@@ -267,21 +222,16 @@ def create_app(config: Config | None = None) -> FastAPI:
     async def changes(socket: WebSocket) -> None:
         """Tell connected clients which box just changed.
 
-        Deliberately takes no `get_conn`: a websocket endpoint must be `async
-        def`, and an async endpoint holding a connection opened in the
-        threadpool is the exact crash documented on get_conn. It needs none --
-        every message is a kind and a code, and clients re-fetch over REST.
+        Must never take `get_conn`: a websocket endpoint has to be `async def`,
+        and a sqlite handle cannot cross onto the event loop. Messages carry a
+        kind and a code only; clients refetch over REST.
 
-        The key travels in the query string because it has to: a browser's
-        WebSocket constructor takes a URL and nothing else, so X-API-Key
-        cannot be attached to the handshake. That does put the key in the
-        server's access log, which is why `/api/events` is refused outright
-        rather than degraded when the key is wrong.
+        The key is in the query string because a browser's WebSocket
+        constructor cannot send headers, so it does appear in the access log.
         """
         settings: Config = socket.app.state.config
         if settings.api_key is not None and socket.query_params.get("key") != settings.api_key:
-            # Closing before accepting rejects the handshake outright, which
-            # is what a browser reports as a failed connection.
+            # Closing before accepting rejects the handshake.
             await socket.close(code=1008)
             return
 
@@ -307,19 +257,16 @@ def create_app(config: Config | None = None) -> FastAPI:
     def scanned(code: str, conn: sqlite3.Connection = Depends(get_conn)):
         """Where a scanned QR code lands. Redirects into the PWA.
 
-        The Location is **relative** on purpose. Tailscale terminates TLS and
-        proxies plain HTTP to us, so an absolute redirect rebuilt from the
-        request would say `http://` and drop the phone out of HTTPS — which
-        breaks the camera, since getUserMedia needs a secure context.
+        The Location must stay relative: Tailscale terminates TLS and proxies
+        plain HTTP, so an absolute URL rebuilt from the request would say
+        `http://`, leave the secure context and break the camera.
         """
-        # include_deleted: scanning a box you deleted by mistake should take
-        # you to it, where it can be restored, not to "no such box".
+        # A binned box opens where it can be restored.
         if store.get_box(conn, code, include_deleted=True) is None:
             raise HTTPException(status_code=404, detail=f"No box {code}")
         return RedirectResponse(url=f"/#/b/{quote(code)}", status_code=307)
 
-    # The label's typeface, served from the package rather than duplicated into
-    # web/ so there is one copy of the file in the repo.
+    # The label's typeface, served from the package so there is one copy.
     @app.get("/Inter.ttf", include_in_schema=False)
     def font(v: str | None = None) -> FileResponse:
         return FileResponse(
@@ -328,21 +275,13 @@ def create_app(config: Config | None = None) -> FastAPI:
             headers={"Cache-Control": assets.cache_header(v, app.state.revision)},
         )
 
-    # Mounted last: every route above wins, so /api and /b are not shadowed.
-    # html=True serves index.html at / so the hash router can take over.
+    # Mounted last, so /api and /b are not shadowed.
     if WEB_ROOT.is_dir():
 
         @app.get("/sw.js", include_in_schema=False)
         def service_worker() -> Response:
-            """sw.js with its shell-cache version pinned to the revision.
-
-            The version was a hand-bumped literal, and nobody bumped it -- so
-            deployed phones kept a stale app.js against a newer API until
-            buttons errored. Substituting the deployed revision rolls the
-            cache on every deploy: the browser re-checks sw.js, sees new
-            bytes, and reinstalls the shell. Left alone in dev (revision
-            "unknown"), where pinning every client to one name would recreate
-            exactly the staleness this exists to end.
+            """sw.js with its cache version set to the revision, so each deploy
+            reinstalls the shell. Served as written in dev (revision "unknown").
             """
             body = (WEB_ROOT / "sw.js").read_text()
             if app.state.revision != "unknown":
@@ -352,23 +291,18 @@ def create_app(config: Config | None = None) -> FastAPI:
                     body,
                     count=1,
                 )
-            # Its shell list names the files to pre-cache; they have to be the
-            # same versioned URLs the page asks for, or every one is a miss.
+            # The shell list must name the same versioned URLs the page asks for.
             body = assets.versioned(body, app.state.revision)
             return Response(
                 body,
                 media_type="application/javascript",
-                # An HTTP-cached sw.js would defeat the whole point.
                 headers={"Cache-Control": "no-cache"},
             )
 
-        # The page and the files it is made of, with the deployed revision in
-        # every asset URL (see assets.py). Ahead of the mount below, which is
-        # left to serve anything these do not claim.
         @app.get("/", include_in_schema=False)
         @app.get("/index.html", include_in_schema=False)
         def page() -> Response:
-            # Never cached: it is what *names* the versioned files.
+            # Never cached: it names the versioned files.
             return assets.respond(
                 WEB_ROOT / "index.html",
                 asked_for=None,
@@ -378,8 +312,7 @@ def create_app(config: Config | None = None) -> FastAPI:
 
         @app.get("/{name}", include_in_schema=False)
         def asset(name: str, v: str | None = None) -> Response:
-            # One path segment, by construction of the route -- so no
-            # traversal -- and only a file that is really in the web root.
+            # One path segment by construction of the route, so no traversal.
             path = WEB_ROOT / name
             if name.startswith(".") or not path.is_file():
                 raise HTTPException(status_code=404, detail="Not found")

@@ -16,11 +16,7 @@ router = APIRouter(prefix="/api", tags=["boxes"])
 
 
 def _require(conn: sqlite3.Connection, code: str) -> dict:
-    """The record, for something that is about to change it.
-
-    A deleted record is reported as deleted rather than missing: 404 would say
-    it never existed, when the answer is "restore it first".
-    """
+    """The record, for something about to change it. A binned one is 409, not 404."""
     box = store.get_box(conn, code, include_deleted=True)
     if box is None:
         raise HTTPException(status_code=404, detail=f"No box {code}")
@@ -74,31 +70,22 @@ def create_box(
     conn: sqlite3.Connection = Depends(get_conn),
     changes: events.Publisher = Depends(get_events),
 ) -> dict:
-    # Every publish below happens after the store call returns, so a request
-    # that failed announces nothing and no client refetches for no reason.
     try:
         box = store.create_box(conn, **body.set_fields())
     except ValueError as bad:
-        # The schema checks each value; only the store knows whether they make
-        # sense together -- a size on something that is not a container, a
-        # parent that is not one either.
+        # The store checks combinations the schema cannot, such as a size on
+        # a single thing.
         raise HTTPException(status_code=422, detail=str(bad)) from bad
     changes.publish(events.BOX_CREATED, box["code"])
     box = _with_nesting(conn, box)
     if box["parent"]:
-        # The container it was made inside has one more thing in it.
         changes.publish(events.BOX_UPDATED, box["parent"]["code"])
     return box
 
 
 @router.get("/boxes/{code}")
 def get_box(code: str, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
-    """The record, including one in the bin.
-
-    It is already out of the list and out of search, so getting here means you
-    know the code -- you scanned it, or came from the bin. Answering 404 would
-    tell someone who had just deleted a box by mistake that it never existed.
-    """
+    """The record, including one in the bin, so a mistaken delete can be restored."""
     box = store.get_box(conn, code, include_deleted=True)
     if box is None:
         raise HTTPException(status_code=404, detail=f"No box {code}")
@@ -108,8 +95,6 @@ def get_box(code: str, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
 def _with_nesting(conn: sqlite3.Connection, box: dict) -> dict:
     """The record, plus what it is inside and what is inside it.
 
-    On the record rather than behind further endpoints: the page that draws a
-    record already makes five requests, and these are what it draws first.
     `path` is outermost first, for a breadcrumb; `parent` is its last step.
     """
     path = [_brief(step) for step in store.path_to(conn, box["code"])]
@@ -122,9 +107,8 @@ def _with_nesting(conn: sqlite3.Connection, box: dict) -> dict:
 
 
 def _brief(box: dict) -> dict:
-    # What the page needs from a container it is inside: its name, where it is
-    # going (a nested record goes where its container goes) and whether it is
-    # fragile (a fragile thing makes its containers fragile).
+    # The page needs a container's room (a nested record inherits it) and
+    # whether it is already fragile.
     return {
         key: box[key]
         for key in ("code", "kind", "content_summary", "destination_room_id", "fragile", "size")
@@ -145,14 +129,14 @@ def update_box(
     was_inside = store.path_to(conn, code)[-1:] if moving else []
     try:
         if moving:
-            # Checked first, so a refused move changes nothing else either.
+            # First, so a refused move changes nothing else either.
             store.set_parent(conn, code, parent_code)
         box = store.update_box(conn, code, **fields)
     except ValueError as bad:
         raise HTTPException(status_code=422, detail=str(bad)) from bad
     changes.publish(events.BOX_UPDATED, code)
     if moving:
-        # Both ends of the move: one container lost something, one gained it.
+        # Both the old container and the new one.
         for end in {step["code"] for step in was_inside} | ({parent_code} - {None}):
             changes.publish(events.BOX_UPDATED, end)
     return _with_nesting(conn, box)
@@ -169,7 +153,6 @@ def delete_box(
     try:
         deleted = store.delete_box(conn, config, code)
     except store.NotEmpty as full:
-        # 409: the request is fine; the container is not empty.
         raise HTTPException(status_code=409, detail=str(full)) from full
     if not deleted:
         raise HTTPException(status_code=404, detail=f"No box {code}")
@@ -203,7 +186,6 @@ def purge_box(
     try:
         gone = store.purge_box(conn, config, code)
     except store.NotDeleted as live:
-        # 409: the request is fine, the record's state is not.
         raise HTTPException(status_code=409, detail=str(live)) from live
     if not gone:
         raise HTTPException(status_code=404, detail=f"No box {code}")
@@ -263,11 +245,7 @@ def update_item(
     conn: sqlite3.Connection = Depends(get_conn),
     changes: events.Publisher = Depends(get_events),
 ) -> dict:
-    """Rename or re-count one item.
-
-    Renaming an autogenerated item makes it the person's: `store.update_item`
-    flips its source to 'manual', and photo analysis leaves it alone from then.
-    """
+    """Rename or re-count one item. Renaming an autogenerated one makes it 'manual'."""
     try:
         item = store.update_item(conn, item_id, **body.model_dump(exclude_unset=True))
     except ValueError as bad:
@@ -284,9 +262,7 @@ def delete_item(
     conn: sqlite3.Connection = Depends(get_conn),
     changes: events.Publisher = Depends(get_events),
 ) -> Response:
-    # Which box owns it, read before the row goes. The notification names a
-    # box because that is what a client re-fetches by, and by the time it is
-    # sent the item id refers to nothing.
+    # Read before the row goes: events name the box, not the item.
     owner = store.code_for_item(conn, item_id)
     if not store.delete_item(conn, item_id):
         raise HTTPException(status_code=404, detail=f"No item {item_id}")
@@ -301,20 +277,10 @@ def suggest_summary(
     config: Config = Depends(get_config),
     phraser: phrasing.Phraser | None = Depends(get_phraser),
 ) -> dict:
-    """A summary of the box's items and of whatever is nested inside it.
+    """A proposed summary of the box's items and whatever is nested in it, at any depth.
 
-    Proposed, never applied -- the same rule as a photo draft. The caller puts
-    it in the field and decides whether to keep it.
-
-    What is inside counts as contents, to any depth: a crate holding three
-    bags is not empty, and a crate holding a box of books can say so rather
-    than saying "large box". The print gate has counted children since nesting
-    landed; this is the same view of the record, in words.
-
-    `source` says whether a model phrased the line ("model") or it was
-    assembled from the list ("assembled"). Assembled is not a failure state --
-    it is what happens with no model configured, with too little to generalise
-    from, and every time Ollama cannot answer. See phrasing.py.
+    Nothing is written. `source` is "model" when a model phrased the line and
+    "assembled" otherwise, which is a normal outcome (see phrasing.py).
     """
     _require_readable(conn, code)
     contents = summarise.contents(store.subtree(conn, code))
@@ -334,11 +300,5 @@ def search_boxes(
     limit: int = Query(default=50, le=500),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
-    """Matching records, and the containers they are inside.
-
-    A context row (`matched: false`) is not a result -- it is where a result
-    lives, so the page can put the container first and indent what is inside
-    it. `ancestry` carries the whole chain, outermost first. See
-    `store.search_with_containers`.
-    """
+    """Matching records, then the containers they are inside (`matched: false`)."""
     return store.search_with_containers(conn, q, limit=limit)

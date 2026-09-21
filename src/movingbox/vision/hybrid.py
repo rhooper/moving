@@ -1,20 +1,9 @@
 """Cloud first, the local model when the cloud cannot answer.
 
-This is the whole point of the hybrid, and it is not a nicety. During an
-actual house move the Mac gets unplugged and carried to a van; the tailnet
-survives things the internet does not, and the router is in a box. A read that
-cannot reach the API should get *worse* -- a local model that names things less
-precisely -- not stop. Everything that makes the cloud unavailable comes to the
-same place: unreachable, unauthorised, rate limited, refused, over budget, or
-simply no key configured.
-
-Which one answered is recorded on `last`, because with two models in play a
-wrong item has to be traceable to the model that wrote it -- and the model
-named on the job when it was queued is only the one that was *tried* first.
-
-The two tiers have different names on either side (`claude-sonnet-5` means
-nothing to Ollama), so the pair carries a mapping from the cloud model to the
-local one that stands in for it.
+Every way the cloud can be unavailable -- unreachable, unauthorised, rate
+limited, refused, over budget, no key -- makes the read worse, never stops it.
+`last` records which model actually answered. `fallbacks` maps each cloud
+model name to the local model that stands in for it.
 """
 
 from __future__ import annotations
@@ -47,33 +36,24 @@ class Hybrid:
         self.last: base.Reading | None = None
 
     def local_only(self) -> Hybrid:
-        """The same pair with the cloud tier withdrawn.
-
-        A new object rather than a flag flipped in place: the decision is made
-        per job (the budget can be crossed mid-queue) and the pair it came
-        from may be the one the next job uses.
-        """
+        """A copy of the pair with the cloud tier withdrawn; the original is unchanged."""
         return Hybrid(cloud=self.cloud, local=self.local, fallbacks=self.fallbacks, use_cloud=False)
 
     def _reading(self, provider: base.VisionProvider, model: str) -> base.Reading:
-        # A provider that says nothing about cost cost nothing -- which is the
-        # honest answer for a local model, and keeps third-party providers
-        # (and the suite's own fakes) working without a bookkeeping method.
+        # A provider that reports no cost cost nothing.
         return getattr(provider, "last", None) or base.Reading(provider=provider.name, model=model)
 
     def draft(self, images: list[bytes], *, model: str) -> base.BoxDraft:
         self.last = None
         refused: base.DraftUnreadable | None = None
-        #: A cloud call that reached the model and then could not be read.
-        #: It was billed all the same, and the budget has to know.
+        #: A cloud call that could not be read but was billed all the same.
         wasted: base.Reading | None = None
 
         if self.use_cloud and self.cloud is not None:
             try:
                 found = self.cloud.draft(images, model=model)
             except base.DraftUnreadable as failure:
-                # The message has already been through redact(); it is safe to
-                # log and safe to put in front of somebody.
+                # Already redacted by the cloud provider, so safe to log and show.
                 log.warning("cloud read failed, falling back to the local model: %s", failure)
                 refused = failure
                 wasted = getattr(self.cloud, "last", None)
@@ -88,19 +68,12 @@ class Hybrid:
         except base.DraftUnreadable as failure:
             if refused is None:
                 raise
-            # `last` is left at the wasted attempt so the job still records
-            # what it cost, even though nothing came of it.
-            # Both reasons, cloud first: the local one is usually the more
-            # actionable ("ollama is not running"), so it reads last.
+            # `last` stays at the wasted attempt, so the job still records its cost.
             raise base.DraftUnreadable(f"{refused}; and the local model: {failure}") from failure
 
         reading = self._reading(self.local, local_model)
         if wasted is not None:
-            # `provider` and `model` name who answered -- the local model,
-            # which charged nothing -- while `cost_usd` is what the *job*
-            # cost. A breakdown by model therefore books a wasted cloud call
-            # against the model that rescued it, which is rare, small, and
-            # better than losing the number.
+            # `model` names who answered; the cost is what the whole job cost.
             reading = dataclasses.replace(
                 reading,
                 input_tokens=reading.input_tokens + wasted.input_tokens,

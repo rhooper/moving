@@ -29,10 +29,8 @@ def upload(
     changes: events.Publisher = Depends(get_events),
     analyst: analysis.Analyst | None = Depends(get_analyst),
 ) -> dict:
-    # Deliberately sync, and reading through file.file rather than `await
-    # file.read()`. An async endpoint runs on the event loop while the sync
-    # get_conn dependency runs in a threadpool, so the sqlite connection would
-    # be created in one thread and used in another -- which sqlite3 refuses.
+    # Sync, reading file.file rather than `await file.read()`: an async
+    # endpoint would use the threadpool's sqlite connection on the event loop.
     data = file.file.read()
     if len(data) > MAX_UPLOAD:
         raise HTTPException(status_code=413, detail=f"photo is larger than {MAX_UPLOAD} bytes")
@@ -42,27 +40,21 @@ def upload(
     except store.UnknownBox as missing:
         raise HTTPException(status_code=404, detail=f"No box {code}") from missing
     except storage.NotAnImage as bad:
-        # 415, not 400: the request was well formed, the payload was not usable.
         raise HTTPException(status_code=415, detail=str(bad)) from bad
 
-    # Analysis starts without being asked. Queued, not run: the model takes
-    # seconds to tens of seconds and this request should not. Idempotent, so
-    # the phone retrying an upload does not analyse the same photo twice.
+    # Idempotent, so a retried upload is not analysed twice.
     analysis.enqueue(conn, config, photo["id"])
     if analyst is not None:
         analyst.wake()
 
-    # Announced even when the sha256 matched an existing photo and nothing was
-    # written: the phone retrying an upload is exactly when another device
-    # most wants to know a photo landed.
+    # Announced even for a duplicate upload.
     changes.publish(events.PHOTOS_CHANGED, code)
     return storage.with_analysis(conn, photo)
 
 
 @router.get("/api/boxes/{code}/photos")
 def list_for_box(code: str, conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
-    # Not gated on deletion: a deleted record keeps its photos, and the page
-    # that offers to restore it shows them.
+    # A binned record keeps its photos, and the page offering restore shows them.
     try:
         return storage.list_photos(conn, code)
     except store.UnknownBox as missing:
@@ -91,24 +83,18 @@ def serve(
     path = config.photo_dir / (name or photo["filename"])
     if not path.is_file():
         raise HTTPException(status_code=404, detail="the photo file is missing from disk")
-    # Cached hard, and safe to be only because these bytes never change: the
-    # full image is the record, and the list thumbnail is never regenerated.
-    # The *files* are content-addressed but these URLs are keyed by id, so
-    # rewriting either in place would leave phones on the old bytes for a
-    # year. Anything regenerable goes through a versioned URL -- see _strip.
+    # Cached for a year under an id-keyed URL, so these files must never be
+    # rewritten in place. Anything regenerable goes through a versioned URL.
     return FileResponse(
         path, media_type="image/jpeg", headers={"cache-control": "public, max-age=31536000"}
     )
 
 
 def _strip(photo: dict, v: str | None, config: Config) -> FileResponse:
-    """The strip image, at exactly the version asked for, or nothing.
+    """The strip image at the current version, made now if missing; any other version is 404.
 
-    Only the current version is served. Any other is a 404 rather than "the
-    current one instead": a fallback answered under an old version's URL would
-    be cached as that version for a year, which is the trap the version exists
-    to avoid. A strip not made yet is made now, from the full image, so it is
-    the same bytes an upload or `moving thumbnails` would have written.
+    Serving the current bytes under an old version's URL would cache them as
+    that version for a year.
     """
     if v != renditions.VERSION:
         raise HTTPException(status_code=404, detail="no strip image at that version")
@@ -119,7 +105,6 @@ def _strip(photo: dict, v: str | None, config: Config) -> FileResponse:
     return FileResponse(
         config.photo_dir / renditions.strip_name(photo["filename"]),
         media_type="image/jpeg",
-        # The version names these bytes, so they can be pinned for good.
         headers={"cache-control": "public, max-age=31536000, immutable"},
     )
 
@@ -146,15 +131,7 @@ def make_cover(
     conn: sqlite3.Connection = Depends(get_conn),
     changes: events.Publisher = Depends(get_events),
 ) -> dict:
-    """Mark this photo as the one its box is recognised by in a list.
-
-    Sync `def`, like everything here that takes get_conn: an async endpoint
-    would run on the event loop while the connection was opened in a
-    threadpool worker, which sqlite3 refuses.
-
-    There is no body -- the photo id in the path is the whole request -- so
-    this needs no schema and stays out of schemas.py.
-    """
+    """Make this photo the one its box is shown with in a list."""
     try:
         photo = storage.set_cover(conn, photo_id)
     except LookupError as missing:
@@ -171,8 +148,7 @@ def delete(
     config: Config = Depends(get_config),
     changes: events.Publisher = Depends(get_events),
 ) -> Response:
-    # Which box it belonged to, read before the row goes: the notification
-    # names a box, and the photo id will refer to nothing by the time it lands.
+    # Read before the row goes: events name the box, not the photo.
     photo = storage.get_photo(conn, photo_id)
     if not storage.delete_photo(conn, config, photo_id):
         raise HTTPException(status_code=404, detail=f"No photo {photo_id}")
@@ -189,15 +165,11 @@ def analyse(
     changes: events.Publisher = Depends(get_events),
     analyst: analysis.Analyst | None = Depends(get_analyst),
 ) -> dict:
-    """Queue one photo for analysis again: a retry after an error, or a re-run.
-
-    202, not 200: the answer is "queued", and the result arrives as events.
-    """
+    """Queue one photo for analysis again. The result arrives as events."""
     photo = storage.get_photo(conn, photo_id)
     if photo is None:
         raise HTTPException(status_code=404, detail=f"No photo {photo_id}")
     if analysis.enqueue(conn, config, photo_id, again=True, detail=detail) is None:
-        # 409: the request is fine; this record is a thing, not a container.
         raise HTTPException(
             status_code=409,
             detail="This is a single thing, not a box: there are no contents to list.",
@@ -226,7 +198,6 @@ def draft(
     except ai.NoPhotos as empty:
         raise HTTPException(status_code=400, detail=str(empty)) from empty
     except base.DraftUnreadable as failure:
-        # 502: we are the gateway to the model, and it is the model that failed.
         raise HTTPException(status_code=502, detail=str(failure)) from failure
 
 

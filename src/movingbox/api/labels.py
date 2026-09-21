@@ -58,15 +58,13 @@ def print_labels(
     config: Config = Depends(get_config),
     changes: events.Publisher = Depends(get_events),
 ) -> dict:
-    # Resolve every code before printing anything. A partly-printed batch
-    # wastes tape and leaves you unsure which labels actually came out.
+    # Resolve every code before printing anything, so a bad code wastes no tape.
     labels = [(code, _label_for(conn, code, config)) for code in body.codes]
 
-    # The stub is for the box with nothing in it yet, so the gate is not its.
+    # The stub exists for a box with nothing in it yet.
     if not body.allow_empty and not body.stub:
         blank = [code for code in body.codes if not store.has_contents(conn, code)]
         if blank:
-            # 409, not 400: the request is fine, the box's state is not.
             raise HTTPException(
                 status_code=409,
                 detail=(
@@ -78,9 +76,7 @@ def print_labels(
     backend = printer.get_backend(config)
     printed = []
     for code, data in labels:
-        # What was asked for; else one for a stub, which goes on an empty box,
-        # once; else whatever this *kind* of thing gets -- two for what is
-        # stacked, one for the rest. Per label, so a mixed batch is right.
+        # Per label, so a mixed batch gets each kind's own number.
         copies = body.copies or (
             1 if body.stub else prefs.label_copies(conn, store.get_box(conn, code)["kind"])
         )
@@ -96,16 +92,12 @@ def print_labels(
             )
             written = backend.print_label(image, code=code, copies=copies)
         except Exception as failure:  # noqa: BLE001 - every backend fails differently
-            # 502: we are the gateway to the hardware, and the hardware failed.
-            # record_print is deliberately not reached -- a print count that
-            # rises when no tape came out is worse than no count at all.
+            # Not counted as printed: no tape came out.
             raise HTTPException(
                 status_code=502,
                 detail=(f"Could not print {code}: {failure}. {printer.status(config)['detail']}"),
             ) from failure
         store.record_print(conn, code, copies=copies)
-        # Per label, not per batch: a long batch should light up each box page
-        # as its tape comes out, not all at the end.
         changes.publish(events.LABEL_PRINTED, code)
         printed.append({"code": code, "output": str(written), "copies": copies})
 

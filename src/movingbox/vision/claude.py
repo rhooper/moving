@@ -1,30 +1,9 @@
-"""Reading a photo with Claude, through the official Anthropic SDK.
+"""Reading a photo with Claude: the cloud half of `vision.hybrid`.
 
-The cloud half of the hybrid. `vision.base.VisionProvider` was always the seam
-for this; this is the thing that slots into it. The local provider stays, and
-`vision.hybrid` is what falls back to it -- see that module for why.
-
-Three decisions worth the words:
-
-**Structured output, not mined JSON.** `base.parse` is deliberately forgiving
-because small local models wrap their JSON in prose. The API can simply be told
-the shape (`output_config.format`), so the reply *is* the object and there is
-nothing to mine. `read_response` still goes through `base.parse`: the
-discipline it enforces at the other end -- a reply with no usable draft raises
-rather than reading as "the model saw an empty box" -- is the half that matters,
-and a fenced or prefaced reply from some later model costs nothing to survive.
-
-**No thinking on the quick tier.** Naming what is in a photograph is
-perception. Thinking would add seconds and output tokens to every one of a
-thousand photos and has no reasoning to do. The closer look keeps it, because
-that tier exists for the hard ones -- handwriting, a brand name on a spine --
-and is asked for by hand, one photo at a time.
-
-**The picture is shrunk before it is sent.** The API resizes anything over
-1568 px on the long edge anyway, so doing it here changes nothing about the
-reading and makes both the upload and the token count predictable. What is
-*stored* stays at 2048 px: see storage.py, and the note in CLAUDE.md about
-1024 px having been a bad trade.
+The API is given the draft's shape (`output_config.format`); the reply still
+goes through `base.parse` so a reply with no usable draft raises. Photos are
+shrunk to the API's own ceiling before sending, which leaves the reading
+unchanged and the token count predictable.
 """
 
 from __future__ import annotations
@@ -40,34 +19,25 @@ from PIL import Image, UnidentifiedImageError
 
 from . import base
 
-#: The API resizes any image whose long edge is over this, so there is nothing
-#: to gain by sending more -- only a slower upload.
+#: The API resizes any image whose long edge is over this.
 API_MAX_EDGE = 1568
 
-#: An image costs about width x height / 750 tokens. A stored 1536 x 2048 photo
-#: becomes 1176 x 1568, which is ~2,460 tokens: the number the budget is built on.
+#: An image costs about width x height / 750 input tokens.
 TOKENS_PER_PIXEL = 750
 
-#: Room for the reply. The draft itself is ~200 tokens; the closer look's
-#: thinking is billed out of the same allowance, hence the larger one.
+#: Room for the reply; the draft itself is ~200 tokens.
 MAX_TOKENS = 2048
 DETAIL_MAX_TOKENS = 8192
 
-#: How hard the closer look tries. `high` (the default) spends more than
-#: reading a photograph is worth. Untested against `low`; `effort` and
-#: `thinking` are separate knobs and only the latter has been measured.
+#: The closer look's effort; `high` (the default) spends more than a photo is worth.
 DETAIL_EFFORT = "medium"
 
-#: 60 s is generous for one photo and one screenful of JSON, and short enough
-#: that a wedged request falls back to the local model while somebody is still
-#: standing over the box. The local provider's 20 minutes is the opposite
-#: trade, and right there: nothing else can answer.
+#: Seconds. Short, so a wedged request falls back to the local model while
+#: someone is still standing over the box.
 TIMEOUT = 60.0
 
-#: Anthropic list prices, USD per million tokens, (input, output), read from
-#: the API's own model table on 2026-09-20. Keyed by model family: a dated
-#: snapshot (`claude-sonnet-5-20260514`) is priced by its longest matching
-#: prefix. Only the models this app can be configured to use are listed.
+#: List prices, USD per million tokens, (input, output). A dated snapshot
+#: (`claude-sonnet-5-20260514`) is priced by its longest matching prefix.
 PRICES: dict[str, tuple[float, float]] = {
     "claude-opus-5": (5.00, 25.00),
     "claude-sonnet-5": (2.00, 10.00),
@@ -78,10 +48,9 @@ _KEY = re.compile(r"sk-ant-[A-Za-z0-9_-]+")
 
 
 def api_error_type(failure: Exception) -> str:
-    """The API's own error type, e.g. "authentication_error". Never a value.
+    """The API's own error type, e.g. "authentication_error"; never a value.
 
-    Read out of the structured body rather than the message, because the type
-    is a fixed enum and a message is free text.
+    Read from the structured body, where it is a fixed enum, not the free-text message.
     """
     body = getattr(failure, "body", None)
     if isinstance(body, dict):
@@ -94,9 +63,8 @@ def api_error_type(failure: Exception) -> str:
 def redact(text: str) -> str:
     """Take any API key out of a string before it is stored or shown.
 
-    A 400 from the API can quote the offending header back. That string goes
-    into `ai_jobs.error`, into an event, and onto a phone screen -- so it is
-    scrubbed at the one place every message passes through.
+    An API error can quote the key back, and messages reach `ai_jobs.error`,
+    events and phone screens.
     """
     return _KEY.sub("[redacted]", text or "")
 
@@ -113,12 +81,7 @@ def image_tokens(width: int, height: int) -> int:
 
 
 def for_api(data: bytes, max_edge: int = API_MAX_EDGE) -> tuple[bytes, str]:
-    """The bytes to send and their media type. Shrinks; never grows.
-
-    An image already inside the ceiling is passed through untouched -- there is
-    no reading to be gained by re-encoding it, and a re-encode would only lose
-    a little of the detail the closer look exists to find.
-    """
+    """The bytes to send and their media type. Shrinks; never grows or re-encodes."""
     try:
         image = Image.open(io.BytesIO(data))
         image.load()
@@ -139,11 +102,8 @@ def for_api(data: bytes, max_edge: int = API_MAX_EDGE) -> tuple[bytes, str]:
 
 
 def strict(schema: dict[str, Any]) -> dict[str, Any]:
-    """`base.SCHEMA`, tightened into what structured output requires.
-
-    Every property required, no extras, all the way down. Written as a
-    transform rather than a second copy of the schema so there stays one
-    description of a draft, shared with the local provider.
+    """`schema` with every property required and no extras, all the way down,
+    as structured output requires.
     """
     if schema.get("type") == "object":
         properties = {key: strict(value) for key, value in schema.get("properties", {}).items()}
@@ -173,8 +133,7 @@ def build_request(model: str, images: list[bytes], *, detail: bool) -> dict[str,
                 },
             }
         )
-    # The picture first, then what to do with it: the instruction reads as
-    # being about the thing above it, which is how the API's own examples run.
+    # Images before the instruction, as the API's own examples run.
     blocks.append({"type": "text", "text": base.INSTRUCTION})
 
     output_config: dict[str, Any] = {
@@ -187,15 +146,8 @@ def build_request(model: str, images: list[bytes], *, detail: bool) -> dict[str,
         "model": model,
         "max_tokens": DETAIL_MAX_TOKENS if detail else MAX_TOKENS,
         "system": base.SYSTEM,
-        # Neither tier thinks. Naming what is in a photograph is perception,
-        # not reasoning. The closer look was left adaptive at first, against a
-        # documented risk that disabling it on this tier leaks stray tags into
-        # a reply being parsed as JSON -- then measured (2026-09-21, three
-        # photos of loose electronics, each read both ways through the app):
-        # identical item counts 4/4, 2/2, 7/7; 619 vs 648 output tokens;
-        # $0.0595 vs $0.0602; and thinking *off* was faster, 14.4 s against
-        # 16.9 s. No stray tags in any of the three. Adaptive thinking was
-        # barely engaging, so it was buying latency and nothing else.
+        # Neither tier thinks: naming what is in a photo is perception. Checked
+        # on the closer look's model: no stray tags leak into the reply.
         "thinking": {"type": "disabled"},
         "output_config": output_config,
         "messages": [{"role": "user", "content": blocks}],
@@ -208,9 +160,7 @@ def build_request(model: str, images: list[bytes], *, detail: bool) -> dict[str,
 def read_response(message: Any) -> base.BoxDraft:
     """Turn a Messages response into a draft, or raise DraftUnreadable.
 
-    Both failure modes that are not simply "bad JSON" are named, because the
-    fallback logs them and they mean different things: a refusal will happen
-    again on a retry, a truncation is a setting of ours.
+    A refusal and a truncation are named: one recurs on retry, the other is our setting.
     """
     if getattr(message, "stop_reason", None) == "refusal":
         raise base.DraftUnreadable("the model declined to read this photo")
@@ -229,9 +179,7 @@ def spent(message: Any, model: str) -> base.Reading:
     """What the API says this call used, priced."""
     usage = getattr(message, "usage", None)
     incoming = int(getattr(usage, "input_tokens", 0) or 0)
-    # Cached reads are billed at a tenth, but nothing here is cacheable: every
-    # photo is different and the prompt is far short of the minimum prefix.
-    # Counted at full price if it ever appears, so the budget never flatters.
+    # Cache tokens, should any appear, count at full price so the budget never flatters.
     incoming += int(getattr(usage, "cache_read_input_tokens", 0) or 0)
     incoming += int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
     outgoing = int(getattr(usage, "output_tokens", 0) or 0)
@@ -250,9 +198,8 @@ def spent(message: Any, model: str) -> base.Reading:
 def cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
     """Dollars for one call. Zero for anything that is not a Claude model.
 
-    An unrecognised *Claude* model is priced at the dearest rate known rather
-    than at nothing: a budget that under-counts is a budget that gets quietly
-    exceeded, and the failure should be "stopped too early", not "kept going".
+    An unrecognised Claude model is priced at the dearest known rate, so the
+    budget errs towards stopping early.
     """
     if not model.startswith("claude-"):
         return 0.0
@@ -271,9 +218,8 @@ def cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
 class ClaudeProvider:
     """Reads a photo with Claude. One call, no loop, no tools.
 
-    The client is always built with an explicit key. A bare `Anthropic()`
-    would resolve credentials from whatever is on the machine -- an env var, a
-    stored OAuth profile -- and spend somebody's money without being asked.
+    Always built with an explicit key: a bare `Anthropic()` would pick up
+    whatever credentials are on the machine and spend them.
     """
 
     name = "claude"
@@ -295,10 +241,7 @@ class ClaudeProvider:
     def explain(self, failure: Exception) -> str:
         """A failure message that names the problem and carries no secret."""
         if isinstance(failure, anthropic.AuthenticationError):
-            # The API's own error *type* -- an enum, never key material -- so
-            # the difference between a wrong key and a revoked one is one line
-            # in the log rather than a round of guessing. The value itself is
-            # never shown, not even its first characters.
+            # The error type only; never any part of the key.
             kind = api_error_type(failure)
             return (
                 f"the Anthropic API refused the key (HTTP 401{', ' + kind if kind else ''}). "
@@ -323,8 +266,7 @@ class ClaudeProvider:
             self.last = None
             raise base.DraftUnreadable(self.explain(failure)) from failure
 
-        # Recorded before parsing: a reply that cost money and then failed to
-        # read still cost money, and the budget has to know.
+        # Before parsing: an unreadable reply was still billed.
         self.last = spent(message, model)
         return read_response(message)
 

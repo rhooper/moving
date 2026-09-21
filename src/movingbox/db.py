@@ -1,10 +1,8 @@
 """SQLite connection handling and the migration runner.
 
 Migrations are numbered ``NNNN_name.sql`` files in ``migrations/``, applied in
-order against ``PRAGMA user_version``. There is no Alembic: the schema is small
-and the database has a single writer.
-
-**Never edit a migration that has been applied** -- add a new one.
+order against ``PRAGMA user_version`` on every connect. Never edit one that has
+been applied -- add a new one.
 """
 
 from __future__ import annotations
@@ -53,18 +51,10 @@ def connect(path: str | Path) -> sqlite3.Connection:
     # isolation_level=None -> autocommit; executescript and the PRAGMAs below
     # both require not being inside an implicit transaction.
     #
-    # check_same_thread=False because a single HTTP request does not stay on
-    # one thread. FastAPI runs a sync generator dependency's __enter__ through
-    # run_in_threadpool, the endpoint body through the threadpool again, and
-    # __exit__ under a *separate* CapacityLimiter, so opening, using and
-    # closing a connection can happen on three different workers. The default
-    # check rejects that, which took the live service down with 500s the
-    # moment the phone issued its four parallel requests.
-    #
-    # This is safe here, not merely convenient: each request gets its own
-    # connection (never shared between requests), and the three phases are
-    # awaited in order, so no connection is ever touched by two threads at
-    # once -- which is all SQLite's multi-thread mode requires.
+    # check_same_thread=False: FastAPI may open, use and close one request's
+    # connection on three different threadpool workers. Safe because each
+    # request has its own connection and the phases run in order, so no
+    # connection is ever used by two threads at once.
     conn = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
@@ -76,11 +66,8 @@ def connect(path: str | Path) -> sqlite3.Connection:
 def next_box_code(conn: sqlite3.Connection, kind: str = "box") -> str:
     """Allocate the next never-before-used box code, e.g. ``B-0042``.
 
-    The shape comes from the configured format (see :mod:`movingbox.codes`).
-    Codes come from a monotonic counter rather than ``boxes.id`` so that
-    deleting a box does not free its code: a reused code would send an
-    already-printed label to the wrong box. The counter is per prefix, so
-    switching prefix starts a fresh sequence without ever reusing an old code.
+    From a monotonic per-prefix counter, not ``boxes.id``, so a deleted box's
+    code is never reused: a printed label would point at the wrong box.
     """
     from . import codes
 

@@ -1,15 +1,9 @@
 """Backups.
 
-The move data is irreplaceable, exists on one machine, and is being written to
-during the exact weeks it matters most. Two things follow:
-
-* Backups use SQLite's **online backup API**, not a file copy. The service runs
-  under launchd and holds a connection open permanently, and in WAL mode a
-  plain `cp` of `moving.db` can miss committed rows that still live in the
-  `-wal` sidecar. The API produces a standalone, consistent database.
-* A new backup is **verified before anything is pruned**. Otherwise a corrupt
-  backup becomes the reason the good ones were deleted, turning a bad backup
-  into actual data loss.
+* SQLite's online backup API, not a file copy: in WAL mode a copy of
+  `moving.db` can miss committed rows still in the `-wal` sidecar.
+* A new backup is verified before anything is pruned, so a bad backup can
+  never be the reason the good ones were deleted.
 """
 
 from __future__ import annotations
@@ -22,7 +16,7 @@ from pathlib import Path
 
 from .config import Config
 
-#: Keep this many. A fortnight of nightlies covers "I broke it last week".
+#: Keep this many: a fortnight of nightlies.
 DEFAULT_KEEP = 14
 
 
@@ -45,13 +39,12 @@ def verify(path: Path) -> bool:
     if not path.is_file():
         return False
     try:
-        # Not opened read-only: see the journal_mode note in create(). A
-        # read-only connection cannot open a WAL database that has no -shm
-        # file, which is exactly the state a fresh backup is in.
+        # Not read-only: a read-only connection cannot open a WAL database
+        # with no -shm file.
         with closing(sqlite3.connect(path)) as conn:
             if conn.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                 return False
-            # Intact but not this application's database is not a useful backup.
+            # Intact but not this application's database is not a backup.
             conn.execute("SELECT count(*) FROM boxes").fetchone()
         return True
     except sqlite3.DatabaseError:
@@ -63,23 +56,17 @@ def create(config: Config, *, keep: int = DEFAULT_KEEP) -> Path:
     target_dir = directory(config)
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    # Microseconds in the name so several backups in one second still sort
-    # correctly, which is what pruning relies on.
+    # Microseconds, so backups in the same second still sort; pruning relies on it.
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S-%f")
     target = target_dir / f"moving-{stamp}.db"
 
-    # The source is opened read-write even though the backup API never writes
-    # to it. A read-only connection cannot open a WAL database that has no
-    # -shm file, so `mode=ro` would fail precisely when the service is *not*
-    # running -- the case where a manual backup is most likely.
+    # Read-write, though nothing is written: `mode=ro` cannot open a WAL
+    # database with no -shm file, i.e. whenever the service is not running.
     with closing(sqlite3.connect(config.db_path)) as source:
         with closing(sqlite3.connect(target)) as destination:
             source.backup(destination)
-            # The backup API copies the file page for page, header included,
-            # so a backup of a WAL database is itself in WAL mode. That makes
-            # the artefact awkward: it cannot be opened read-only, and copying
-            # it elsewhere without its sidecars can lose data. Switching to a
-            # rollback journal makes the backup one genuinely standalone file.
+            # The copy inherits WAL mode; a rollback journal makes it one
+            # standalone file.
             destination.execute("PRAGMA journal_mode = DELETE")
 
     if not verify(target):
