@@ -526,6 +526,71 @@ def children_of(conn: sqlite3.Connection, code: str) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+#: How deep a summary looks. The store already forbids a cycle -- a parent may
+#: not be inside the thing being moved -- so this is a guard, not a rule: a
+#: button press should never be able to raise a recursion error, and six levels
+#: of container is already further than anyone packs.
+MAX_DEPTH = 6
+
+
+def subtree(
+    conn: sqlite3.Connection, code: str, *, max_depth: int = MAX_DEPTH
+) -> list[dict[str, Any]]:
+    """A record and everything nested inside it, with the items of each.
+
+    The material a summary is built from. A record that holds a box of twenty
+    things should be able to say what those things are, so this reaches past
+    the direct children that `children_of` returns, to any depth.
+
+    Ordered by closeness -- the record itself at depth 0, then its children,
+    then theirs -- because that is the order a summary should spend its room
+    in, and `summarise.contents` caps the far end.
+
+    **Two queries, whatever the shape of the tree.** The obvious recursion is
+    `children_of` plus `list_items` per node, which is two round trips each: a
+    crate of five boxes of twenty is eleven, on a button someone is waiting
+    on. One `WITH RECURSIVE` walks the tree, and one pass collects the items
+    of everything it found.
+    """
+    root = conn.execute(
+        "SELECT id FROM boxes WHERE code = ? AND deleted_at IS NULL", (code,)
+    ).fetchone()
+    if root is None:
+        return []
+
+    rows = conn.execute(
+        """
+        WITH RECURSIVE tree(id, depth) AS (
+            SELECT id, 0 FROM boxes WHERE id = ?
+             UNION ALL
+            SELECT boxes.id, tree.depth + 1
+              FROM boxes JOIN tree ON boxes.parent_id = tree.id
+             WHERE boxes.deleted_at IS NULL AND tree.depth < ?
+        )
+        SELECT boxes.id, boxes.code, boxes.kind, boxes.size,
+               boxes.content_summary, boxes.summary_source, tree.depth
+          FROM tree JOIN boxes ON boxes.id = tree.id
+         ORDER BY tree.depth, boxes.id
+        """,
+        (root["id"], max_depth),
+    ).fetchall()
+    # A binned container takes what is inside it out of the summary too: those
+    # records are only reachable through the one that went, so as far as this
+    # crate is concerned they are no longer in it.
+
+    nodes = [{**dict(row), "items": []} for row in rows]
+    by_id = {node["id"]: node for node in nodes}
+
+    placeholders = ", ".join("?" * len(by_id))
+    for item in conn.execute(
+        f"SELECT * FROM items WHERE box_id IN ({placeholders}) ORDER BY box_id, id",
+        tuple(by_id),
+    ):
+        by_id[item["box_id"]]["items"].append(dict(item))
+
+    return nodes
+
+
 def path_to(conn: sqlite3.Connection, code: str) -> list[dict[str, Any]]:
     """The containers a record is inside, outermost first. Empty at top level.
 

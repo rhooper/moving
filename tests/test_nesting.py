@@ -325,3 +325,100 @@ class TestTheStore:
         assert [c["code"] for c in store.children_of(conn, crate["code"])] == [bag["code"]]
         with pytest.raises(ValueError):
             store.set_parent(conn, crate["code"], bag["code"])
+
+
+class TestGatheringTheWholeSubtree:
+    """`store.subtree` is the material a summary is built from.
+
+    Not just what is directly inside: a crate holding a box of twenty things
+    should be able to say what those things are. The owner asked for exactly
+    this -- "if there are subitems, collect text from those".
+    """
+
+    def nest(self, conn, *, depth):
+        """A chain of containers, each holding the next, outermost first."""
+        codes_made = []
+        parent = None
+        for level in range(depth):
+            box = store.create_box(conn, kind="box", parent_code=parent)
+            store.add_item(conn, box["code"], name=f"thing at depth {level}")
+            codes_made.append(box["code"])
+            parent = box["code"]
+        return codes_made
+
+    def test_the_record_itself_comes_first_at_depth_zero(self, conn):
+        box = store.create_box(conn)
+        store.add_item(conn, box["code"], name="kettle")
+
+        nodes = store.subtree(conn, box["code"])
+
+        assert [n["depth"] for n in nodes] == [0]
+        assert [i["name"] for i in nodes[0]["items"]] == ["kettle"]
+
+    def test_children_and_grandchildren_come_with_their_depth(self, conn):
+        outer, middle, inner = self.nest(conn, depth=3)
+
+        nodes = store.subtree(conn, outer)
+
+        assert [(n["code"], n["depth"]) for n in nodes] == [
+            (outer, 0),
+            (middle, 1),
+            (inner, 2),
+        ]
+
+    def test_each_node_carries_its_own_items(self, conn):
+        outer, middle, _ = self.nest(conn, depth=3)
+
+        nodes = store.subtree(conn, outer)
+
+        assert [i["name"] for i in nodes[1]["items"]] == ["thing at depth 1"]
+
+    def test_it_carries_what_a_record_is_and_how_its_summary_was_written(self, conn):
+        box = store.create_box(conn, kind="crate", size="large", content_summary="tea things")
+
+        node = store.subtree(conn, box["code"])[0]
+
+        assert (node["kind"], node["size"]) == ("crate", "large")
+        assert node["summary_source"] in ("manual", "auto")
+
+    def test_it_stops_at_the_depth_limit(self, conn):
+        # A guard, not a feature: the store forbids a cycle, but a button
+        # press should never be able to raise a recursion error.
+        made_codes = self.nest(conn, depth=6)
+
+        nodes = store.subtree(conn, made_codes[0], max_depth=2)
+
+        assert [n["depth"] for n in nodes] == [0, 1, 2]
+
+    def test_a_binned_descendant_is_left_out(self, conn, config):
+        # Only a leaf can go: the store refuses to bin a container with things
+        # still inside it, which is why nothing dangles below one.
+        outer, middle, inner = self.nest(conn, depth=3)
+        store.delete_box(conn, config, inner)
+
+        nodes = store.subtree(conn, outer)
+
+        assert [n["code"] for n in nodes] == [outer, middle]
+
+    def test_an_unknown_record_gathers_nothing(self, conn):
+        assert store.subtree(conn, "B-9999") == []
+
+    def test_the_whole_subtree_costs_a_fixed_number_of_queries(self, conn):
+        # Two queries per node on a button someone is waiting on is the thing
+        # being avoided: a crate of five boxes of twenty is eleven round
+        # trips. One recursive CTE plus one pass for the items is the shape.
+        self.nest(conn, depth=6)
+        wide = store.create_box(conn)
+        for _ in range(8):
+            child = store.create_box(conn, parent_code=wide["code"])
+            for n in range(5):
+                store.add_item(conn, child["code"], name=f"thing {n}")
+
+        statements = []
+        conn.set_trace_callback(statements.append)
+        try:
+            store.subtree(conn, wide["code"])
+        finally:
+            conn.set_trace_callback(None)
+
+        assert len(statements) <= 3, statements
