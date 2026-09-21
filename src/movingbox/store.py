@@ -609,6 +609,98 @@ def path_to(conn: sqlite3.Connection, code: str) -> list[dict[str, Any]]:
     return list(reversed(steps))
 
 
+def search_with_containers(
+    conn: sqlite3.Connection,
+    q: str,
+    *,
+    limit: int = 100,
+    max_depth: int = MAX_DEPTH,
+) -> list[dict[str, Any]]:
+    """Search results, plus the containers they are inside.
+
+    Search is the one view that looks inside containers, so a hit is often a
+    bag whose own row says nothing about where it is. Asked for as "in search
+    results, put the parent box first, indent subitems" -- which the page can
+    only do if the containers come back *with* the results, and it must cost
+    no request per result.
+
+    Every row carries two extra fields:
+
+    ``matched``
+        True for a result, False for a container brought along as context. A
+        container that both matched and holds a match is a result, once: the
+        rows are keyed by record, so nothing can appear twice.
+    ``ancestry``
+        The codes of the containers it is inside, outermost first, empty at
+        the top level. That is what lets the page group and indent in one
+        pass; ``parent_code`` is one level, which cannot group a bag in a box
+        in a crate.
+
+    Matches lead, in relevance order, and the context rows follow: a caller
+    that does no grouping still reads the best match first, and the page's
+    grouping rule puts each container in front of the first match inside it.
+
+    Two queries whatever the depth. One `WITH RECURSIVE` walks *up* from every
+    match at once -- the mirror of `subtree` -- and one pass fetches the rows
+    of the containers that were not results themselves. The walk stops at a
+    binned container, which also truncates the chain below it: a record in the
+    bin is not somewhere anything is.
+    """
+    matches = list_boxes(conn, q=q, limit=limit)
+    if not matches:
+        return []
+
+    ids = [row["id"] for row in matches]
+    placeholders = ", ".join("?" * len(ids))
+    # UNION, not UNION ALL: two matches in the same crate share its ancestors
+    # and the crate should be walked once. `depth` still bounds it, since a
+    # cycle would make rows that differ in depth and so survive the dedupe.
+    walked = conn.execute(
+        f"""
+        WITH RECURSIVE up(id, parent_id, depth) AS (
+            SELECT id, parent_id, 0 FROM boxes WHERE id IN ({placeholders})
+             UNION
+            SELECT outer_box.id, outer_box.parent_id, up.depth + 1
+              FROM boxes AS outer_box JOIN up ON outer_box.id = up.parent_id
+             WHERE outer_box.deleted_at IS NULL AND up.depth < ?
+        )
+        SELECT up.id, up.parent_id, boxes.code
+          FROM up JOIN boxes ON boxes.id = up.id
+        """,
+        (*ids, max_depth),
+    ).fetchall()
+    step = {row["id"]: (row["code"], row["parent_id"]) for row in walked}
+
+    def ancestry(box_id: int) -> list[str]:
+        chain: list[str] = []
+        seen: set[int] = set()
+        parent = step[box_id][1]
+        while parent is not None and parent in step and parent not in seen:
+            seen.add(parent)
+            chain.append(step[parent][0])
+            parent = step[parent][1]
+        return list(reversed(chain))
+
+    found = {row["id"] for row in matches}
+    context = sorted(set(step) - found)
+    rows: list[dict[str, Any]] = []
+    if context:
+        marks = ", ".join("?" * len(context))
+        rows = [
+            dict(row)
+            for row in conn.execute(
+                f"SELECT *, {_COVER}, {_INSIDE}, {_PARENT} FROM boxes "
+                f"WHERE id IN ({marks}) AND deleted_at IS NULL ORDER BY id",
+                tuple(context),
+            )
+        ]
+
+    return [
+        {**row, "matched": row["id"] in found, "ancestry": ancestry(row["id"])}
+        for row in (*matches, *rows)
+    ]
+
+
 # --- items ---------------------------------------------------------------
 
 
