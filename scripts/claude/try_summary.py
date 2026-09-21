@@ -93,8 +93,7 @@ CASES: dict[str, list[dict]] = {
         _node(1, None, 0, "crate"),
         *(_node(n, 1, 1, "bag") for n in (2, 3, 4)),
     ],
-    # The case the last report called out: the crate could only say "large
-    # box" where the box itself holds books.
+    # The crate should say what the box inside it holds, not "large box".
     "a crate holding described things": [
         _node(1, None, 0, "crate", items=[("kettle", 1)]),
         _node(2, 1, 1, "bag", summary="winter coats and scarves"),

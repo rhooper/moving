@@ -1,18 +1,15 @@
 #!/usr/bin/env bash
-# Purpose: install this repo's git hooks. Git does not version-control
-#          .git/hooks, so a clone (or a fresh machine) has none of them and
-#          merges to main would silently stop deploying. install-service.sh
-#          calls this, so a normal install gets the hooks too.
-#
-#          What lands in .git/hooks is a shim; the hook itself is the
-#          version-controlled scripts/claude/hooks/<name>, so editing a hook
-#          does not mean remembering to reinstall it.
+# Purpose: install this repo's git hooks, which git does not version-control;
+#          without them merges to main silently stop deploying.
+#          install-service.sh calls this. What lands in .git/hooks is a shim
+#          that execs the version-controlled scripts/claude/hooks/<name>, so
+#          editing a hook needs no reinstall.
 #
 # Usage:   scripts/claude/install-hooks.sh [--uninstall]
 set -euo pipefail
 
-# See the note in deploy.sh: with CDPATH set, a relative `cd` prints its target,
-# which lands inside the $( ) below and produces a path with a newline in it.
+# CDPATH is set in this user's shell, and a relative `cd` through it prints its
+# target into the $( ) below, giving a path with a newline in it.
 CDPATH=""
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
@@ -62,10 +59,9 @@ for name in "${HOOKS[@]}"; do
     echo "  kept the existing $name as $(basename "$kept")"
   fi
 
-  # The shim resolves the checkout the hook is firing for, not the one this
-  # installer happened to run in: the hooks directory is shared with every
-  # worktree, and a worktree must run (and therefore be refused by) its own
-  # copy rather than the main checkout's.
+  # The shim resolves the checkout the hook fires for, not the one this ran
+  # in: the hooks directory is shared, and a worktree must run (and be refused
+  # by) its own copy.
   cat > "$target" <<SHIM
 #!/usr/bin/env bash
 # $MARKER -- do not edit.

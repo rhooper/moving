@@ -1,9 +1,8 @@
 """Purpose: prove the cloud vision tier end to end, through the app's own code.
 
 Not a test -- it uploads real photos to a running server, which reads them with
-a real model, which costs real money. Use it once after setting a key, to see
-what the money buys: per-photo latency, the items found, and the cost the app
-recorded from the API's own `usage` numbers.
+a real model, which costs real money. It reports per-photo latency, the items
+found, and the cost the app recorded from the API's own `usage` numbers.
 
 It talks to **the app**, never to the Anthropic API: every call goes through
 the same upload -> queue -> worker -> merge path a phone uses, so what it
