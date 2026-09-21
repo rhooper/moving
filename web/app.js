@@ -286,6 +286,33 @@ function showError(message) {
 // dismiss, and the page -- scroll position, typed text, your place in a long
 // box -- is left exactly as it was. Replacing the view here is how a failed
 // print used to cost you your spot.
+// Escape reaches *every* open dialog, not only the one on top. Measured in
+// Chrome on 2026-09-20 with a scratch page of two modal dialogs: one press
+// fired `cancel` on the viewer **and** on the dialog underneath, and calling
+// preventDefault() in the viewer's own handler did not stop it -- so a photo
+// viewer over the sub-item modal took the modal down with it, committing and
+// closing an editor nobody had finished with.
+//
+// So the key is taken before the browser can turn it into close requests, and
+// only the dialog on top acts on it. Every dialog here is appended to <body>
+// immediately before it is shown, so document order is the order they were
+// opened; and at *keydown* time nothing has closed yet, so `[open]` still
+// tells the truth (by `cancel` time it does not -- the top one has already
+// cleared its own `open` while still in the document).
+function closesOnEscape(dialog, close) {
+  const swallow = (event) => {
+    if (event.key !== "Escape") return;
+    const stack = document.querySelectorAll("dialog[open]");
+    if (stack[stack.length - 1] !== dialog) return;
+    event.preventDefault();
+    event.stopPropagation();
+    close();
+  };
+  document.addEventListener("keydown", swallow, { capture: true });
+  dialog.addEventListener("close", () =>
+    document.removeEventListener("keydown", swallow, { capture: true }));
+}
+
 function failed(message, title = "That did not work") {
   let dialog = document.getElementById("oops");
   if (!dialog) {
@@ -297,7 +324,10 @@ function failed(message, title = "That did not work") {
   }
   dialog.querySelector("h2").textContent = title;
   dialog.querySelector("p").textContent = message;
-  if (!dialog.open) dialog.showModal();
+  if (!dialog.open) {
+    closesOnEscape(dialog, () => dialog.close());
+    dialog.showModal();
+  }
 }
 
 // Ask before destroying or hiding something. Resolves true only on the action
@@ -324,6 +354,9 @@ function confirmed({ title, message, action, dismiss = "Cancel" }) {
       dialog.remove();
     });
     document.body.append(dialog);
+    // Escape is "no", and only for this one: it may be over a record being
+    // edited in a modal, which must not be closed by the same press.
+    closesOnEscape(dialog, () => dialog.close());
     dialog.showModal();
   });
 }
@@ -936,6 +969,7 @@ function addInside({ parent, kinds, rooms, shape }) {
     dialog.remove();
   });
   document.body.append(dialog);
+  closesOnEscape(dialog, () => dialog.close("no"));
   dialog.showModal();
   startCamera();
 }
@@ -980,8 +1014,10 @@ async function editSubitem(code, { kinds, rooms, onSaved }) {
   const path = `/boxes/${encodeURIComponent(code)}`;
   let child;
   let items;
+  let photos;
   try {
-    [child, items] = await Promise.all([api(path), api(`${path}/items`)]);
+    [child, items, photos] = await Promise.all([
+      api(path), api(`${path}/items`), api(`${path}/photos`)]);
   } catch (error) { failed(error.message, "Could not open it"); return; }
 
   const dialog = document.createElement("dialog");
@@ -993,6 +1029,7 @@ async function editSubitem(code, { kinds, rooms, onSaved }) {
   const auto = session.auto;
   const shapeOf = () => kinds.find((k) => k.kind === child.kind) || kinds[0];
   let contents = null;   // the items part, rebuilt with the body
+  let strip = null;      // the photo strip, likewise
   let lines = () => {};  // the status line, until there is one
 
   // The whole body, from the record as it stands. Called again only when the
@@ -1002,7 +1039,7 @@ async function editSubitem(code, { kinds, rooms, onSaved }) {
   // the same session, which still holds the undo stack and anything unsaved.
   function render() {
     const shape = shapeOf();
-    const sections = editorSections(child, items, shape);
+    const sections = editorSections(child, items, shape, photos);
     const fold = (section) => `
       <details class="fold" data-fold="${escape(section.key)}"${section.open ? " open" : ""}>
         <summary>${escape(section.legend)}</summary>
@@ -1119,6 +1156,30 @@ async function editSubitem(code, { kinds, rooms, onSaved }) {
       });
     }
 
+    // "show image thumbs and show the full view on demand". The same strip the
+    // record page draws: `photosPart` through `reconcile`, which keeps each
+    // figure's latest photo and repaints an open viewer as a reading lands --
+    // and a tap on a thumbnail already opens `viewPhoto`, over this modal.
+    // A second implementation of any of that would be the wrong answer.
+    if (body("photos")) {
+      const shots = document.createElement("div");
+      shots.className = "shots";
+      body("photos").append(shots);
+      strip = photosPart(shots, {
+        path,
+        contents: Boolean(shape.contents),
+        stale: () => {},   // the modal was closed or rebuilt under it
+        ask: () => strip?.refresh(),
+        // A reading that finished changed the items and the summary too.
+        finished: () => { absorb(); },
+        changed(now) {
+          photos = now;
+          onSaved();   // the container's row draws this record's cover
+        },
+      });
+      strip.draw(photos);
+    }
+
     const childForm = document.getElementById("child-edit");
     const wired = autosaveFields({
       root: dialog,
@@ -1150,7 +1211,8 @@ async function editSubitem(code, { kinds, rooms, onSaved }) {
       : active?.type === "radio" ? `[name="${CSS.escape(active.name)}"]:checked`
       : active?.name ? `[name="${CSS.escape(active.name)}"]` : null;
     try {
-      [child, items] = await Promise.all([api(path), api(`${path}/items`)]);
+      [child, items, photos] = await Promise.all([
+        api(path), api(`${path}/items`), api(`${path}/photos`)]);
     } catch (error) { failed(error.message); return; }
     render();
     const again = selector && dialog.querySelector(selector);
@@ -1162,7 +1224,7 @@ async function editSubitem(code, { kinds, rooms, onSaved }) {
   // keeps the rule true after the record changes under the modal -- a photo
   // being read writes a summary and a list of items by itself.
   function unfoldFilled() {
-    for (const section of editorSections(child, items, shapeOf())) {
+    for (const section of editorSections(child, items, shapeOf(), photos)) {
       const fold = dialog.querySelector(`[data-fold="${section.key}"]`);
       if (fold && section.open) fold.open = true;
     }
@@ -1213,13 +1275,17 @@ async function editSubitem(code, { kinds, rooms, onSaved }) {
   async function absorb() {
     let fresh;
     let freshItems;
+    let freshPhotos;
     try {
-      [fresh, freshItems] = await Promise.all([api(path), api(`${path}/items`)]);
+      [fresh, freshItems, freshPhotos] = await Promise.all([
+        api(path), api(`${path}/items`), api(`${path}/photos`)]);
     } catch { return; }   // a background refresh that fails leaves it alone
     if (!dialog.isConnected) return;
     const wasKind = child.kind;
     child = { ...child, ...fresh };
     items = freshItems;
+    const hadPhotos = photos.length;
+    photos = freshPhotos;
     for (const [key, field] of [["content_summary", "child-what"], ["source_location", "child-source-location"]]) {
       const input = document.getElementById(field);
       if (!input || auto.state(key) !== "clean" || document.activeElement === input) continue;
@@ -1235,6 +1301,11 @@ async function editSubitem(code, { kinds, rooms, onSaved }) {
       auto.track(key, chosen(row));
     }
     contents?.draw(items);
+    // The strip redraws in place -- a reading landing must not take the
+    // viewer down with it. The *first* photo is the one case that needs the
+    // body rebuilt, since until now there was no photo section at all.
+    strip?.draw(photos);
+    if (!hadPhotos && photos.length && !dialog.contains(document.activeElement)) { render(); return; }
     unfoldFilled();
     showWhere();
     drawFlags();
@@ -1265,6 +1336,10 @@ async function editSubitem(code, { kinds, rooms, onSaved }) {
     dialog.close();
   }
   // Escape would close it before any of that, so it is taken over.
+  // Escape goes through `dismiss`, which commits and waits, rather than the
+  // native close, which would not. `cancel` stays as the fallback for a close
+  // request that is not a key press; Escape never reaches it now.
+  closesOnEscape(dialog, () => dismiss());
   dialog.addEventListener("cancel", (event) => { event.preventDefault(); dismiss(); });
   dialog.addEventListener("click", (event) => { if (event.target === dialog) dismiss(); });
   // Following the link to the whole page, or a scan landing somewhere else.
@@ -1369,13 +1444,20 @@ function viewPhoto(photo, { readable = true } = {}) {
 
   showing.id = photo.id;
   showing.render = render;
+  // Whatever opened it -- the thumbnail in a strip, wherever that strip is.
+  const opener = document.activeElement;
   // The backdrop is the dialog element itself; anything inside it is not.
   dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
   dialog.addEventListener("close", () => {
     if (showing.render === render) { showing.id = null; showing.render = null; }
     dialog.remove();
+    // Back to the thumbnail. A dialog restores focus by itself, but this one
+    // is opened over a modal whose fields somebody may be part-way through,
+    // and the strip under it redraws in place while a photo is being read.
+    if (opener?.isConnected) opener.focus();
   });
   document.body.append(dialog);
+  closesOnEscape(dialog, () => dialog.close());
   dialog.showModal();
 }
 

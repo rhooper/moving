@@ -161,7 +161,7 @@ export function frameSize(width, height, limit = 2048) {
 // record page could fold the same way later without rewriting the reasoning.
 const filled = (value) => String(value ?? "").trim() !== "";
 
-export function editorSections(box, items, shape) {
+export function editorSections(box, items, shape, photos) {
   const record = box || {};
   const holds = Boolean(shape?.contents);
   const sections = [
@@ -175,6 +175,13 @@ export function editorSections(box, items, shape) {
     { key: "handling", legend: "Handling",
       open: Boolean(record.fragile || record.heavy || record.open_first) },
     ...(holds ? [{ key: "items", legend: "Items", open: (items || []).length > 0 }] : []),
+    // "show image thumbs and show the full view on demand". Unlike every
+    // section above it this one is not an input, so there is nothing to fold
+    // *open* to: a record with no photos has no photo section at all, the way
+    // a lamp has no size. Photos are not about holding contents, so a single
+    // thing has them too. Last, because the fields are what you came to fix
+    // and the pictures are what you already have.
+    ...((photos || []).length ? [{ key: "photos", legend: "Photos", open: true }] : []),
   ];
   return sections;
 }

@@ -16,7 +16,10 @@
 //          the container as a modal, folds away the sections it has nothing
 //          in, saves itself, keeps its own undo stack while the page behind
 //          keeps the container's, commits what is pending when it closes, and
-//          takes a change from elsewhere in place. And the live viewfinder in
+//          takes a change from elsewhere in place, shows the record's photos
+//          as thumbs and opens the full viewer over itself on a tap -- one
+//          Escape closing only the viewer, leaving the modal and its
+//          half-typed field alone. And the live viewfinder in
 //          the add dialog: it comes up by itself, the shutter keeps a frame
 //          that really uploads, every track is stopped when the dialog closes,
 //          and a refused camera leaves an honest line and a working file
@@ -493,6 +496,131 @@ try {
                 "the link to the whole page");
   check("the link inside opens the record's own page, and the modal gets out of the way",
         (await evaluate(`Boolean(${q("#summary-form")}) && ${q("h1.code")}.textContent === ${JSON.stringify(full)}`)));
+
+  // --- photo thumbs in the modal, and the viewer over it ---
+  //
+  // "for the popup contents view, show image thumbs and show the full view on
+  // demand." The strip is the record page's own (`photosPart`), so a tap
+  // already opens `viewPhoto` -- over the modal, which is the interesting part.
+  const otherShot = join(profile, "another.png");
+  writeFileSync(otherShot, png(80, [70, 120, 190]));
+  const pictured = (await api("/boxes", "POST", {
+    kind: "box", content_summary: "crockery", parent_code: crate })).code;
+  for (const file of [photo, otherShot]) {
+    const body = new FormData();
+    body.append("file", new Blob([readFileSync(file)], { type: "image/png" }), file);
+    await fetch(`${base}/api/boxes/${pictured}/photos`, { method: "POST", body });
+  }
+  // Let the stub read them, so the viewer has something to show.
+  for (let i = 0; i < 100; i++) {
+    const done = (await api(`/boxes/${pictured}/photos`)).every((p) => p.analysis?.status === "done");
+    if (done) break;
+    await sleep(200);
+  }
+  const shelf = () => evaluate(`(() => { const m = document.querySelector("dialog.editor"); if (!m) return null;
+    const figures = [...m.querySelectorAll(".shots figure")];
+    const viewer = document.querySelector("dialog.viewer");
+    return { thumbs: figures.length, keys: figures.map((f) => f.dataset.key).join(","),
+             images: figures.filter((f) => f.querySelector(".pic img[src]")).length,
+             fold: m.querySelector('[data-fold="photos"]')?.open ?? null,
+             modalOpen: m.open, typed: m.querySelector("#child-what")?.value,
+             undo: m.querySelector(".undo").hidden ? null : m.querySelector(".undo").textContent,
+             line: m.querySelector(".autosave-state").textContent,
+             items: [...m.querySelectorAll("#child-items li .name")].map((n) => n.textContent).join(","),
+             viewerOpen: Boolean(viewer?.open),
+             viewerHeading: viewer?.querySelector("h2")?.textContent,
+             viewerItems: viewer ? viewer.querySelectorAll("ul.items li").length : 0,
+             above: viewer ? (() => { const b = viewer.getBoundingClientRect();
+               return document.elementFromPoint(b.left + b.width / 2, b.top + 20)?.closest("dialog")?.className; })() : null,
+             focused: document.activeElement?.tagName + "/" + (document.activeElement?.closest("dialog")?.className || "page"),
+           }; })()`);
+
+  await goto(`#/b/${crate}`, `Boolean(${q(`#inside li[data-key="${pictured}"]`)})`);
+  await openEditorOn(pictured);
+  let pics = await shelf();
+  const stored = await api(`/boxes/${pictured}/photos`);
+  check("a record with photos shows them in the modal, one thumb each, open",
+        pics.thumbs === stored.length && pics.images === stored.length && pics.fold === true,
+        JSON.stringify({ ...pics, stored: stored.length }));
+  check("each figure is keyed, so an update patches the strip instead of drawing a second one",
+        pics.keys === stored.map((p) => p.id).join(",") && new Set(pics.keys.split(",")).size === stored.length,
+        pics.keys);
+
+  // Something half-typed, to watch it survive the viewer.
+  await unfold("summary");
+  await click("#child-what");
+  await evaluate(`${q("#child-what")}.setSelectionRange(999, 999)`);
+  await type(", and a jug");
+  const halfTyped = await evaluate(`${q("#child-what")}.value`);
+
+  await click("dialog.editor .shots figure .pic a");
+  await waitFor(`Boolean(document.querySelector("dialog.viewer[open]"))`, "the viewer over the modal");
+  await sleep(300);
+  pics = await shelf();
+  check("tapping a thumb opens the full viewer, above the modal rather than behind it",
+        pics.viewerOpen && pics.modalOpen && pics.above === "viewer", JSON.stringify(pics));
+  check("and it is the real viewer: what the model saw, and the closer look on offer",
+        pics.viewerHeading === "Seen in this photo" && pics.viewerItems > 0
+          && (await evaluate(`!document.querySelector("dialog.viewer [data-closer]").hidden`)), JSON.stringify(pics));
+
+  // The viewer's own write buttons still work from in here.
+  const beforeCloser = (await api(`/boxes/${pictured}/items`)).length;
+  await click("dialog.viewer [data-closer]");
+  await waitFor(`document.querySelector("dialog.viewer")?.dataset.state === "done"
+                 && document.querySelector("dialog.viewer h2").textContent === "Seen on a closer look"`,
+                "the closer look to land in the viewer", 250);
+  pics = await shelf();
+  check("a closer look asked for from inside the modal runs and shows in the viewer",
+        pics.viewerHeading === "Seen on a closer look" && pics.viewerOpen && pics.modalOpen, JSON.stringify(pics));
+  check("and what it found reached the record under it: the modal's items grew",
+        (await api(`/boxes/${pictured}/items`)).length > beforeCloser,
+        `${beforeCloser} -> ${(await api(`/boxes/${pictured}/items`)).length}`);
+  check("the strip underneath is still one figure per photo",
+        (await shelf()).thumbs === stored.length, (await shelf()).keys);
+
+  // A scan with two modals stacked still goes nowhere.
+  const parked = await evaluate("location.hash");
+  await evaluate(`document.activeElement?.blur()`);
+  await type(crate, 5);
+  await press("Enter", "Enter", 13, "\r");
+  await sleep(400);
+  check("a scan with the viewer over the modal goes nowhere", (await evaluate("location.hash")) === parked);
+
+  // The heart of it: one Escape closes the top one only.
+  await press("Escape", "Escape", 27);
+  await sleep(400);
+  pics = await shelf();
+  check("one Escape closes the viewer and leaves the modal standing",
+        !pics.viewerOpen && pics.modalOpen, JSON.stringify(pics));
+  check("the half-typed summary is exactly as it was left",
+        pics.typed === halfTyped, `${pics.typed} vs ${halfTyped}`);
+  check("and the focus is back on the thumbnail that opened it",
+        pics.focused === "A/editor", pics.focused);
+  check("the modal's own session is untouched: nothing retired, nothing said to be saved by a viewer",
+        pics.line !== "Saved" || pics.undo !== null, JSON.stringify({ line: pics.line, undo: pics.undo }));
+
+  // The edit that was waiting still saves, and is still the child's to undo.
+  await waitFor(`${q("dialog.editor .autosave-state")}.textContent === "Saved"`, "the waiting edit to save", 200);
+  check("the edit made before the viewer opened saves afterwards, and Undo still names it",
+        (await api(`/boxes/${pictured}`)).content_summary === halfTyped
+          && (await shelf()).undo === "Undo summary", JSON.stringify(await shelf()));
+
+  // A second Escape closes the modal, as ever.
+  await press("Escape", "Escape", 27);
+  await waitFor(`!document.querySelector("dialog.editor")`, "the second Escape to close the modal");
+  check("a second Escape closes the modal itself", (await evaluate("location.hash")) === parked);
+  check("and the container's row has the edit", (await evaluate(`${q(`#inside li[data-key="${pictured}"] .s`)}.textContent`)) === halfTyped,
+        await evaluate(`${q(`#inside li[data-key="${pictured}"] .s`)}.textContent`));
+
+  // A record with no photos has no photo section at all. (A fresh one: `bare`
+  // was given a photo earlier, to watch a change from elsewhere arrive.)
+  const unphotographed = (await api("/boxes", "POST", { kind: "bag", parent_code: crate })).code;
+  await goto(`#/b/${crate}`, `Boolean(${q(`#inside li[data-key="${unphotographed}"]`)})`);
+  await openEditorOn(unphotographed);
+  check("a record with no photos has no photo section in the modal",
+        (await evaluate(`Boolean(document.querySelector('dialog.editor [data-fold="photos"]'))`)) === false);
+  await click("#child-close");
+  await waitFor(`!document.querySelector("dialog.editor")`, "that modal to close");
 
   // --- the live viewfinder in the add dialog ---
   // Granting takes CDP's own permission enum; Browser.setPermission wants the
