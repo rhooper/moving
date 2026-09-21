@@ -1,8 +1,4 @@
-"""Local vision drafting through Ollama.
-
-The default. Free per photo, private, and works with no internet -- which
-matters when the machine is in a half-packed house.
-"""
+"""Local vision drafting through Ollama: free, private, and works offline."""
 
 from __future__ import annotations
 
@@ -12,32 +8,21 @@ import httpx
 
 from . import base
 
-#: 20 minutes. The models in use answer in ten seconds or so, but a *thinking*
-#: checkpoint (any bare qwen3-vl tag) has been seen to reason for over two
-#: minutes about a photo of two closed boxes, and a cold model has to load
-#: first. The cost of a generous timeout is a request that hangs; the cost of
-#: a tight one is losing a draft that would have succeeded.
+#: Seconds. Generous: a cold load plus a *thinking* checkpoint (any bare
+#: qwen3-vl tag) can take minutes, and a tight timeout loses a good draft.
 TIMEOUT = 1200.0
 
-#: How long Ollama keeps the model in memory after a request. Its default is
-#: five minutes, and boxes in a packing session are often further apart than
-#: that -- so without this, most photos pay for a model load. Sent with the
-#: request so nobody has to edit a Homebrew plist.
+#: How long Ollama keeps the model loaded; its default of five minutes is
+#: shorter than the gap between boxes.
 KEEP_ALIVE = "30m"
 
-#: Left alone, Ollama sizes the context at 262,144 tokens and a 4b model takes
-#: 25 GB of memory. One photo and a short prompt need a fraction of that; at
-#: 8192 the same model takes under 4 GB and is exactly as fast.
+#: Left alone, Ollama sizes the context at 262k tokens (25 GB for a 4b model);
+#: 8192 needs under 4 GB and is as fast.
 CONTEXT = 8192
 
 
 def build_request(model: str, images: list[bytes]) -> dict:
-    """The /api/chat payload.
-
-    `format` carries the JSON schema. Without it a local model returns prose
-    around its JSON often enough to matter -- base.parse copes, but
-    constraining the output is cheaper than mining it.
-    """
+    """The /api/chat payload, with `format` constraining the reply to base.SCHEMA."""
     return {
         "model": model,
         "stream": False,
@@ -64,10 +49,8 @@ def read_response(payload: dict) -> base.BoxDraft:
     if isinstance(content, str) and content.strip():
         return base.parse(content)
 
-    # Ollama 0.34, with `format` set and thinking switched off on a thinking
-    # checkpoint, puts the JSON in `thinking` and leaves `content` empty. Every
-    # one of 42 such replies in the benchmark had a usable draft in it. If it
-    # is *only* thinking, base.parse finds no JSON and raises, as it should.
+    # With `format` set and thinking switched off on a thinking checkpoint,
+    # Ollama 0.34 puts the JSON in `thinking` and leaves `content` empty.
     thinking = message.get("thinking")
     if isinstance(thinking, str) and thinking.strip():
         return base.parse(thinking)
@@ -83,12 +66,7 @@ class OllamaProvider:
         self.timeout = timeout
 
     def explain(self, status: int | None, model: str) -> str:
-        """A failure message that names the actual problem.
-
-        These are read on a phone, mid-pack. "Could not reach ollama" when
-        ollama is fine and the model simply is not pulled sends you debugging
-        the wrong thing entirely.
-        """
+        """A failure message that tells a missing model from a missing server."""
         if status == 404:
             return (
                 f"the model {model} is not installed on this machine. "
@@ -112,6 +90,5 @@ class OllamaProvider:
         except httpx.HTTPStatusError as exc:
             raise base.DraftUnreadable(self.explain(exc.response.status_code, model)) from exc
         except httpx.HTTPError as exc:
-            # Connection refused, DNS failure, timeout: nothing answered.
             raise base.DraftUnreadable(self.explain(None, model)) from exc
         return read_response(response.json())
