@@ -22,13 +22,14 @@ from typing import Any
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from . import search, store
+from . import renditions, search, store
 from .config import Config
 
 #: Long edge for the stored image. Ample for reading a label in a box.
 FULL_MAX = 2048
-#: Long edge for the list thumbnail.
-THUMB_MAX = 400
+#: Long edge for the list thumbnail. Lives with the other derived sizes in
+#: renditions.py; measured as ample, and deliberately left as it was.
+THUMB_MAX = renditions.THUMB_MAX
 JPEG_QUALITY = 82
 
 
@@ -93,6 +94,10 @@ def save_photo(
 
     width, height = _write(image, config.photo_dir / full_name, FULL_MAX)
     _write(image, config.photo_dir / thumb_name, THUMB_MAX)
+    # From the stored full image, not from `image` in hand: `moving thumbnails`
+    # and a request for a missing strip only ever have the stored file, and
+    # all three must make the same bytes -- one URL, one image, forever.
+    renditions.write_strip(config.photo_dir, full_name)
     size = (config.photo_dir / full_name).stat().st_size
 
     is_first = (
@@ -137,10 +142,16 @@ def list_photos(conn: sqlite3.Connection, code: str) -> list[dict[str, Any]]:
 
 
 def with_analysis(conn: sqlite3.Connection, photo: dict[str, Any]) -> dict[str, Any]:
-    """The photo plus where its background analysis has got to (or None)."""
+    """The photo as the page gets it: where its analysis has got to, and the
+    images it can be drawn from.
+
+    Every photo sent to a client passes through here, which is why `srcset` is
+    added here too rather than at each route that returns one.
+    """
     from . import analysis  # local: analysis imports store, which storage also does
 
     photo["analysis"] = analysis.state_of(conn, photo["id"])
+    photo["srcset"] = renditions.srcset(photo)
     return photo
 
 
@@ -189,6 +200,10 @@ def delete_photo(conn: sqlite3.Connection, config: Config, photo_id: int) -> boo
     for name in (photo["filename"], photo["thumb_filename"]):
         if name:
             (config.photo_dir / name).unlink(missing_ok=True)
+    # Every strip of any recipe: they are not in the table, so nothing else
+    # would ever find them again.
+    for strip in renditions.strip_files(config.photo_dir, photo["filename"]):
+        strip.unlink(missing_ok=True)
 
     conn.execute("DELETE FROM photos WHERE id = ?", (photo_id,))
     # ai_jobs.photo_id has no foreign key (see migration 0006), so the jobs a

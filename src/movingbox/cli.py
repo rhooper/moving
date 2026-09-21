@@ -245,6 +245,35 @@ def cmd_reindex(args) -> int:
     return 0
 
 
+def cmd_thumbnails(args) -> int:
+    """Give every photo its sharpened strip image, from the full image.
+
+    Only strips: the list thumbnail is left exactly as it is, and the full
+    image is the record and is never written. Safe to re-run, and safe while
+    the service is running -- see renditions.backfill.
+    """
+    from . import renditions
+
+    config = from_env()
+    conn = db.connect(config.db_path)
+    try:
+        report = renditions.backfill(conn, config.photo_dir, dry_run=args.dry_run, prune=args.prune)
+    finally:
+        conn.close()
+
+    verb = "would make" if args.dry_run else "made"
+    print(
+        f"{verb} {report['made']} strip image(s) at version {renditions.VERSION}; "
+        f"{report['present']} already there"
+    )
+    if args.prune:
+        verb = "would remove" if args.dry_run else "removed"
+        print(f"{verb} {report['pruned']} from an older recipe")
+    for name in report["missing"]:
+        print(f"  skipped {name}: its full image is not on disk")
+    return 0
+
+
 def cmd_seed_rooms(args) -> int:
     """Create the standard rooms, and correct the kind of any that already exist.
 
@@ -347,6 +376,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     reindex = sub.add_parser("reindex", help="rebuild the search index")
     reindex.set_defaults(func=cmd_reindex)
+
+    thumbs = sub.add_parser(
+        "thumbnails", help="make the sharp photo-strip image for every photo that lacks one"
+    )
+    thumbs.add_argument(
+        "--dry-run", action="store_true", help="say what would be made, and make nothing"
+    )
+    thumbs.add_argument(
+        "--prune", action="store_true", help="also remove strip images from an older recipe"
+    )
+    thumbs.set_defaults(func=cmd_thumbnails)
 
     seed = sub.add_parser("seed-rooms", help="create a starter set of rooms")
     seed.set_defaults(func=cmd_seed_rooms)

@@ -6,7 +6,7 @@ import sqlite3
 import pytest
 from PIL import Image
 
-from movingbox import db, storage, store
+from movingbox import db, renditions, storage, store
 
 
 def a_jpeg(size=(1600, 1200), colour=(120, 90, 60)) -> bytes:
@@ -263,3 +263,74 @@ class TestCover:
         storage.set_cover(conn, second["id"])
 
         assert storage.list_photos(conn, code)[0]["id"] == second["id"]
+
+
+class TestTheStripImage:
+    """The sharpened, high-DPI image the photo strip draws. See renditions.py."""
+
+    def test_an_upload_makes_one(self, config, conn_with_box):
+        conn, code = conn_with_box
+
+        photo = storage.save_photo(conn, config, code, a_jpeg(size=(3024, 4032)))
+
+        strip = config.photo_dir / renditions.strip_name(photo["filename"])
+        with Image.open(strip) as image:
+            assert image.size == (600, 800)
+
+    def test_it_is_byte_identical_to_the_one_the_command_makes_later(self, config, conn_with_box):
+        # The cache invariant, across the paths that make one. An upload has
+        # the original in hand and could render from that -- but the command
+        # and a request only ever have the stored full image, so all three
+        # render from it. Otherwise one URL would have two sets of bytes.
+        conn, code = conn_with_box
+        photo = storage.save_photo(conn, config, code, a_jpeg(size=(3024, 4032)))
+        strip = config.photo_dir / renditions.strip_name(photo["filename"])
+        made_at_upload = strip.read_bytes()
+
+        strip.unlink()
+        renditions.write_strip(config.photo_dir, photo["filename"])
+
+        assert strip.read_bytes() == made_at_upload
+
+    def test_the_list_thumbnail_is_left_exactly_as_it_was(self, config, conn_with_box):
+        # Measured as ample already -- 2.4x the pixels a 3x phone's list row
+        # needs -- and sharpening it made no difference anyone could see. Its
+        # bytes must not move either: its URL is cached for a year.
+        conn, code = conn_with_box
+        data = a_jpeg(size=(3024, 4032))
+
+        photo = storage.save_photo(conn, config, code, data)
+
+        expected = Image.open(io.BytesIO(data)).convert("RGB")
+        expected.thumbnail((400, 400), Image.LANCZOS)
+        buffer = io.BytesIO()
+        expected.save(buffer, format="JPEG", quality=storage.JPEG_QUALITY, optimize=True)
+        assert (config.photo_dir / photo["thumb_filename"]).read_bytes() == buffer.getvalue()
+
+    def test_deleting_a_photo_takes_its_strips_with_it(self, config, conn_with_box):
+        conn, code = conn_with_box
+        photo = storage.save_photo(conn, config, code, a_jpeg())
+        old_recipe = config.photo_dir / renditions.strip_name(photo["filename"], "0123456789")
+        old_recipe.write_bytes(b"a strip from an older recipe")
+
+        storage.delete_photo(conn, config, photo["id"])
+
+        assert renditions.strip_files(config.photo_dir, photo["filename"]) == []
+
+    def test_purging_a_record_takes_its_strips_with_it(self, config, conn_with_box):
+        conn, code = conn_with_box
+        photo = storage.save_photo(conn, config, code, a_jpeg())
+        store.delete_box(conn, config, code)
+
+        store.purge_box(conn, config, code)
+
+        assert renditions.strip_files(config.photo_dir, photo["filename"]) == []
+
+    def test_a_photo_offers_the_page_both_sizes(self, config, conn_with_box):
+        conn, code = conn_with_box
+        storage.save_photo(conn, config, code, a_jpeg(size=(3024, 4032)))
+
+        (photo,) = storage.list_photos(conn, code)
+
+        assert f"/photos/{photo['id']}/strip?v={renditions.VERSION} 600w" in photo["srcset"]
+        assert f"/photos/{photo['id']}/thumb 300w" in photo["srcset"]

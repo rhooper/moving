@@ -7,7 +7,7 @@ import sqlite3
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from fastapi.responses import FileResponse
 
-from .. import ai, analysis, storage, store
+from .. import ai, analysis, renditions, storage, store
 from ..config import Config
 from ..vision import base
 from . import events
@@ -73,23 +73,54 @@ def list_for_box(code: str, conn: sqlite3.Connection = Depends(get_conn)) -> lis
 def serve(
     photo_id: int,
     size: str,
+    v: str | None = None,
     conn: sqlite3.Connection = Depends(get_conn),
     config: Config = Depends(get_config),
 ) -> FileResponse:
-    if size not in ("full", "thumb"):
-        raise HTTPException(status_code=404, detail="size must be 'full' or 'thumb'")
+    if size not in ("full", "thumb", "strip"):
+        raise HTTPException(status_code=404, detail="size must be 'full', 'thumb' or 'strip'")
 
     photo = storage.get_photo(conn, photo_id)
     if photo is None:
         raise HTTPException(status_code=404, detail=f"No photo {photo_id}")
 
+    if size == "strip":
+        return _strip(photo, v, config)
+
     name = photo["filename"] if size == "full" else photo["thumb_filename"]
     path = config.photo_dir / (name or photo["filename"])
     if not path.is_file():
         raise HTTPException(status_code=404, detail="the photo file is missing from disk")
-    # Content-addressed filenames, so this can be cached hard.
+    # Cached hard, and safe to be only because these bytes never change: the
+    # full image is the record, and the list thumbnail is never regenerated.
+    # The *files* are content-addressed but these URLs are keyed by id, so
+    # rewriting either in place would leave phones on the old bytes for a
+    # year. Anything regenerable goes through a versioned URL -- see _strip.
     return FileResponse(
         path, media_type="image/jpeg", headers={"cache-control": "public, max-age=31536000"}
+    )
+
+
+def _strip(photo: dict, v: str | None, config: Config) -> FileResponse:
+    """The strip image, at exactly the version asked for, or nothing.
+
+    Only the current version is served. Any other is a 404 rather than "the
+    current one instead": a fallback answered under an old version's URL would
+    be cached as that version for a year, which is the trap the version exists
+    to avoid. A strip not made yet is made now, from the full image, so it is
+    the same bytes an upload or `moving thumbnails` would have written.
+    """
+    if v != renditions.VERSION:
+        raise HTTPException(status_code=404, detail="no strip image at that version")
+    if not (config.photo_dir / photo["filename"]).is_file():
+        raise HTTPException(status_code=404, detail="the photo file is missing from disk")
+
+    renditions.write_strip(config.photo_dir, photo["filename"])
+    return FileResponse(
+        config.photo_dir / renditions.strip_name(photo["filename"]),
+        media_type="image/jpeg",
+        # The version names these bytes, so they can be pinned for good.
+        headers={"cache-control": "public, max-age=31536000, immutable"},
     )
 
 

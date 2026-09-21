@@ -9,7 +9,7 @@ from __future__ import annotations
 import sqlite3
 from typing import TYPE_CHECKING, Any
 
-from . import db, kinds, search
+from . import db, kinds, renditions, search
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle at runtime
     from .config import Config
@@ -267,6 +267,9 @@ def purge_box(conn: sqlite3.Connection, config: Config, code: str) -> bool:
         for name in (row["filename"], row["thumb_filename"]):
             if name:
                 (config.photo_dir / name).unlink(missing_ok=True)
+        # Strips are not in the table; only their full image's name finds them.
+        for strip in renditions.strip_files(config.photo_dir, row["filename"]):
+            strip.unlink(missing_ok=True)
     return True
 
 

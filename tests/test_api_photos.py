@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
+from movingbox import renditions
 from movingbox.api import app as app_module
 from movingbox.api.app import create_app
 from movingbox.vision import base
@@ -325,3 +326,91 @@ class TestCover:
         client.delete(f"/photos/{only['id']}")
 
         assert self.row(client, code)["cover_photo_id"] is None
+
+
+def uploaded(client, code, size=(3024, 4032)):
+    buffer = io.BytesIO()
+    Image.new("RGB", size, (140, 110, 80)).save(buffer, format="JPEG")
+    response = client.post(
+        f"/api/boxes/{code}/photos", files={"file": ("p.jpg", buffer.getvalue(), "image/jpeg")}
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
+class TestTheStripImage:
+    """GET /photos/{id}/strip?v=... -- see renditions.py for why it is shaped so.
+
+    The whole design rests on one property: a strip URL names one set of bytes,
+    forever. The service worker is cache-first and this is cached for a year.
+    """
+
+    def test_the_current_version_is_served_and_cached_hard(self, client, code):
+        photo = uploaded(client, code)
+
+        response = client.get(f"/photos/{photo['id']}/strip?v={renditions.VERSION}")
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "image/jpeg"
+        # Safe to pin: the version names these exact bytes.
+        assert "immutable" in response.headers["cache-control"]
+        assert "max-age=31536000" in response.headers["cache-control"]
+        with Image.open(io.BytesIO(response.content)) as image:
+            assert image.size == (600, 800)
+
+    def test_any_other_version_is_not_found_rather_than_answered_with_this_one(self, client, code):
+        # A fallback here would be cached as *that* version for a year -- the
+        # exact trap the version exists to avoid.
+        photo = uploaded(client, code)
+
+        response = client.get(f"/photos/{photo['id']}/strip?v=0123456789")
+
+        assert response.status_code == 404
+
+    def test_asking_without_a_version_is_not_found(self, client, code):
+        photo = uploaded(client, code)
+
+        assert client.get(f"/photos/{photo['id']}/strip").status_code == 404
+
+    def test_one_not_made_yet_is_made_when_it_is_asked_for(self, client, code, config):
+        # So a photo from before this existed is sharp the moment its page is
+        # opened, whether or not `moving thumbnails` has been run yet.
+        photo = uploaded(client, code)
+        strip = config.photo_dir / renditions.strip_name(photo["filename"])
+        made_at_upload = strip.read_bytes()
+        strip.unlink()
+
+        response = client.get(f"/photos/{photo['id']}/strip?v={renditions.VERSION}")
+
+        assert response.status_code == 200
+        # The same bytes it would have had: this URL is answered one way only.
+        assert response.content == made_at_upload
+        assert strip.read_bytes() == made_at_upload
+
+    def test_a_photo_whose_full_image_is_gone_has_no_strip(self, client, code, config):
+        photo = uploaded(client, code)
+        (config.photo_dir / renditions.strip_name(photo["filename"])).unlink()
+        (config.photo_dir / photo["filename"]).unlink()
+
+        response = client.get(f"/photos/{photo['id']}/strip?v={renditions.VERSION}")
+
+        assert response.status_code == 404
+
+    def test_an_unknown_photo_has_no_strip(self, client):
+        assert client.get(f"/photos/999999/strip?v={renditions.VERSION}").status_code == 404
+
+    def test_the_photo_list_offers_both_sizes(self, client, code):
+        photo = uploaded(client, code)
+
+        (listed,) = client.get(f"/api/boxes/{code}/photos").json()
+
+        assert listed["srcset"] == (
+            f"/photos/{photo['id']}/thumb 300w, "
+            f"/photos/{photo['id']}/strip?v={renditions.VERSION} 600w"
+        )
+
+    def test_the_upload_response_offers_both_sizes_too(self, client, code):
+        # The strip draws a new photo from this response before it next lists.
+        photo = uploaded(client, code)
+
+        assert f"strip?v={renditions.VERSION}" in photo["srcset"]
