@@ -231,10 +231,15 @@ ul.items .rename { flex: 1; min-width: 0; min-height: 2rem; height: 2rem; paddin
 ul.items li.renaming .ai { display: none; }
 
 .boxlist { list-style: none; margin: 0; padding: 0; }
-/* The rule under a row is the link's again. It moved to the <li> to sit under
-   the "in B-0012" line, which search results no longer need; back on the link
-   it starts where the row starts, so an indented row's rule steps in with it
-   and a group reads as one thing.
+/* Rows alternate backgrounds rather than sitting on a rule (asked for as
+   "remove the <hr> between list items, and instead use alternating
+   dark/slightly less dark backgrounds"). --sunk is exactly that pair against
+   --paper in both themes, so there is no new colour. The stripe is on the
+   link, whose indent is *padding* -- inside the background -- so every stripe
+   spans the full row while an indented row's content still steps in. It is
+   :nth-child, so a row added or removed by a live refresh re-stripes by
+   itself with nothing to keep in step. Square on purpose: a stripe replaces a
+   rule, and a rule is not a box.
 
    --depth is how many containers of a search result are on screen above it
    (groupMatches in nesting.js). Capped at three steps here rather than in the
@@ -244,11 +249,11 @@ ul.items li.renaming .ai { display: none; }
   display: flex;
   align-items: baseline;
   gap: 0.75rem;
-  padding: 0.6rem 0;
-  padding-left: calc(0.85rem * min(var(--depth, 0), 3));
-  border-bottom: 1px solid var(--line);
+  padding: 0.6rem;
+  padding-left: calc(0.6rem + 0.85rem * min(var(--depth, 0), 3));
   text-decoration: none;
 }
+.boxlist li:nth-child(even) > a { background: var(--sunk); }
 
 /* The cover thumbnail, so a box is recognisable by sight rather than by
    reading its code. The frame is drawn on every row whether or not there is a

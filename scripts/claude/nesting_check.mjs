@@ -732,6 +732,7 @@ try {
       at: document.querySelectorAll("#boxlist .at").length,
       onList: getComputedStyle(rows[0]).borderBottomWidth,
       onLink: getComputedStyle(rows[0].querySelector("a")).borderBottomWidth,
+      bg: rows.map((li) => getComputedStyle(li.querySelector("a")).backgroundColor),
       overflow: doc.scrollWidth - doc.clientWidth,
       right: Math.max(...rows.map((li) => li.querySelector(".w").getBoundingClientRect().right)),
     };
@@ -740,7 +741,7 @@ try {
   check("search: the containers come first, outermost first, the match last",
         JSON.stringify(drawn.keys) === JSON.stringify(chain), drawn.keys.join(" "));
   check("search: each step is indented further than the one it is inside",
-        drawn.inset[0] === 0 && drawn.inset[1] > 0 && drawn.inset[2] > drawn.inset[1] && drawn.inset[3] > drawn.inset[2],
+        drawn.inset[1] > drawn.inset[0] && drawn.inset[2] > drawn.inset[1] && drawn.inset[3] > drawn.inset[2],
         drawn.inset.join(" "));
   check("search: the indent is capped, so a deeper chain stops walking right",
         drawn.inset[4] === drawn.inset[3], drawn.inset.join(" "));
@@ -749,8 +750,11 @@ try {
   check("search: nothing says 'in B-xxxx' any more", drawn.at === 0, String(drawn.at));
   check("search: a row inside something shows no packing status, a top-level one does",
         drawn.status[0] !== "" && drawn.status.slice(1).every((s) => s === ""), JSON.stringify(drawn.status));
-  check("search: the rule under a row is the link's, so it steps in with the indent",
-        drawn.onList === "0px" && drawn.onLink !== "0px", `${drawn.onList} / ${drawn.onLink}`);
+  check("search: no rule between rows, on the row or on its link",
+        drawn.onList === "0px" && drawn.onLink === "0px", `${drawn.onList} / ${drawn.onLink}`);
+  check("search: rows alternate backgrounds instead, down the whole group",
+        drawn.bg[0] !== drawn.bg[1] && drawn.bg[0] === drawn.bg[2] && drawn.bg[1] === drawn.bg[3],
+        drawn.bg.join(" | "));
   check("search: at 320px nothing is pushed off the right-hand edge",
         drawn.overflow <= 0 && drawn.right <= 320, `overflow ${drawn.overflow}, right edge ${drawn.right}`);
   await send("Emulation.clearDeviceMetricsOverride");
