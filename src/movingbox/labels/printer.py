@@ -1,14 +1,9 @@
 """Printer backends for the Brother QL-800.
 
-Everything goes through :class:`PrinterBackend` so that swapping the underlying
-library touches one file. That matters here: ``brother_ql`` is effectively
-unmaintained (it warns about ``brother_ql.devicedependent`` on import, and
-still calls ``PIL.Image.ANTIALIAS``, which Pillow removed in v10). The
-drop-in replacement, if it comes to that, is the GPL-3.0 fork
-``luxardolabs/brother_ql``.
-
-The default backend is ``fake``, which writes a PNG preview. Real printing is
-opt-in, so no test and no accidental run burns tape.
+Everything goes through :class:`PrinterBackend` so replacing the stale
+``brother_ql`` (drop-in: the GPL-3.0 fork ``luxardolabs/brother_ql``) touches
+one file. The default backend, ``fake``, writes a PNG preview; real printing is
+opt-in so nothing burns tape by accident.
 """
 
 from __future__ import annotations
@@ -36,9 +31,8 @@ QL800_INVALIDATE = 400
 
 log = logging.getLogger(__name__)
 
-#: Serialises every access to the USB printer. FastAPI runs sync endpoints in
-#: a threadpool, so two print requests arriving together would otherwise write
-#: to the same device at the same time and interleave their rasters.
+#: Serialises every access to the USB printer: sync endpoints run in a
+#: threadpool, and two jobs at once would interleave their rasters.
 _ACCESS = threading.Lock()
 
 
@@ -50,17 +44,14 @@ def exclusive():
 
 
 def auto_power_off_command(invalidate: int = QL800_INVALIDATE) -> bytes:
-    """Bytes that switch the printer's auto power-off off, permanently.
-
-    The framing comes from i3labelstation, which drives the same QL-800:
+    """Bytes that switch the printer's auto power-off off, persistently.
 
         invalidate x 0x00     flush any half-sent command
         1B 40                 ESC @      initialise
         1B 69 55 41 00 00     ESC i U A  auto power-off, timeout 0 = never
 
-    Written to the printer's own memory, so it survives a power cycle and only
-    needs sending once -- the same setting Brother's Printer Setting Tool
-    writes through its GUI.
+    Framing as in i3labelstation, for the same model. Stored in the printer's
+    NVRAM, so it needs sending once.
     """
     return bytes(invalidate) + b"\x1b\x40" + b"\x1b\x69\x55\x41\x00\x00"
 
@@ -68,10 +59,9 @@ def auto_power_off_command(invalidate: int = QL800_INVALIDATE) -> bytes:
 class _UsbLink:
     """An open QL-800: write to it, then close it.
 
-    Closing is the point. pyusb keeps the device claimed until its resources
-    are disposed, and this runs inside the long-lived service -- a link left
-    open holds the printer exclusively for the life of the process, and every
-    later print job (brother_ql opens the device itself) is refused.
+    Always close: pyusb keeps the device claimed until disposed, and a link
+    left open in the service locks brother_ql's own opens out, so every later
+    print job fails.
     """
 
     def __init__(self, device, endpoint):
@@ -109,18 +99,14 @@ def _open_ql800():
             == usb.util.ENDPOINT_OUT,
         )
     except Exception:
-        # Half-opened is still opened: let go before reporting the failure.
+        # Half-opened is still claimed.
         usb.util.dispose_resources(device)
         raise
     return _UsbLink(device, endpoint)
 
 
 def disable_auto_power_off(config: Config, find_device=None) -> bool:
-    """Tell the printer never to switch itself off. True if it was sent.
-
-    Failure is reported, never raised: this runs in a background thread at
-    startup, and a printer being unplugged is the ordinary case, not an error.
-    """
+    """Tell the printer never to switch itself off. True if it was sent; never raises."""
     opener = find_device or _open_ql800
     try:
         with exclusive():
@@ -141,11 +127,7 @@ def disable_auto_power_off(config: Config, find_device=None) -> bool:
 class AutoOffWatcher(threading.Thread):
     """Waits for the printer to appear, disables auto power-off, then stops.
 
-    It stops rather than polling forever because the setting persists in the
-    printer: once it lands there is nothing left to do. Directing *all* printer
-    traffic through a single thread would be the alternative, but the only
-    thing that actually needs serialising is concurrent access, and
-    `exclusive()` does that with far less machinery.
+    Once is enough: the setting persists in the printer.
     """
 
     def __init__(self, config: Config, *, send=None, interval: float = 30.0, attempts: int = 40):
@@ -161,7 +143,6 @@ class AutoOffWatcher(threading.Thread):
 
     def run(self) -> None:
         if self.config.printer_backend == "fake":
-            # Nothing to talk to: the fake backend writes preview images.
             return
         for _ in range(self.attempts):
             if self._stop.is_set():
@@ -190,9 +171,7 @@ def _find_brother_device():
 def status(config: Config, find_device=None) -> dict:
     """What the UI needs to say about printing right now.
 
-    `prints` is separate from `ready` on purpose. The fake backend is perfectly
-    ready and prints nothing, and reporting that as simply "ready" is what let a
-    dead Print button look healthy.
+    `prints` is separate from `ready`: the fake backend is ready and prints nothing.
     """
     backend = config.printer_backend
 
@@ -251,16 +230,13 @@ def status(config: Config, find_device=None) -> dict:
 def to_raster(image: Image.Image) -> Image.Image:
     """Orient a readable design for the tape.
 
-    The printer always lays PRINTABLE_WIDTH dots across the tape, so a
-    landscape design -- laid out along the tape and therefore that many dots
-    *tall* -- is rotated a quarter turn. Portrait designs pass through.
+    The printer lays PRINTABLE_WIDTH dots across the tape, so a landscape
+    design (that many dots *tall*) is turned a quarter; portrait passes through.
     """
     if image.width == PRINTABLE_WIDTH:
         return image
     if image.height == PRINTABLE_WIDTH:
-        # expand=True keeps every pixel; -90 puts the start of the design at
-        # the leading edge of the tape, so it reads the same way up as the
-        # preview once the label is turned.
+        # -90 was verified on tape, so the label reads the same way up as the preview.
         return image.rotate(-90, expand=True)
     raise ValueError(
         f"a label must be {PRINTABLE_WIDTH}px on one side to fit 62mm tape; "
@@ -269,18 +245,12 @@ def to_raster(image: Image.Image) -> Image.Image:
 
 
 def build_instructions(image: Image.Image, *, model: str, label: str) -> bytes:
-    """Convert a rendered label into QL raster instructions.
-
-    Testable without hardware, which is most of the value: it proves the
-    geometry is one the printer will accept before any tape is involved.
-    """
-    # Rotate first: a landscape design is the right size, just the wrong way
-    # round, and rejecting it for its width would be wrong.
+    """Convert a rendered label into QL raster instructions. Needs no hardware."""
+    # Rotate before the width check, or a landscape label is rejected as 990 px wide.
     image = to_raster(image)
     if image.width != PRINTABLE_WIDTH:
-        # brother_ql would try to rescale, and its rescale path calls
-        # PIL.Image.ANTIALIAS -- removed in Pillow 10 -- so the real failure
-        # would surface as an unrelated AttributeError deep in the library.
+        # brother_ql would rescale, via PIL.Image.ANTIALIAS (gone in Pillow 10),
+        # and fail with an unrelated AttributeError.
         raise ValueError(
             f"label is {image.width}px wide; the QL-800 needs exactly "
             f"{PRINTABLE_WIDTH}px for 62mm tape"
@@ -323,8 +293,6 @@ class BrotherQLPrinter:
         data = build_instructions(
             image, model=self.config.printer_model, label=self.config.label_id
         )
-        # One device: two jobs arriving together would interleave their
-        # rasters and produce two ruined labels.
         with exclusive():
             for _ in range(copies):
                 send(
@@ -339,9 +307,8 @@ class BrotherQLPrinter:
 def _lp_command(queue: str | None) -> list[str]:
     """The `lp` invocation for a raw job.
 
-    A queue name is required rather than defaulting: without `-d`, `lp` sends
-    to the system default printer, which would push a 40 KB raster at whatever
-    laser printer happens to be first in the list.
+    The queue is required: without `-d`, `lp` would send raw raster to the
+    system's default printer.
     """
     if not queue:
         raise ValueError(
@@ -351,11 +318,7 @@ def _lp_command(queue: str | None) -> list[str]:
 
 
 class CupsRawPrinter:
-    """Pipe raster bytes through CUPS.
-
-    The fallback for when macOS's USB printing class driver has claimed the
-    device and pyusb cannot take it.
-    """
+    """Pipe raster bytes through CUPS, for when macOS has claimed the USB device."""
 
     def __init__(self, config: Config) -> None:
         self.config = config

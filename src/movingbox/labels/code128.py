@@ -1,12 +1,7 @@
-"""Code 128, code set B: enough to put a box number under a laser.
+"""Code 128, code set B, for a keyboard-wedge reader: the payload is the box number.
 
-For a keyboard-wedge barcode reader -- the kind that types what it scans --
-so the payload is the box number and nothing else. The phone uses the QR.
-
-Hand-written rather than a dependency: the symbology is a fixed table and a
-checksum. That table was typed by hand, so tests/test_code128.py makes zbar
-read back every one of its values, including the eight that can only ever
-appear as a checksum.
+The table was typed by hand; tests/test_code128.py has zbar read back every
+value, including the eight that only occur as checksums.
 """
 
 from __future__ import annotations
