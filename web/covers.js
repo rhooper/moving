@@ -158,13 +158,22 @@ const SHORT_SIZE = { "extra large": "XL" };
 // `inside` is a third line for a container holding other records ("3 inside"),
 // and "" for the rest: the count is about this row, so it sits on the row that
 // has children, not on the ones it lists.
+//
+// Something *inside* a container carries no packing status: it goes where the
+// container goes and is as closed as the container is, so the cell was
+// repeating the container's state rather than saying anything of its own.
+// Nested inside anything, not only a box: the reasoning does not turn on what
+// kind the container is. It stays in this one function, which exists because
+// the first draw and the live update once disagreed about this cell -- so a
+// row put into a container and taken out again reads the same either way.
 export function rowStatus(box) {
   const kind = box.kind || "box";
   const size = box.size ? (SHORT_SIZE[box.size] || box.size) : "";
   const count = Number(box.child_count) || 0;
+  const nested = Boolean(box.parent_code);
   return {
     kind: size ? `${size} ${kind}` : kind,
-    status: box.status || "open",
+    status: nested ? "" : (box.status || "open"),
     inside: count ? `${count} inside` : "",
   };
 }
