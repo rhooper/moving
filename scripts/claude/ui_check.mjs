@@ -753,6 +753,36 @@ try {
   }
   results.push(...fourth.result.result.value);
 
+  // The browse list at a phone's width. Search results were already checked
+  // at 320px (nesting_check); the list itself never was, and a screenshot
+  // cannot answer it -- a narrow --window-size does not narrow the layout, so
+  // the right-hand edge looks cropped whether or not anything overflows. Only
+  // an emulated viewport says. Read-only, so it runs against the live service.
+  for (const width of [320, 400]) {
+    await send("Emulation.setDeviceMetricsOverride", { width, height: 700, deviceScaleFactor: 0, mobile: true });
+    await send("Page.navigate", { url: `${base}/#/` });
+    await sleep(700);
+    const listAt = await send("Runtime.evaluate", { returnByValue: true, expression: `(() => {
+      const rows = [...document.querySelectorAll("#boxlist li")];
+      const doc = document.documentElement;
+      return {
+        rows: rows.length,
+        overflow: doc.scrollWidth - doc.clientWidth,
+        right: rows.length ? Math.max(...rows.map((li) => li.querySelector(".w")?.getBoundingClientRect().right || 0)) : 0,
+        bg: rows.slice(0, 3).map((li) => getComputedStyle(li.querySelector("a")).backgroundColor),
+        rule: rows.length ? getComputedStyle(rows[0].querySelector("a")).borderBottomWidth : "0px",
+      };
+    })()` });
+    const got = listAt.result.result.value;
+    results.push([`the list at ${width}px: nothing runs off the right-hand edge`,
+      got.rows > 0 && got.overflow <= 0 && got.right <= width,
+      `rows ${got.rows}, overflow ${got.overflow}, right edge ${Math.round(got.right)}`]);
+    results.push([`the list at ${width}px: rows alternate backgrounds, with no rule`,
+      got.rows < 3 || (got.bg[0] !== got.bg[1] && got.bg[0] === got.bg[2] && got.rule === "0px"),
+      `${got.bg.join(" | ")} rule ${got.rule}`]);
+  }
+  await send("Emulation.clearDeviceMetricsOverride");
+
   results.push(["nothing threw in the page while all that happened",
                 thrown.length === 0, thrown.join(" | ")]);
   failures = 0;
