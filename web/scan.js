@@ -1,12 +1,6 @@
-// Camera scanner.
-//
-// Two decoders, because browser support is split and the phone in question
-// runs Firefox: BarcodeDetector is native and fast but Chrome/Edge only, so
-// everywhere else falls back to jsQR, vendored locally rather than pulled from
-// a CDN so it also works with no network.
-//
-// This needs a secure context. Over plain http on a LAN address getUserMedia
-// rejects, which is why the app is served through `tailscale serve`.
+// Camera scanner. BarcodeDetector is Chrome/Edge only, so elsewhere (Firefox)
+// it falls back to jsQR, vendored so scanning works offline. Needs a secure
+// context: on a plain-http LAN address getUserMedia rejects.
 
 let decoder = null;
 
@@ -34,13 +28,9 @@ async function makeDecoder() {
   };
 }
 
-// A scanned value is a full URL -- https://host/b/CAM-001. Read the segment
-// after /b/ and ignore the host, so a label still resolves if the server ever
-// moves. Bare codes work too, for anything printed differently.
-//
-// Deliberately makes no assumption about the code's *shape*. The format is
-// configurable (CAM-001, D001, Z06-001), and the previous pattern of
-// letters-hyphen-digits silently failed to match two of those three.
+// A scanned URL (https://host/b/CAM-001) gives the segment after /b/, whatever
+// the host; a bare code works too. No assumption about the code's shape: the
+// format is configurable (CAM-001, D001, Z06-001).
 const SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
 
 export function codeFrom(scanned) {
@@ -57,8 +47,7 @@ export function codeFrom(scanned) {
     }
     const parts = path.split("/").filter(Boolean);
     const marker = parts.lastIndexOf("b");
-    // Require the /b/ marker so scanning an unrelated QR does not hand us its
-    // last path segment as though it were a box code.
+    // Without /b/, an unrelated QR's last path segment would pass for a code.
     if (marker === -1 || marker === parts.length - 1) return null;
     candidate = parts[marker + 1];
   }
@@ -129,8 +118,7 @@ export async function viewScan(show, showError) {
   async function tick() {
     if (!running) return;
     if (video.readyState === video.HAVE_ENOUGH_DATA) {
-      // Downscale: decoding a full 1080p frame every tick is needless work and
-      // makes the phone hot. 480px on the long edge is plenty for a QR.
+      // 480px on the long edge is plenty for a QR; a full frame per tick heats the phone.
       const scale = 480 / Math.max(video.videoWidth, video.videoHeight);
       canvas.width = Math.round(video.videoWidth * scale);
       canvas.height = Math.round(video.videoHeight * scale);

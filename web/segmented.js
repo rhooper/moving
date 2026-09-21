@@ -1,28 +1,12 @@
 // A row of joined pushbuttons -- [ Box | Tub | Crate ] -- in place of a
-// dropdown: every choice is on the screen and one tap away, which is what a
-// thumb wants and a <select> is not.
-//
-// Underneath it is a real radio group: native <input type="radio"> inside a
-// <fieldset>, each wrapped in the <label> that is drawn as the button. That
-// buys, for nothing: a group with a name for a screen reader, arrow keys,
-// FormData, and the input/change events the record page's autosave already
-// listens for. The one thing a radio will not do is un-check when pressed
-// again, and an optional choice (a room, a size) has to be clearable now that
-// there is no empty <option> to pick -- so that is what this adds.
-//
-// Built with DOM calls and textContent, like the list rows in app.js: nothing
-// is interpolated into markup, so there is nothing to escape. Nothing here
-// touches `document` at import time, so the decisions below load under node
-// and are tested in tests/segmented.test.mjs.
+// dropdown. Underneath is a real radio group (radios inside <label>s drawn as
+// buttons, in a <fieldset>), so a named group, arrow keys, FormData and the
+// input/change events autosave listens for come free. What this adds: an
+// optional row clears on a second press. Built with textContent, and nothing
+// touches `document` at import time, so it is tested under node.
 
-/**
- * What pressing the button for `value` does to a row whose selection is
- * `current`. `cleared` is true only for the second press on the selected
- * button of an optional row -- the one case the browser does nothing for.
- *
- * A row that must have a value (the kind) ignores that press: there is no such
- * thing as a record that is not anything.
- */
+// `cleared` only for the second press on the selected button of an optional
+// row, the one case the browser does nothing for. A required row ignores it.
 export function pressed(current, value, { optional = false } = {}) {
   const now = String(current ?? "");
   const next = String(value ?? "");
@@ -30,27 +14,20 @@ export function pressed(current, value, { optional = false } = {}) {
   return { value: next, cleared: false };
 }
 
-/**
- * The line under an optional row. While nothing is chosen it says what that
- * means ("Not decided yet") -- the empty <option> used to; once something is,
- * it says how to un-choose it, which nobody would guess. Always one or the
- * other, so the line is always there and neither appearing moves the page.
- */
+// The line under an optional row: what nothing chosen means, or how to
+// un-choose. Always one or the other, so its appearing never moves the page.
 export function hintFor(value, empty) {
   return String(value ?? "") === "" ? empty : "Tap it again to clear";
 }
 
-/** The selected value of a row built by `segmented`, or "" for none. */
+// The selected value, or "" for none.
 export function chosen(group) {
   const radio = Array.from(group.querySelectorAll("input[type=radio]")).find((r) => r.checked);
   return radio ? radio.value : "";
 }
 
-/**
- * Show `value` as the selection ("" for none) without announcing it as an
- * edit: no events fire. For putting back what Undo returned, or text the
- * server never got -- the caller already knows about those.
- */
+// Shows `value` ("" for none) without firing events: for a value the caller
+// already knows about, such as what Undo returned.
 export function choose(group, value) {
   const wanted = String(value ?? "");
   for (const radio of group.querySelectorAll("input[type=radio]")) {
@@ -59,8 +36,6 @@ export function choose(group, value) {
   settle(group);
 }
 
-// Bring the row's own record of its selection, and the line under it, into
-// step with the radios.
 function settle(group) {
   group.dataset.value = chosen(group);
   const hint = group.querySelector(".seg-hint");
@@ -68,18 +43,13 @@ function settle(group) {
   const said = hint.querySelector(".seg-said");
   const text = hintFor(group.dataset.value, group.dataset.empty || "");
   if (said.textContent !== text) said.textContent = text;
-  // Not display:none, which would drop it from the description: this half of
-  // the line is for somebody who cannot tap.
+  // Visually hidden, not display:none, which would drop it from the description.
   hint.querySelector(".vh").textContent =
     group.dataset.value === "" ? "" : " With a keyboard, press Space on it.";
 }
 
-/**
- * Grey out some of a row's buttons, with a reason under the row. Real
- * `disabled`, so arrow keys skip them and a screen reader says so; a press on
- * one does nothing. `values` empty lifts it. For the kind row of a container
- * that holds things: the server refuses to make it a single thing.
- */
+// Greys out buttons with a reason under the row; empty `values` lifts it. Real
+// `disabled`, so arrow keys skip them and a screen reader says so.
 export function restrict(group, values, why) {
   const off = new Set((values || []).map(String));
   for (const radio of group.querySelectorAll("input[type=radio]")) {
@@ -96,18 +66,10 @@ export function restrict(group, values, why) {
   note.hidden = !off.size;
 }
 
-/**
- * Build a row.
- *
- * `options` are `{ value, label }`; `value` is the selection to start with
- * ("" or null for none); `optional` rows clear on a second press and carry the
- * line described above, which reads `empty` while nothing is chosen.
- *
- * Returns the <fieldset>. Its radios carry `name`, so a form holding it needs
- * nothing else: FormData has the value (or no entry, for none), and a
- * selection or a clearing bubbles "input" then "change" from a radio, exactly
- * as a <select> did.
- */
+// `options` are `{ value, label }`; `value` starts selected ("" or null for
+// none). An `optional` row clears on a second press, and its hint reads `empty`
+// while nothing is chosen. FormData has the value (no entry for none), and a
+// selection or clearing bubbles "input" then "change", as a <select> does.
 export function segmented({ name, legend, options, value = "", optional = false, empty = "" }) {
   const group = document.createElement("fieldset");
   group.className = "seg";
@@ -131,8 +93,7 @@ export function segmented({ name, legend, options, value = "", optional = false,
     radio.name = name;
     radio.value = String(option.value);
     radio.checked = selected !== "" && radio.value === selected;
-    // What the live-refresh hold compares against to tell "as drawn" from
-    // "changed and not yet saved" (see fieldValue in app.js).
+    // The live-refresh hold's baseline.
     radio.dataset.initial = String(radio.checked);
     if (optional) radio.setAttribute("aria-describedby", hintId);
     const face = document.createElement("span");
@@ -155,8 +116,8 @@ export function segmented({ name, legend, options, value = "", optional = false,
   }
   settle(group);
 
-  // Un-choose `radio`. The browser fires nothing for a press that changed
-  // nothing, and this is a change: say so the way a real one is said.
+  // The browser fires nothing for a press that changed nothing; this is a
+  // change, so it is announced like one.
   const clear = (radio) => {
     radio.checked = false;
     settle(group);
@@ -170,10 +131,9 @@ export function segmented({ name, legend, options, value = "", optional = false,
     if (radio.type !== "radio") return;
     if (pressed(group.dataset.value, radio.value, { optional }).cleared) clear(radio);
   });
-  // The keyboard's second press. It cannot ride on the click above: Chrome
-  // deliberately sends no click for Space on a radio that is already chosen
-  // (found by pressing it, in autosave_check.mjs). Handled on the way down and
-  // stopped there, so a browser that *does* click does not then clear twice.
+  // Chrome sends no click for Space on a radio already chosen, so the second
+  // key press is handled here, and stopped, so a browser that does click does
+  // not clear twice.
   group.addEventListener("keydown", (event) => {
     const radio = event.target;
     if (event.key !== " " || radio.type !== "radio" || !radio.checked) return;
@@ -181,9 +141,8 @@ export function segmented({ name, legend, options, value = "", optional = false,
     event.preventDefault();
     clear(radio);
   });
-  // Every real selection ends here, arrow keys included. It runs after the
-  // click above, so the press is always judged against the selection as it
-  // was before it.
+  // Runs after the click handler, so a press is judged against the selection
+  // as it was before it.
   group.addEventListener("change", () => settle(group));
   return group;
 }
