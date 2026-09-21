@@ -421,6 +421,14 @@ def going_to(conn: sqlite3.Connection, box: dict[str, Any]) -> int | None:
     return box["destination_room_id"]
 
 
+def label_rooms(conn: sqlite3.Connection, box: dict[str, Any]) -> dict[str, str | None]:
+    """The room names a label prints, for `layout.from_box`. Every label path uses this."""
+    return {
+        "room_name": room_name(conn, going_to(conn, box)),
+        "source_name": room_name(conn, box["source_room_id"]),
+    }
+
+
 def room_name(conn: sqlite3.Connection, room_id: int | None) -> str | None:
     if room_id is None:
         return None

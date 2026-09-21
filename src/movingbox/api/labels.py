@@ -22,13 +22,7 @@ def _label_for(conn: sqlite3.Connection, code: str, config: Config) -> layout.La
     box = store.get_box(conn, code)
     if box is None:
         raise HTTPException(status_code=404, detail=f"No box {code}")
-    return layout.from_box(
-        box,
-        base_url=config.base_url,
-        # A nested record goes where its container goes.
-        room_name=store.room_name(conn, store.going_to(conn, box)),
-        source_name=store.room_name(conn, box["source_room_id"]),
-    )
+    return layout.from_box(box, base_url=config.base_url, **store.label_rooms(conn, box))
 
 
 @router.get("/preview/{code}.png")
@@ -69,7 +63,7 @@ def print_labels(
                 status_code=409,
                 detail=(
                     f"Nothing is recorded in {', '.join(blank)}. Add contents first, "
-                    f"or tick 'print anyway' to label an empty box."
+                    f"or send allow_empty to label an empty box."
                 ),
             )
 

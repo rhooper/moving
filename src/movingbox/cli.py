@@ -63,12 +63,7 @@ def cmd_preview(args) -> int:
         if box is None:
             print(f"No box {args.code}", file=sys.stderr)
             return 1
-        data = layout.from_box(
-            box,
-            base_url=config.base_url,
-            room_name=store.room_name(conn, box["destination_room_id"]),
-            source_name=store.room_name(conn, box["source_room_id"]),
-        )
+        data = layout.from_box(box, base_url=config.base_url, **store.label_rooms(conn, box))
     finally:
         conn.close()
 
@@ -99,12 +94,7 @@ def cmd_print(args) -> int:
             jobs.append(
                 (
                     code,
-                    layout.from_box(
-                        box,
-                        base_url=config.base_url,
-                        room_name=store.room_name(conn, box["destination_room_id"]),
-                        source_name=store.room_name(conn, box["source_room_id"]),
-                    ),
+                    layout.from_box(box, base_url=config.base_url, **store.label_rooms(conn, box)),
                 )
             )
 
@@ -119,7 +109,7 @@ def cmd_print(args) -> int:
                 code=code,
                 copies=args.copies,
             )
-            store.record_print(conn, code)
+            store.record_print(conn, code, copies=args.copies)
             print(f"{code} -> {written}  [{config.printer_backend}]")
     finally:
         conn.close()
