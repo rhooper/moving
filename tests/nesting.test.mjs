@@ -100,10 +100,10 @@ test("delete is explained, not offered, while things are inside", () => {
 
 // --- a nested record goes where its container goes ---------------------------------------
 //
-// "subitems should hide the destination input": a thing inside a crate goes
-// wherever the crate goes, so it has no room of its own to choose. The room is
-// the nearest container's -- path is outermost first, so the search runs from
-// the end -- and a container with no room of its own defers to the one it is in.
+// A thing inside a crate goes wherever the crate goes, so it has no room of its
+// own to choose. The room is the nearest container's -- path is outermost
+// first, so the search runs from the end -- and a container with no room of
+// its own defers to the one it is in.
 
 test("the room is the nearest container's", () => {
   const path = [
@@ -138,9 +138,8 @@ test("a top-level record inherits nothing", () => {
 
 // --- fragile climbs --------------------------------------------------------------------------
 //
-// "fragile should percolate up to the parent and set that (prompt to set if
-// it's not set) but don't undo on clear." The page asks about the containers
-// that are not yet fragile; which those are is decided here.
+// The page offers to mark fragile the containers that are not yet; clearing
+// never climbs. Which containers to ask about is decided here.
 
 test("the containers not yet marked fragile, outermost first", () => {
   const path = [
@@ -159,10 +158,8 @@ test("every container already fragile means nothing to ask", () => {
 
 // --- adding something inside, from the container's page ---------------------------------
 //
-// "Adding a subitem should pop up a dialog that asks for type and a photo and
-// an optional source. The rest of the activities can be done from the ui."
-// What the dialog offers and what it sends are decided here; the dialog is
-// only the asking.
+// The add-inside dialog asks for a kind, a photo and an optional source. What
+// it offers and what it sends are decided here; the dialog only asks.
 
 const everyKind = [
   { kind: "box", label: "Box", contents: true }, { kind: "bag", label: "Bag", contents: true },
@@ -197,10 +194,9 @@ test("what was added is named, and a photo that did not upload is said, not drop
 
 // --- what the sub-item editor shows, and what it folds away -----------------------
 //
-// "collapse unused inputs using >v style expand/collapse indicators". The rule
-// is about *content*, not about which field it is: a section with something in
-// it is open, an empty one is folded. Nothing with content is ever hidden --
-// otherwise somebody edits a record without seeing what is already on it.
+// The rule is about *content*, not which field it is: a section with something
+// in it is open, an empty one is folded. Nothing with content is ever hidden,
+// or somebody edits a record without seeing what is already on it.
 
 const bagShape = { kind: "bag", label: "Bag", contents: true, sizes: ["small", "large"] };
 const lampShape = { kind: "item", label: "Loose item", contents: false, sizes: [] };
@@ -250,10 +246,8 @@ test("the summary is named for what the record is", () => {
 
 // --- the photos in the sub-item editor ------------------------------------------
 //
-// "for the popup contents view, show image thumbs and show the full view on
-// demand." Unlike the other sections this one is not an input, so there is
-// nothing to fold *open* to: a record with no photos has no photo section at
-// all, the way a lamp has no size.
+// Not an input, so there is nothing to fold *open* to: a record with no photos
+// has no photo section at all, the way a lamp has no size.
 
 test("a record with photos shows them, last, and open", () => {
   const seen = editorSections(bare, [], bagShape, [{ id: 1 }, { id: 2 }]);
@@ -279,8 +273,7 @@ test("a record the server has not described yet is still all there", () => {
 
 // --- the viewfinder in the add dialog ------------------------------------------------
 //
-// "can we use javascript to have a live camera immediately during adding a
-// subitem?" It can fail in half a dozen ordinary ways -- no permission, no
+// The live camera can fail in half a dozen ordinary ways -- no permission, no
 // camera, a plain LAN address -- and none of them is an error state: the file
 // picker is still there, and the line says which of them happened.
 
@@ -318,9 +311,7 @@ test("every one of them points at the way that still works", () => {
 
 // --- what a captured frame comes out as ----------------------------------------------
 //
-// The server downscales to 2048 px and strips the metadata, so there is no
-// point sending more than that -- and every byte over it is a phone uploading
-// a 4K frame over a house's wifi.
+// The server keeps 2048 px at most, so there is no point uploading more.
 
 test("a big frame comes down to what the server would keep", () => {
   assert.deepEqual(frameSize(4032, 3024), { width: 2048, height: 1536 });
@@ -350,8 +341,7 @@ test("a frame with no size yet is not a frame", () => {
 
 // --- search results read as a tree -------------------------------------------------
 //
-// "in search results, put the parent box first. indent subitems. then we don't
-// need in B-xxxx." The position says what the line used to say. Search is the
+// The container first, what matched inside it indented under it. Search is the
 // one view that looks inside containers, so the rule that arranges it must not
 // hide a match, drop one, or show one twice.
 

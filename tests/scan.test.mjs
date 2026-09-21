@@ -8,7 +8,6 @@ import { codeFrom } from "../web/scan.js";
 const HOST = "https://moving.example.ts.net";
 
 test("reads every configurable code shape out of a scanned URL", () => {
-  // The old letters-hyphen-digits pattern matched only the first of these.
   assert.equal(codeFrom(`${HOST}/b/B-0042`), "B-0042");
   assert.equal(codeFrom(`${HOST}/b/CAM-001`), "CAM-001");
   assert.equal(codeFrom(`${HOST}/b/D001`), "D001");

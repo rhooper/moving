@@ -1,8 +1,6 @@
-// Which photo stands for a box, and where its thumbnail comes from.
-//
-// The point of the feature is recognising a box by sight in a long list, so
-// the two things worth pinning down are that a row always resolves to exactly
-// one cover, and that a list never asks for a full-size image.
+// Which photo stands for a box, and where its thumbnail comes from: a row
+// always resolves to exactly one cover, and a list never asks for a full-size
+// image.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -11,7 +9,7 @@ import {
 } from "../web/covers.js";
 
 test("a thumbnail url points at the thumb, never the full image", () => {
-  // A list of 200 boxes pulling 2048px originals is the failure this guards.
+  // A long list must never pull 2048 px originals.
   assert.equal(thumbUrl(7), "/photos/7/thumb");
   assert.doesNotMatch(thumbUrl(7), /\/full$/);
 });
@@ -86,8 +84,8 @@ test("the strip keeps its plain thumbnail as the fallback src", () => {
 
 test("the strip's sizes are the figure's width as it was measured", () => {
   // Half of <main>'s content box less half the gap: 186 css px on a 412 px
-  // phone, 252 on a desktop once <main> stops growing at 34rem. Measured in
-  // headless Chrome, and what decides which image a 3x phone asks for.
+  // phone, 252 on a desktop once <main> stops growing at 34rem. This decides
+  // which image a 3x phone asks for.
   assert.equal(STRIP_SIZES, "(min-width: 34rem) 15.75rem, calc(50vw - 1.25rem)");
 });
 
@@ -114,11 +112,10 @@ test("the strip carries each photo's analysis through untouched", () => {
 
 // --- what a photo's analysis looks like, and when ---------------------------
 //
-// The server sends a snapshot: how long is left *as of the reply*. Everything
-// after that is this side's clock, so the function takes the snapshot and how
-// long ago it arrived and says what to draw. The case that matters most is the
-// estimate running out before the job does: a ring that fills and then just
-// sits there full is a lie about being finished.
+// The server sends how long is left *as of the reply*; after that it is this
+// side's clock, so the function takes the snapshot and how long ago it arrived.
+// A ring that fills and then sits full while the job runs on is a lie about
+// being finished.
 
 const running = { status: "running", remaining_ms: 12000, total_ms: 20000, items_found: null, error: null };
 
@@ -246,8 +243,8 @@ test("a status this side has never heard of draws nothing rather than crashing",
 
 // --- what a list row says about a record, beside its summary ----------------------
 //
-// Two lines: what it is, and how far along it is. The first draw and the live
-// update used to disagree about this cell; one function means they cannot.
+// Two lines: what it is, and how far along it is. One function, so the first
+// draw and a live update cannot disagree.
 
 test("a row says what the record is, over where it has got to", async () => {
   const { rowStatus } = await import("../web/covers.js");
@@ -264,7 +261,6 @@ test("a record from before kinds existed is a box, and a new one is open", async
 });
 
 test("a container with a size says so, in front of what it is", async () => {
-  // "The large box for the kitchen" is how people look for one.
   const { rowStatus } = await import("../web/covers.js");
 
   assert.equal(rowStatus({ kind: "box", size: "large", status: "open" }).kind, "large box");
@@ -310,10 +306,8 @@ test("nothing inside means no line, not '0 inside'", async () => {
 
 // --- a nested record's packing status is its container's -----------------------------
 //
-// "if its a subitem of a box, don't show the packing status, since we can
-// assume they're closed." A bag inside a sealed crate has no packing state
-// worth reading: it goes where the crate goes and is as closed as the crate
-// is, so the cell was repeating the container's state, badly.
+// A bag inside a sealed crate goes where the crate goes and is as closed as the
+// crate is, so it shows no packing status of its own.
 
 test("something inside a container does not carry a packing status", async () => {
   const { rowStatus } = await import("../web/covers.js");
@@ -333,9 +327,8 @@ test("a top-level record still says how far along it is", async () => {
 });
 
 test("the rule is the same function on both draw paths, in and back out again", async () => {
-  // The bug this guards happened here once: the first draw showed one thing
-  // and the live update overwrote it with another. A row put into a container
-  // and taken out again must read the same way each time, whichever path drew.
+  // A row put into a container and taken out again must read the same way
+  // each time, whichever path drew it.
   const { rowStatus } = await import("../web/covers.js");
   const bag = { kind: "bag", status: "packed", child_count: 2 };
 
@@ -352,8 +345,7 @@ test("the rule is the same function on both draw paths, in and back out again", 
 });
 
 test("where it is right now is not what this cell is for", async () => {
-  // The cell used to show the location when there was one, which hid the
-  // status. The location lives on the record page.
+  // The location would hide the status; it lives on the record page.
   const { rowStatus } = await import("../web/covers.js");
 
   const said = rowStatus({ kind: "box", status: "packed", current_location: "garage stack 3" });
@@ -529,10 +521,9 @@ test("a photo of a single thing is never offered a read, and says why", async ()
 
 // --- which mark stands for a record, and for a way of handling it ---------
 //
-// The empty thumbnail used to draw the same open box on every row, which said
-// nothing. A <use> at a symbol that is not there draws nothing at all, in
-// silence, so the mapping is worth pinning: an unknown kind must land on a
-// mark that exists, not on a name built out of whatever the server said.
+// A <use> at a symbol that is not there draws nothing, silently, so an unknown
+// kind must land on a mark that exists, not on a name built out of whatever
+// the server said.
 
 test("each kind of record has its own mark", () => {
   const marks = ["box", "tub", "crate", "bag", "item", "furniture"]
@@ -558,8 +549,8 @@ test("the mark a row draws matches the word beside it", async () => {
 });
 
 test("the handling flags carry the printed label's own glyphs", () => {
-  // fragile and heavy are drawn on the tape too; that is the whole argument
-  // for them being here. open_first is the one invented mark (a 1).
+  // fragile and heavy are the tape's own glyphs; open_first (a 1) is the one
+  // invented mark.
   assert.equal(flagIcon("fragile"), "i-fragile");
   assert.equal(flagIcon("heavy"), "i-heavy");
   assert.equal(flagIcon("open_first"), "i-open-first");
@@ -573,9 +564,8 @@ test("a flag nobody has drawn a mark for gets none, rather than a broken one", (
 test("a read photo says which model read it", async () => {
   const { seenIn } = await import("../web/covers.js");
 
-  // Two models can answer now -- the cloud tier, or the local one that stands
-  // in when it cannot be reached -- so this panel, where a wrong item gets
-  // traced, has to say which one did.
+  // The cloud tier or its local stand-in may answer, and this panel is where
+  // a wrong item gets traced.
   const cloud = seenIn({ status: "done", summary: "tea things", items: [], model: "claude-sonnet-5" });
   const local = seenIn({ status: "done", summary: "tea things", items: [], model: "qwen3-vl:4b-instruct" });
 

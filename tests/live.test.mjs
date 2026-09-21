@@ -1,7 +1,6 @@
 // The decisions the live-update client makes, away from the DOM and the socket:
-// when to reconnect, which events matter to which view, and -- the one that
-// actually bites a person -- when a refresh must be held back because someone
-// is mid-edit or mid-tap.
+// when to reconnect, which events matter to which view, and when a refresh must
+// be held back because someone is mid-edit or mid-tap.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -75,11 +74,8 @@ test("the list ignores what only a box page shows", () => {
 });
 
 test("the list cares about photos, because a row shows one", () => {
-  // It did not before: a photo changed nothing a list row drew. Now the cover
-  // thumbnail *is* part of the row, so a picture arriving, being deleted, or
-  // being swapped for another one changes what the list shows -- and a phone
-  // still looking at the list would otherwise keep drawing the old picture,
-  // or a blank square, until something else happened to that box.
+  // The cover thumbnail is part of the row; otherwise another phone keeps
+  // drawing the old picture, or a blank square.
   assert.equal(affects({ kind: "photos.changed", code: "B-0001" }, list), true);
 });
 
@@ -149,9 +145,7 @@ test("an unsaved edit holds the refresh", () => {
 });
 
 test("nothing but an edit or a gesture holds the refresh", () => {
-  // There used to be a third reason -- an unaccepted AI draft on screen. The
-  // review panel is gone (analysis is applied server-side), and a leftover
-  // flag nobody sets must not be able to hold the screen.
+  // A leftover flag nobody sets must not be able to hold the screen.
   assert.equal(holdRefresh({ drafting: true }, 10000), false);
 });
 
@@ -185,9 +179,8 @@ test("a rewritten summary alone can be applied without redrawing the page", () =
 });
 
 test("what is inside, and what it is inside, are applied in place as well", () => {
-  // A move publishes box.updated for both containers and the moved record.
-  // The record page draws its children and its breadcrumb from these, in
-  // place, like the summary -- not by redrawing a page somebody is typing on.
+  // A move publishes box.updated for both containers and the moved record;
+  // the page draws its children and breadcrumb in place, like the summary.
   const fresh = {
     ...drawn, updated_at: "2026-09-20 10:00:09",
     children: [{ code: "B-0011", kind: "bag" }], path: [{ code: "B-0001" }], parent: { code: "B-0001" },
@@ -216,11 +209,10 @@ test("a box that could not be compared is treated as changed", () => {
 
 // --- keeping a row the same element across a refresh ------------------------
 //
-// The whole point of reconcile is node *identity*: a row that survives a
-// refresh must be the same object, or a tap that began on it is delivered to
-// whatever replaced it. Node has no DOM, so these run against a stand-in for
-// the four things reconcile uses -- children, firstChild, nextSibling,
-// insertBefore -- which is precisely the surface being relied on.
+// reconcile preserves node *identity*: a row that survives a refresh must be
+// the same object, or a tap that began on it is delivered to whatever replaced
+// it. Node has no DOM, so these use a stand-in for the four things reconcile
+// touches: children, firstChild, nextSibling, insertBefore.
 
 class FakeNode {
   constructor(key) {
@@ -365,10 +357,9 @@ test("emptying the list removes every row", () => {
   assert.deepEqual(parent.keys(), []);
 });
 
-// --- cancelling an edit -------------------------------------------------------
+// --- whether a form was changed -----------------------------------------------
 //
-// Cancel appears only once there is something to cancel, so its rule is
-// stricter than hasUnsavedEdits: focus alone is not a change.
+// Stricter than hasUnsavedEdits: focus alone is not a change.
 
 test("a form as it was drawn has nothing to cancel", () => {
   assert.equal(isDirty([]), false);
@@ -399,11 +390,8 @@ test("a field that was drawn empty and is still empty is clean", () => {
 });
 
 test("a row whose create forgot to key it is still found next time", () => {
-  // This happened: the photo strip's figures were made without data-key, so
-  // every update missed them all, drew a second copy of the strip beneath the
-  // first, and removed only one stale figure (they all shared the key
-  // `undefined`). reconcile knows the key, so it sets it rather than trusting
-  // every create to remember.
+  // An unkeyed row is missed by every update and drawn again, so reconcile
+  // sets the key rather than trusting every create to remember.
   const forgetful = { ...rows, create: () => new FakeNode(undefined) };
   const parent = new FakeParent();
   const draw = (codes) => reconcile(parent, codes.map((code) => ({ code })), forgetful);

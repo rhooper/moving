@@ -1,7 +1,5 @@
-// Autosave with undo, in place of Save and Cancel buttons.
-//
-// The logic is DOM-free so it can be tested here: time is injected, and "save"
-// is whatever async function the page hands in.
+// Autosave with undo. The logic is DOM-free: time is injected, and "save" is
+// whatever async function the page hands in.
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -71,9 +69,8 @@ test("a picker saves the moment it changes", () => {
 });
 
 test("so does a row of pushbuttons, which is a picker you can see all of", () => {
-  // The kind, the size and the two rooms are radio groups now. Left to the
-  // default they would be "text": a tap would wait 1.2 s before it saved, and
-  // a second tap to clear inside that pause would send nothing at all.
+  // As "text", a tap would wait 1.2 s to save, and a second tap to clear
+  // inside that pause would send nothing at all.
   assert.equal(policyFor({ tagName: "INPUT", type: "radio" }), "change");
   assert.equal(policyFor({ tagName: "INPUT", type: "radio", dataset: {} }), "change");
 });
@@ -328,11 +325,9 @@ test("the undo stack is bounded", async () => {
 
 // --- what the page needs to draw a field's state ---------------------------------------
 //
-// The record page is redrawn under an open editing session (a handling chip, a
-// print, a change of kind), and the saver outlives the fields. So the page has
-// to be able to ask, after the fact, what state a field is in and what text it
-// was holding -- an event it missed while the old fields were on screen is no
-// use to the new ones.
+// The record page is redrawn under an open editing session and the saver
+// outlives the fields, so the page asks after the fact what state a field is
+// in and what text it was holding.
 
 test("a field's state can be asked for at any time", async () => {
   const { auto, timers, rec } = saver();
@@ -392,8 +387,7 @@ test("the text a field was holding can be read back, to survive a redraw", async
 
 // --- retrying by itself ------------------------------------------------------------------
 //
-// "Not saved yet -- will retry" has to be true with nobody touching anything:
-// the phone walked out of wifi range mid-sentence and was put in a pocket.
+// "Not saved yet -- will retry" has to be true with nobody touching anything.
 
 test("a failed save is retried on its own, after a wait", async () => {
   const { auto, timers, rec, events } = saver({ retryDelay: () => 2000 });
@@ -479,9 +473,8 @@ test("typing again calls the retry off: a retry must not save mid-word either", 
   await settle();
   assert.equal(rec.calls.length, 1);
 
-  // Back in the field, half a word in, when the retry would have come round.
-  // The location writes to the box's history: "attic, by the h" is not a
-  // place it has been. Leaving the field is what sends it, as ever.
+  // Half a word in when the retry comes round. The location writes to the
+  // box's history, so only leaving the field sends it.
   rec.fail(false);
   auto.edit("where", "attic, by the h", "commit");
   timers.advance(60000);
@@ -626,9 +619,8 @@ test("coming back online retries what failed, and only that", async () => {
 
 // --- what the line under a form says -------------------------------------------------------
 //
-// One line per form, several fields behind it. What it says is a function of
-// where those fields stand and what last happened there -- so it can be
-// redrawn from nothing after the page is, and so the wording lives in one place.
+// One line per form, several fields behind it: a function of where those fields
+// stand and what last happened, so it can be redrawn from nothing.
 
 test("a form nobody has touched says nothing", () => {
   assert.deepEqual(lineFor([{ state: "clean", policy: "pause" }]), { text: "", warn: false });
@@ -641,10 +633,9 @@ test("typing counts as saving: the pause is part of the save, not a wait before 
 });
 
 test("a field that saves only when left says how to save it", () => {
-  // Otherwise the location looks exactly like a field that is broken: you
-  // type, and nothing ever says Saved.
-  // Short on purpose: beside an Undo button on a narrow phone, a longer
-  // sentence wraps to three lines and pushes the page down as you type.
+  // Otherwise the location looks broken: you type, and nothing says Saved.
+  // Short, so beside Undo on a narrow phone it does not wrap and push the
+  // page down as you type.
   assert.equal(lineFor([{ state: "unsaved", policy: "commit" }]).text,
                "Saves when you leave the field");
 });
@@ -671,9 +662,8 @@ test("a failure is a warning, and outranks everything else in the form", () => {
 
 // --- a save the server refused -----------------------------------------------------------------
 //
-// Out of wifi range is worth retrying for ever. "No such box" -- it was deleted
-// for good on the other phone -- is not: the answer will be the same every
-// thirty seconds until the tab is closed, and "will retry" would be a lie.
+// Out of wifi range is worth retrying for ever. "No such box" is not: the
+// answer will never change, and "will retry" would be a lie.
 
 test("the page can say a failure is not worth retrying", async () => {
   const refusing = (failures, error) => (error.message === "offline" ? null : 2000);
