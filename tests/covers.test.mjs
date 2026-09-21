@@ -6,7 +6,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { analysisView, coverOf, coverUrl, flagIcon, kindIcon, stripFor, thumbUrl } from "../web/covers.js";
+import {
+  analysisView, coverOf, coverUrl, flagIcon, kindIcon, STRIP_SIZES, stripFor, thumbUrl,
+} from "../web/covers.js";
 
 test("a thumbnail url points at the thumb, never the full image", () => {
   // A list of 200 boxes pulling 2048px originals is the failure this guards.
@@ -67,6 +69,26 @@ test("the photo strip marks exactly one cover and thumbnails the rest", () => {
     "/photos/2/thumb",
     "/photos/3/thumb",
   ]);
+});
+
+test("the strip hands each photo's srcset through untouched", () => {
+  // The server builds it -- it knows the real widths and the recipe's
+  // version -- and the page only has to put it on the <img>.
+  const srcset = "/photos/1/thumb 300w, /photos/1/strip?v=0123456789 600w";
+
+  assert.equal(stripFor([{ id: 1, is_primary: 1, srcset }])[0].srcset, srcset);
+});
+
+test("the strip keeps its plain thumbnail as the fallback src", () => {
+  // A photo with no srcset -- or a browser ignoring it -- still draws.
+  assert.equal(stripFor([{ id: 1, is_primary: 1, srcset: "" }])[0].thumb, "/photos/1/thumb");
+});
+
+test("the strip's sizes are the figure's width as it was measured", () => {
+  // Half of <main>'s content box less half the gap: 186 css px on a 412 px
+  // phone, 252 on a desktop once <main> stops growing at 34rem. Measured in
+  // headless Chrome, and what decides which image a 3x phone asks for.
+  assert.equal(STRIP_SIZES, "(min-width: 34rem) 15.75rem, calc(50vw - 1.25rem)");
 });
 
 test("the strip keeps the fields the caption and delete controls need", () => {

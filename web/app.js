@@ -3,7 +3,8 @@
 
 import { Autosaver, lineFor, policyFor, retryAfter } from "/autosave.js";
 import {
-  analysisView, coverUrl, flagIcon, kindIcon, money, readingWith, rowStatus, seenIn, stripFor,
+  analysisView, coverUrl, flagIcon, kindIcon, money, readingWith, rowStatus, seenIn, STRIP_SIZES,
+  stripFor,
 } from "/covers.js";
 import {
   LiveChannel,
@@ -1765,7 +1766,8 @@ function photosPart(strip, { path, contents, changed, stale, ask, finished }) {
     figure.innerHTML = `
       <div class="pic">
         <a href="/photos/${escape(id)}/full" target="_blank" rel="noreferrer">
-          <img src="${escape(photo.thumb)}" alt="${escape(photo.caption || "Box contents")}"
+          <img src="${escape(photo.thumb)}" srcset="${escape(photo.srcset || "")}"
+               sizes="${STRIP_SIZES}" alt="${escape(photo.caption || "Box contents")}"
                width="${escape(photo.width)}" height="${escape(photo.height)}" loading="lazy">
         </a>
         <span class="ring" hidden>

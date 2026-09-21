@@ -41,6 +41,17 @@ export function coverOf(photos) {
   return list.find((photo) => photo.is_primary) || list[0] || null;
 }
 
+/**
+ * How wide a strip figure is drawn, for `<img sizes>`: half of <main>'s
+ * content box less half the gap. <main> is 34rem at most with 1rem of padding
+ * each side, so 15.75rem once it stops growing and `50vw - 1.25rem` below
+ * that -- 186 css px on a 412 px phone, measured. With the server's srcset it
+ * is what makes a 3x phone ask for the sharp strip image and a 1x screen for
+ * the small one. The sub-item modal's strip is a little narrower, so this
+ * over-asks there slightly: the safe direction, never the blurry one.
+ */
+export const STRIP_SIZES = "(min-width: 34rem) 15.75rem, calc(50vw - 1.25rem)";
+
 /** The box page's photo strip: every photo, its thumbnail, and which is cover. */
 export function stripFor(photos) {
   const cover = coverOf(photos);
