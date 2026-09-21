@@ -627,11 +627,13 @@ try {
     const video = d.querySelector("#adder-cam");
     const track = video.srcObject?.getVideoTracks?.()[0];
     return { box: !d.querySelector("#adder-box").hidden, live: !video.hidden,
-             frames: video.videoWidth, track: track ? track.readyState : null,
+             frames: video.videoWidth, framesHigh: video.videoHeight,
+             track: track ? track.readyState : null,
              shutter: !d.querySelector("#adder-shutter").hidden,
              retake: !d.querySelector("#adder-retake").hidden,
              still: !d.querySelector("#adder-still").hidden,
              stillWidth: d.querySelector("#adder-still").naturalWidth,
+             stillHeight: d.querySelector("#adder-still").naturalHeight,
              picker: Boolean(d.querySelector("#adder-shot")),
              said: d.querySelector("#adder-photo").textContent }; })()`);
 
@@ -646,14 +648,24 @@ try {
         seen.live && seen.box && seen.track === "live" && seen.frames > 0 && seen.shutter && !seen.still,
         JSON.stringify(seen));
   check("and the file picker is still there, as the other way to do it", seen.picker);
+  // The browser's default is 640x480 when no size is asked for; the fake
+  // camera, like a phone, gives the nearest real mode to what is asked.
+  const streamEdge = Math.max(seen.frames, seen.framesHigh);
+  check("the camera is asked for a size, so the stream is far above the 640 default",
+        streamEdge >= 1920, `${seen.frames} x ${seen.framesHigh}`);
+  check("the viewfinder says what size the camera gave",
+        seen.said.includes(`${seen.frames} × ${seen.framesHigh}`), seen.said);
 
   await click("#adder-shutter");
   await waitFor(`!${q("#adder-still")}.hidden`, "the still it took");
   seen = await viewfinder();
   check("the shutter keeps a still and offers another go",
         seen.still && !seen.live && seen.retake && !seen.shutter, JSON.stringify(seen));
+  const keptEdge = Math.max(seen.stillWidth, seen.stillHeight);
   check("the frame kept is no bigger than the server would keep anyway",
-        seen.stillWidth > 0 && seen.stillWidth <= 2048, String(seen.stillWidth));
+        keptEdge > 0 && keptEdge <= 2048, `${seen.stillWidth} x ${seen.stillHeight}`);
+  check("and no smaller than the stream allows: the full stream, down to 2048",
+        keptEdge === Math.min(2048, streamEdge), `kept ${keptEdge}, stream ${streamEdge}`);
   check("and the line says what it is for", /read in the background/.test(seen.said), seen.said);
 
   await click("#adder-retake");
