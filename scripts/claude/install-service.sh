@@ -169,10 +169,8 @@ import sys, usb.core
 sys.exit(0 if usb.core.find(idVendor=0x04f9) is not None else 1)
 " 2>/dev/null; then
   echo "  QL-800 found on USB."
-  echo "  If it powers itself off, turn that off once in Brother's Printer"
-  echo "  Setting Tool: Device Settings > Basic > Auto Power Off (AC/DC) > None."
-  echo "  It is stored in the printer, so it only needs doing once. There is no"
-  echo "  way to set it over USB."
+  echo "  The service turns its auto power-off off over USB at startup; the"
+  echo "  setting is kept in the printer, so there is nothing to do by hand."
 else
   echo "  No Brother printer found on USB (looked for vendor 0x04f9)."
   echo "  Printing will fail until it is plugged in and switched on, with"
