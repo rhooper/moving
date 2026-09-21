@@ -417,6 +417,12 @@ test("nothing found is nothing shown", () => {
   assert.deepEqual(groupMatches(null), []);
 });
 
+test("a list that flags nothing is all matches, flat", () => {
+  // Browsing and a container's contents carry no `matched` at all, so one
+  // path can draw every list there is.
+  assert.deepEqual(shown([{ code: "B-0001" }, { code: "B-0002" }]), ["B-0001", "B-0002"]);
+});
+
 test("a row is handed back whole, so the list draws it as it draws any row", () => {
   const row = { code: "B-0002", ancestry: ["B-0001"], matched: true, kind: "bag", content_summary: "cutlery" };
 

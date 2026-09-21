@@ -231,14 +231,22 @@ ul.items .rename { flex: 1; min-width: 0; min-height: 2rem; height: 2rem; paddin
 ul.items li.renaming .ai { display: none; }
 
 .boxlist { list-style: none; margin: 0; padding: 0; }
-/* The rule under a row is the row's, not its link's: a nested search result
-   has a line under the link ("in B-0012") that belongs above the rule. */
-.boxlist li { border-bottom: 1px solid var(--line); }
+/* The rule under a row is the link's again. It moved to the <li> to sit under
+   the "in B-0012" line, which search results no longer need; back on the link
+   it starts where the row starts, so an indented row's rule steps in with it
+   and a group reads as one thing.
+
+   --depth is how many containers of a search result are on screen above it
+   (groupMatches in nesting.js). Capped at three steps here rather than in the
+   rule, so the number stays honest however deep the nesting goes while the
+   picture stops walking off a 320px screen. */
 .boxlist li > a {
   display: flex;
   align-items: baseline;
   gap: 0.75rem;
   padding: 0.6rem 0;
+  padding-left: calc(0.85rem * min(var(--depth, 0), 3));
+  border-bottom: 1px solid var(--line);
   text-decoration: none;
 }
 
@@ -276,8 +284,8 @@ ul.items li.renaming .ai { display: none; }
 
 /* A container's contents ("Inside this crate") are drawn with the list's own
    rows, at half again the size: these are the things in your hands, and the
-   list is the index. One token does it -- the frame, the mark inside it and
-   the "in B-0012" line under it are all measured from --thumb. 66 is 44 + 50%;
+   list is the index. One token does it -- the frame and the mark inside it
+   are both measured from --thumb. 66 is 44 + 50%;
    40 rather than 39 for the mark, because multiples of 8 land every edge on a
    whole pixel (docs/design/icons/NOTES.md). */
 #inside { --thumb: 66px; --kind-icon: 40px; }
@@ -297,10 +305,11 @@ ul.items li.renaming .ai { display: none; }
 .boxlist .w .k { color: var(--ink); font-weight: 650; }
 .boxlist .w .in { color: var(--ink); }
 
-/* A search result that is inside something says where, under its row: a
-   link of its own, since a link cannot sit inside the row's link. */
-.boxlist .at { display: block; margin: -0.4rem 0 0.55rem calc(var(--thumb) + 0.75rem); font-size: 0.8125rem; color: var(--muted); }
-.boxlist .at a { display: inline; padding: 0; border: 0; font-weight: 650; }
+/* A container that did not match, shown because something inside it did. Its
+   code is quieted so the eye lands on the matches under it -- everything else
+   about the row is unchanged, because it is still a record you can tap, and a
+   search must never hide what it found. */
+.boxlist li[data-context] .c { color: var(--muted); font-weight: 650; }
 
 /* The way out of a nested record: the path, outermost first, above the code.
    One line on a desktop; on a phone it may wrap. */

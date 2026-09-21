@@ -137,7 +137,10 @@ export function groupMatches(rows) {
     for (const code of chainOf(row)) place(byCode.get(code));
     // `context` is the row's own flag, never how it came to be placed: a
     // container that matched *and* holds a match is a match, shown once.
-    out.push({ row, depth: chainOf(row).length, context: !row.matched });
+    // Explicitly `=== false`, so a list that flags nothing at all --
+    // browsing, or a container's contents -- is all matches, and one
+    // path can draw every list there is.
+    out.push({ row, depth: chainOf(row).length, context: row.matched === false });
   };
   // In the order search returned them, so the best match still leads -- and a
   // group takes the place of the first match inside it.
