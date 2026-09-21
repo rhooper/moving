@@ -1,7 +1,8 @@
 """Box lifecycle operations.
 
 Every function that changes a box keeps the search index and the event log in
-step, so callers (the HTTP layer, the CLI) never have to remember to.
+step, so callers never have to. Nothing here publishes change events: the CLI
+shares this module and cannot reach a connected phone.
 """
 
 from __future__ import annotations
@@ -49,11 +50,7 @@ class NotDeleted(ValueError):
 
 
 class NotEmpty(ValueError):
-    """A container with things still inside it cannot be deleted.
-
-    Binning it would strand them: out of the list because they are nested, and
-    out of reach because the thing they are nested in is gone.
-    """
+    """A container with things still inside it cannot be deleted: they would be stranded."""
 
 
 def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -107,8 +104,7 @@ def create_box(
 ) -> dict[str, Any]:
     """Create a box with the next unused code, indexed and logged.
 
-    `parent_code` creates it already inside a container. It is checked before
-    anything is written, so a refused parent does not cost a code.
+    `parent_code` is checked first, so a refused parent does not use up a code.
     """
     parent_id = _parent_for(conn, None, parent_code) if parent_code is not None else None
     if parent_id is not None:
@@ -135,13 +131,7 @@ def create_box(
 def get_box(
     conn: sqlite3.Connection, code: str, *, include_deleted: bool = False
 ) -> dict[str, Any] | None:
-    """The record, or None.
-
-    Deleted records are hidden by default so that every ordinary caller --
-    every endpoint, the label renderer, the print gate -- treats them as gone
-    without each having to remember. The places that genuinely want them (the
-    bin, restore, purge, and a scanned label) ask for them explicitly.
-    """
+    """The record, or None. Binned records count as gone unless `include_deleted`."""
     clause = "" if include_deleted else " AND deleted_at IS NULL"
     return _row(conn.execute(f"SELECT * FROM boxes WHERE code = ?{clause}", (code,)).fetchone())
 
@@ -161,14 +151,12 @@ def update_box(conn: sqlite3.Connection, code: str, **fields) -> dict[str, Any]:
     if "size" in fields:
         kinds.check_size(fields["size"], becoming)
     elif not kinds.holds_contents(becoming) and box["size"] is not None:
-        # A container that becomes a single thing loses its size: "large lamp"
-        # means nothing, and the picker that could clear it is no longer shown.
+        # A single thing has no size, and its page no longer shows the picker.
         fields = {**fields, "size": None}
     if fields:
         assignments = ", ".join(f"{name} = ?" for name in fields)
-        # Whoever writes the summary through here is a person, so it becomes
-        # theirs and photo analysis will not rewrite it (see analysis.py).
-        # Clearing it hands it back: an empty summary is anyone's to fill.
+        # A summary written here is a person's; photo analysis will not
+        # rewrite it (an empty one is anyone's to fill -- see analysis.py).
         if "content_summary" in fields:
             assignments += ", summary_source = 'manual'"
         conn.execute(
@@ -184,9 +172,7 @@ def delete_box(
 ) -> bool:
     """Put a record in the bin. Reversible; destroys nothing.
 
-    `config` is unused here and kept deliberately: purging needs it, and a
-    delete that silently means two different things depending on which
-    function you reached for is worse than one redundant argument.
+    `config` is unused; it keeps the signature the same as `purge_box`.
     """
     box = get_box(conn, code)
     if box is None:
@@ -203,8 +189,7 @@ def delete_box(
         "UPDATE boxes SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
         (box["id"],),
     )
-    # Out of the index, so a deleted box stops turning up in a search for what
-    # is no longer in it. reindex_box re-reads the row, which now looks deleted.
+    # reindex_box sees the row as deleted and drops it from search.
     search.reindex_box(conn, box["id"])
     _record(conn, box["id"], "delete", to_value=code, actor=actor)
     return True
@@ -240,12 +225,8 @@ def deleted_boxes(conn: sqlite3.Connection, limit: int = 200) -> list[dict[str, 
 def purge_box(conn: sqlite3.Connection, config: Config, code: str) -> bool:
     """Destroy a record for good, with its contents, events and photo files.
 
-    Only applies to something already deleted: the reversible step is what
-    everything else calls, and this one cannot be reached by accident.
-
-    The photo rows cascade, but the JPEGs live on disk -- once the rows are
-    gone nothing points at the files and they can never be found again, let
-    alone cleaned up. That is why config is required.
+    Only for something already binned. The photo rows cascade; the files on
+    disk are removed here, since nothing would point at them afterwards.
     """
     box = get_box(conn, code, include_deleted=True)
     if box is None:
@@ -261,8 +242,7 @@ def purge_box(conn: sqlite3.Connection, config: Config, code: str) -> bool:
     conn.execute("DELETE FROM boxes WHERE id = ?", (box["id"],))
     search.reindex_box(conn, box["id"])  # clears the now-orphaned index row
 
-    # After the row is gone, so a file that has already vanished by other
-    # means cannot leave the record behind.
+    # After the row is gone, so a file already missing cannot leave the record behind.
     for row in doomed:
         for name in (row["filename"], row["thumb_filename"]):
             if name:
@@ -315,16 +295,9 @@ def set_location(
     return get_box(conn, code)
 
 
-# The photo a list row is drawn with, fetched in the same statement as the
-# rows themselves. A list is the one place a per-row follow-up request is
-# unaffordable: 200 boxes would mean 200 extra round trips just to find out
-# which picture to show, and the client cannot batch them because it does not
-# know the ids until the list arrives.
-#
-# It costs one index seek per returned row against idx_photos_one_cover (the
-# partial unique index from migration 0003, whose WHERE clause this predicate
-# matches), so the cost is bounded by `limit`, not by the size of the photos
-# table -- and it is one statement, so one connection and one round trip.
+#: The photo a list row is drawn with, in the same statement as the rows. The
+#: predicate matches the partial index idx_photos_one_cover, so it is one index
+#: seek per returned row.
 _COVER = """(
     SELECT id FROM photos
      WHERE photos.box_id = boxes.id AND photos.is_primary = 1
@@ -368,9 +341,7 @@ def list_boxes(
         where.append(f"id IN ({', '.join('?' * len(matched))})")
         params.extend(matched)
     else:
-        # Browsing shows the top level only: what is inside something is seen
-        # by opening it. *Searching* looks everywhere -- "where is the
-        # samovar?" must find the bag in the box in the crate.
+        # Browsing shows the top level only; searching looks everywhere.
         where.append("parent_id IS NULL")
     if status is not None:
         where.append("status = ?")
@@ -402,13 +373,7 @@ def list_boxes(
 def record_print(
     conn: sqlite3.Connection, code: str, *, copies: int = 1, actor: str | None = None
 ) -> dict[str, Any]:
-    """Note that a label was printed.
-
-    The count increments rather than resets: labels get lost and boxes get
-    re-taped, and knowing a label was printed three times explains why more
-    than one label with the same code is in circulation. It counts *labels*,
-    not button presses, for the same reason: two copies is two in circulation.
-    """
+    """Note that a label was printed. Counts labels in circulation, not button presses."""
     box = _require(conn, code)
     conn.execute(
         """
@@ -424,8 +389,7 @@ def record_print(
 
 
 def code_of(conn: sqlite3.Connection, box_id: int) -> str | None:
-    """The code of a box by row id. Callers that only hold an id need it to
-    say *which box* changed, since a code is what a client re-fetches by."""
+    """The code of a box by row id."""
     row = conn.execute("SELECT code FROM boxes WHERE id = ?", (box_id,)).fetchone()
     return row["code"] if row else None
 
@@ -433,9 +397,8 @@ def code_of(conn: sqlite3.Connection, box_id: int) -> str | None:
 def has_contents(conn: sqlite3.Connection, code: str) -> bool:
     """Whether the record says enough about itself to be worth a label.
 
-    A container needs a summary or some items. A loose thing needs a name --
-    listing a bicycle's pedals describes nothing, so items on a non-container
-    are deliberately ignored here.
+    A container needs a summary, items or something nested inside it; a single
+    thing needs a name, and its items are ignored.
     """
     box = get_box(conn, code)
     if box is None:
@@ -443,17 +406,14 @@ def has_contents(conn: sqlite3.Connection, code: str) -> bool:
     named = bool((box.get("content_summary") or "").strip())
     if not kinds.holds_contents(box.get("kind") or kinds.DEFAULT):
         return named
-    # A crate of three bags says enough about itself, with nothing typed and
-    # no items of its own.
     return named or bool(list_items(conn, code)) or bool(children_of(conn, code))
 
 
 def going_to(conn: sqlite3.Connection, box: dict[str, Any]) -> int | None:
     """The room a record is going to, as a label should say it.
 
-    A nested record goes where its container goes: the nearest container with a
-    room decides, then the record's own room. Its own is left in the database
-    -- it is what it goes back to when it is taken out again.
+    The nearest container with a room decides, over the record's own, which is
+    kept for when it is taken out.
     """
     for step in reversed(path_to(conn, box["code"])):
         if step["destination_room_id"] is not None:
@@ -492,8 +452,7 @@ def _parent_for(conn: sqlite3.Connection, code: str | None, parent_code: str | N
     if code is not None:
         if parent_code == code:
             raise ValueError(f"{code} cannot go inside itself")
-        # Walk outwards from the would-be parent. Meeting the record being
-        # moved means it is already somewhere inside that record.
+        # Refuse a cycle: the would-be parent must not already be inside `code`.
         if code in [step["code"] for step in [*path_to(conn, parent_code), parent]]:
             raise ValueError(
                 f"{parent_code} is already inside {code}, so {code} cannot go inside it"
@@ -513,11 +472,7 @@ def set_parent(conn: sqlite3.Connection, code: str, parent_code: str | None) -> 
 
 
 def children_of(conn: sqlite3.Connection, code: str) -> list[dict[str, Any]]:
-    """What is directly inside, oldest first, leaving out anything in the bin.
-
-    Shaped like a row of the list -- cover photo, count of what is inside *it* --
-    because that is how the record page draws them.
-    """
+    """What is directly inside, oldest first, not binned, shaped like list rows."""
     box = get_box(conn, code, include_deleted=True)
     if box is None:
         return []
@@ -529,10 +484,8 @@ def children_of(conn: sqlite3.Connection, code: str) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
-#: How deep a summary looks. The store already forbids a cycle -- a parent may
-#: not be inside the thing being moved -- so this is a guard, not a rule: a
-#: button press should never be able to raise a recursion error, and six levels
-#: of container is already further than anyone packs.
+#: How deep a walk of nested records goes: a guard against a cycle in the data,
+#: which the store already refuses to create.
 MAX_DEPTH = 6
 
 
@@ -541,19 +494,8 @@ def subtree(
 ) -> list[dict[str, Any]]:
     """A record and everything nested inside it, with the items of each.
 
-    The material a summary is built from. A record that holds a box of twenty
-    things should be able to say what those things are, so this reaches past
-    the direct children that `children_of` returns, to any depth.
-
-    Ordered by closeness -- the record itself at depth 0, then its children,
-    then theirs -- because that is the order a summary should spend its room
-    in, and `summarise.contents` caps the far end.
-
-    **Two queries, whatever the shape of the tree.** The obvious recursion is
-    `children_of` plus `list_items` per node, which is two round trips each: a
-    crate of five boxes of twenty is eleven, on a button someone is waiting
-    on. One `WITH RECURSIVE` walks the tree, and one pass collects the items
-    of everything it found.
+    Nearest first (the record at depth 0), the order a summary spends its room
+    in. Two queries whatever the shape of the tree.
     """
     root = conn.execute(
         "SELECT id FROM boxes WHERE code = ? AND deleted_at IS NULL", (code,)
@@ -577,9 +519,7 @@ def subtree(
         """,
         (root["id"], max_depth),
     ).fetchall()
-    # A binned container takes what is inside it out of the summary too: those
-    # records are only reachable through the one that went, so as far as this
-    # crate is concerned they are no longer in it.
+    # The walk stops at a binned container, taking what is inside it too.
 
     nodes = [{**dict(row), "items": []} for row in rows]
     by_id = {node["id"]: node for node in nodes}
@@ -597,7 +537,7 @@ def subtree(
 def path_to(conn: sqlite3.Connection, code: str) -> list[dict[str, Any]]:
     """The containers a record is inside, outermost first. Empty at top level.
 
-    Bounded, so a loop that somehow got into the data cannot hang a request.
+    Stops at a repeat, so a cycle in the data cannot hang a request.
     """
     box = get_box(conn, code, include_deleted=True)
     steps: list[dict[str, Any]] = []
@@ -608,7 +548,6 @@ def path_to(conn: sqlite3.Connection, code: str) -> list[dict[str, Any]]:
         box = dict(row) if row else None
         if box is not None:
             steps.append(box)
-    # Walked outwards from the record; a breadcrumb reads inwards.
     return list(reversed(steps))
 
 
@@ -619,35 +558,18 @@ def search_with_containers(
     limit: int = 100,
     max_depth: int = MAX_DEPTH,
 ) -> list[dict[str, Any]]:
-    """Search results, plus the containers they are inside.
+    """Search results, then the containers they are inside, so the page can group them.
 
-    Search is the one view that looks inside containers, so a hit is often a
-    bag whose own row says nothing about where it is. Asked for as "in search
-    results, put the parent box first, indent subitems" -- which the page can
-    only do if the containers come back *with* the results, and it must cost
-    no request per result.
-
-    Every row carries two extra fields:
+    Every row carries:
 
     ``matched``
-        True for a result, False for a container brought along as context. A
-        container that both matched and holds a match is a result, once: the
-        rows are keyed by record, so nothing can appear twice.
+        True for a result, False for a container included as context. A
+        container that is also a result appears once, as a result.
     ``ancestry``
-        The codes of the containers it is inside, outermost first, empty at
-        the top level. That is what lets the page group and indent in one
-        pass; ``parent_code`` is one level, which cannot group a bag in a box
-        in a crate.
+        The codes of the containers it is inside, outermost first.
 
-    Matches lead, in relevance order, and the context rows follow: a caller
-    that does no grouping still reads the best match first, and the page's
-    grouping rule puts each container in front of the first match inside it.
-
-    Two queries whatever the depth. One `WITH RECURSIVE` walks *up* from every
-    match at once -- the mirror of `subtree` -- and one pass fetches the rows
-    of the containers that were not results themselves. The walk stops at a
-    binned container, which also truncates the chain below it: a record in the
-    bin is not somewhere anything is.
+    Matches come first, in relevance order. The walk up stops at a binned
+    container, truncating the chain there.
     """
     matches = list_boxes(conn, q=q, limit=limit)
     if not matches:
@@ -655,9 +577,8 @@ def search_with_containers(
 
     ids = [row["id"] for row in matches]
     placeholders = ", ".join("?" * len(ids))
-    # UNION, not UNION ALL: two matches in the same crate share its ancestors
-    # and the crate should be walked once. `depth` still bounds it, since a
-    # cycle would make rows that differ in depth and so survive the dedupe.
+    # UNION dedupes shared ancestors; `depth` still bounds a cycle, whose rows
+    # differ in depth and so survive the dedupe.
     walked = conn.execute(
         f"""
         WITH RECURSIVE up(id, parent_id, depth) AS (
@@ -720,8 +641,7 @@ def add_item(conn: sqlite3.Connection, code: str, *, name: str, **fields) -> dic
 
 
 def list_items(conn: sqlite3.Connection, code: str) -> list[dict[str, Any]]:
-    # include_deleted: the contents are what you look at to decide whether to
-    # restore something.
+    # Readable in the bin, to help decide whether to restore it.
     box = get_box(conn, code, include_deleted=True)
     if box is None:
         raise UnknownBox(code)
@@ -748,10 +668,8 @@ def update_item(
 ) -> dict[str, Any] | None:
     """Rename or re-count an item. None if there is no such item.
 
-    Renaming an autogenerated item makes it the person's: its source becomes
-    'manual', it stops being shown as autogenerated, and photo analysis leaves
-    it alone from then on. `keep_source` is for the one caller that is not a
-    person -- the analysis merge raising its own item's count.
+    Any change makes the item a person's ('manual'), which photo analysis then
+    leaves alone. `keep_source` is for the analysis merge raising its own count.
     """
     row = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
     if row is None:
@@ -788,8 +706,7 @@ def delete_item(conn: sqlite3.Connection, item_id: int) -> bool:
 
 
 def events_for(conn: sqlite3.Connection, code: str) -> list[dict[str, Any]]:
-    # include_deleted: the timeline is where the deletion itself is recorded,
-    # so it has to remain readable afterwards.
+    # Readable in the bin: the timeline records the deletion itself.
     box = get_box(conn, code, include_deleted=True)
     if box is None:
         raise UnknownBox(code)

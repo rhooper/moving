@@ -1,13 +1,7 @@
 """Drafting box contents from photographs, on request.
 
-A draft from *this* module is a proposal: recorded, returned, never applied.
-It is the explicit, whole-box "what do you see?" call.
-
-Photos are different since 2026-09-18: `analysis.py` analyses every uploaded
-photo in the background and **does** apply what it finds, at the user's
-request. It keeps the half of the old rule that mattered -- it never touches an
-item or a summary a person typed, and everything it adds is tagged
-``items.source = 'ai'`` -- so the line between observed and guessed survives.
+A draft from this module is a proposal: recorded, returned, never applied.
+(`analysis.py` is what applies findings from uploaded photos.)
 """
 
 from __future__ import annotations
@@ -51,11 +45,9 @@ def draft_for_box(
     photo_ids: list[int] | None = None,
     model: str | None = None,
 ) -> dict[str, Any]:
-    """Ask a vision provider to describe a box's photos.
+    """Ask a vision provider to describe a box's photos. Returns ``{"job_id", "draft"}``.
 
-    Returns ``{"job_id", "draft"}``. Raises NoPhotos, or DraftUnreadable if the
-    model's reply could not be used -- the job row records either outcome so a
-    bad prompt or a wedged model is visible afterwards.
+    Raises NoPhotos, or DraftUnreadable (recorded on the job row).
     """
     box = store.get_box(conn, code)
     if box is None:

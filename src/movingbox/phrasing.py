@@ -1,26 +1,12 @@
 """Asking a small local model to *phrase* a summary of a record's contents.
 
-`summarise.py` assembles a summary; this rephrases one. The difference is what
-the owner asked for: not "stock pot, 3 baking pans, stand mixer, colander,
-2 mixing bowls, 6 tea towels" but "Kitchen gear - a stock pot, a stand mixer
-and baking pans" -- what kind of things are in there, then a few examples. On
-tape read from across a room, the second is the useful one; the full list is
-one scan away in the app, which is the same trade the printed label already
-makes by not itemising.
+`summarise.py` assembles a flat list ("stock pot, 3 baking pans, stand
+mixer..."); this turns it into the kind of things inside and a few examples
+("Kitchen gear - a stock pot, a stand mixer and baking pans").
 
-Two rules shape everything below.
-
-**Only the button phrases.** "From contents" is a person waiting on a reply, so
-it can afford a model. `analysis.refresh_summary` -- the background worker that
-fills a summary after a photo -- stays on plain assembly: it already waits on a
-vision call, and a second round-trip would make every photo slower for a line
-nobody is watching.
-
-**Falling back is the normal case, not the error case.** Ollama down, the model
-not pulled, a slow answer, a reply with no JSON in it: every one of those hands
-back `summarise.from_items` and says so. This tool is used in a half-packed
-house; offline has to keep working, and that was a deliberate project choice
-long before this module existed.
+Only the "From contents" button phrases; the background photo worker assembles.
+Falling back to the assembled line is the normal case, not an error: no model,
+Ollama down, a slow or unreadable answer all return `summarise.from_items`.
 """
 
 from __future__ import annotations
@@ -40,49 +26,29 @@ log = logging.getLogger(__name__)
 
 PROMPT_VERSION = "2026-09-20.1"
 
-#: How long Ollama keeps the model in memory after a request, sent on the warm
-#: ping and on every real request. The same 30 minutes the vision path uses,
-#: for the same reason: boxes in a packing session are further apart than
-#: Ollama's own five-minute default.
+#: How long Ollama keeps the model loaded; its default of five minutes is
+#: shorter than the gap between boxes.
 KEEP_ALIVE = "30m"
 KEEP_ALIVE_SECONDS = 30 * 60
 
-#: How often the warmer pings. Derived from KEEP_ALIVE rather than typed
-#: separately, so a refresh can never end up slower than the idle timeout it
-#: exists to beat. A sixth of it rather than most of it, because the idle
-#: timeout is not the only thing that unloads a model: Ollama holds three at
-#: once by default (OLLAMA_MAX_LOADED_MODELS), and this app already wants
-#: exactly three -- the summary model and the two vision ones. Anything else
-#: on the machine evicts one of them, and if it is this one the next press of
-#: the button falls back. Five minutes is how long that lasts. The ping costs
-#: nothing when the model is already there: measured at 10-40 ms.
+#: How often the warmer pings: well inside KEEP_ALIVE, because Ollama holds only
+#: three models by default (OLLAMA_MAX_LOADED_MODELS), this app wants exactly
+#: three, and anything else on the machine can evict this one early.
 REFRESH = KEEP_ALIVE_SECONDS / 6
 
-#: Retried this often while Ollama is unreachable: often enough to pick up a
-#: machine that woke before Ollama did, rarely enough to keep quiet about it.
+#: Seconds between pings while Ollama is unreachable.
 RETRY = 60.0
 
-#: Left alone, Ollama sizes the context at 262,144 tokens. This prompt is a
-#: short list; 8192 is generous for it. It must match the warm ping's exactly
-#: -- Ollama keys a loaded model by its runner options, so asking for a
-#: different context unloads and reloads the model, which is the cold start
-#: the warmer exists to prevent.
+#: Must match between the warm ping and the real request: Ollama keys a loaded
+#: model by its runner options, so a different context reloads the model.
 CONTEXT = 8192
 
-#: A button someone is waiting on, not a background job -- so this is nothing
-#: like the vision path's twenty minutes. Measured on this machine with the
-#: model kept warm: 0.27 s median, 0.6 s worst over 21 runs. Five seconds is
-#: ten times that, under the point where a button reads as broken, and short
-#: enough that a press landing while the photo worker holds Ollama falls back
-#: to the assembled line instead of hanging.
+#: Seconds. A person is waiting on the button, and a press that lands while
+#: the photo worker holds Ollama should fall back rather than hang.
 TIMEOUT = 5.0
 
-#: How many distinct things it takes before a model can say anything the
-#: assembler cannot. Below this there is nothing to generalise from -- and,
-#: measured, it is where the models misbehave: given one or two lines every
-#: candidate padded its answer out of the prompt's own worked example
-#: ("Kitchen essentials - a kettle, clamps and a tin of screws"). "kettle,
-#: toaster" is already the best line those contents have.
+#: Fewer distinct things than this are not sent to a model: there is nothing
+#: to generalise from, and models pad the answer from the prompt's example.
 ENOUGH = 3
 
 
@@ -127,10 +93,8 @@ SCHEMA = {
 
 
 def as_lines(contents: list[dict[str, Any]]) -> str:
-    """The contents as the prompt shows them: one thing a line, counted.
-
-    Pluralised the same way the assembled summary is, so the model is reading
-    the same English a person would have read on the label.
+    """The contents as the prompt shows them: one thing a line, counted and
+    pluralised as the assembled summary would be.
     """
     lines = []
     for thing in contents:
@@ -172,11 +136,7 @@ _FENCE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
 
 def _find_json(text: str) -> dict[str, Any]:
-    """The first JSON object in a reply that may be wrapped in prose or fences.
-
-    Same forgiveness as `vision.base`, for the same reason: small local models
-    fence their JSON and prepend "Sure! Here is" however firmly told not to.
-    """
+    """The first JSON object in a reply that may be wrapped in prose or fences."""
     for candidate in [*(m.group(1) for m in _FENCE.finditer(text)), text]:
         start, end = candidate.find("{"), candidate.rfind("}")
         if start == -1 or end <= start:
@@ -200,18 +160,12 @@ def _tidy(text: str) -> str:
 
 
 def read_response(payload: dict) -> str:
-    """The summary in a reply, or raise Unusable.
-
-    Forgiving about the wrapper, strict about the outcome: an empty line is not
-    an answer, and handing one back would read on the label as "nothing in
-    here" rather than "the model had nothing to say".
-    """
+    """The summary in a reply, or raise Unusable. An empty line is not an answer."""
     message = (payload or {}).get("message", {})
     text = (message.get("content") or "").strip()
     if not text:
-        # Ollama 0.34, with `format` set, puts a thinking checkpoint's JSON in
-        # `thinking` and leaves `content` empty. The vision path lost 42 of 42
-        # replies that way before this fallback existed.
+        # With `format` set, Ollama 0.34 puts a thinking checkpoint's JSON in
+        # `thinking` and leaves `content` empty.
         text = (message.get("thinking") or "").strip()
     if not text:
         raise Unusable(f"unexpected reply from ollama: {str(payload)[:200]}")
@@ -243,19 +197,12 @@ class OllamaPhraser:
         except httpx.HTTPStatusError as exc:
             raise Unusable(f"ollama returned HTTP {exc.response.status_code} for {model}") from exc
         except httpx.HTTPError as exc:
-            # Refused, timed out, no DNS: nothing usable answered in time.
             raise Unusable(f"nothing usable answered at {self.url}: {exc}") from exc
         return read_response(response.json())
 
 
 class StubPhraser:
-    """A deterministic phraser, for checking the UI without a model.
-
-    Selected by ``MOVING_VISION_PROVIDER=stub``, the same switch the stub
-    vision provider uses -- the browser checks set it once and neither path
-    reaches Ollama. It answers in the shape a real one does, from the contents
-    it was given, so a check can assert on it.
-    """
+    """A deterministic phraser for checking the UI, selected by ``MOVING_VISION_PROVIDER=stub``."""
 
     name = "stub"
 
@@ -270,8 +217,7 @@ def warm(config: Config) -> bool:
     response = httpx.post(
         f"{config.ollama_url.rstrip('/')}/api/generate",
         json=warm_request(config.summary_model),
-        # Generous: this is a background thread nobody is waiting on, and a
-        # cold load of a 7b model is seconds.
+        # Nobody is waiting on this, and a cold load takes seconds.
         timeout=120.0,
     )
     response.raise_for_status()
@@ -279,17 +225,10 @@ def warm(config: Config) -> bool:
 
 
 class Warmer(threading.Thread):
-    """Keeps the summary model resident, so the first press is not a cold start.
+    """Keeps the summary model resident, so a press is never a cold start.
 
-    Shaped like `printer.AutoOffWatcher` -- a daemon thread started by the
-    app's lifespan handler -- but it does not stop after one success: the
-    point is that the model is still there hours later, when the next box is
-    packed. Measured on this machine, that is the difference between 0.3 s and
-    the several seconds a load takes, and the whole reason the button is worth
-    putting a model behind at all.
-
-    It never fails startup and never dies: Ollama may be down, may come back,
-    or the model may simply not be pulled. All of that is logged and retried.
+    Runs until stopped, and never dies: Ollama being down or the model not
+    pulled is logged and retried.
     """
 
     def __init__(
@@ -312,17 +251,13 @@ class Warmer(threading.Thread):
 
     def run(self) -> None:
         if not self.config.phrase_summaries or self.config.vision_provider == "stub":
-            # Nothing to keep warm: either the button assembles its line, or a
-            # stub answers it. Checked here rather than at the call site so a
-            # test of the thread covers the decision.
             return
         while not self._stop.is_set():
             warmed = False
             try:
                 warmed = bool(self._ping(self.config))
             except Exception as failure:  # noqa: BLE001 - the warmer must outlive anything
-                # Debug, not warning: a machine that wakes before Ollama does
-                # would otherwise fill the log with something nobody can act on.
+                # Debug: Ollama starting after the app is routine, not actionable.
                 log.debug("could not warm %s: %s", self.config.summary_model, failure)
             if self._stop.wait(self.interval if warmed else self.retry):
                 return
@@ -339,10 +274,8 @@ def summary_for(
 ) -> tuple[str, str]:
     """The suggested summary and where it came from: "model" or "assembled".
 
-    The assembled line is built first and always: it is both the answer when
-    there is no model to ask and the thing handed back when asking fails. The
-    caller reports the source so the page can say which it got -- and so a test
-    can tell a fallback from a lucky guess.
+    The assembled line is always built first; it is the answer whenever the
+    model is not asked or fails.
     """
     assembled = summarise.from_items(contents)
     if phraser is None or not assembled or len(contents) < ENOUGH:
