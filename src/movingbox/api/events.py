@@ -1,22 +1,10 @@
 """In-process broadcast of "something changed", for live-updating clients.
 
-The channel carries an event *kind* and a box *code*. It never carries a box.
-That is a deliberate constraint rather than laziness:
+An event carries a *kind* and a box *code*, never a box: clients refetch over
+REST, so a duplicated, reordered or dropped event costs one GET, and the
+websocket endpoint (which must be ``async def``) never needs the database.
 
-* Rendering a box already has one code path -- the REST endpoints -- and a
-  second one that reassembles it from a notification would drift from it.
-* A payload is stale the moment it is queued. A client that re-fetches on
-  hearing "B-0042 changed" always draws what the database says now, so a
-  duplicated, reordered or dropped notification costs a wasted GET and
-  nothing else.
-* It keeps the socket endpoint free of the database entirely, which matters
-  here more than usual: a websocket endpoint has no choice about being
-  ``async def``, and every route that takes ``get_conn`` must be sync
-  (see the note in ``app.get_conn``). Needing no connection is the only way
-  those two rules can both hold.
-
-The hub is per-application, not a module global, so tests are isolated from
-each other and two apps in one process cannot cross-talk.
+The hub is per-application, not a module global, so apps cannot cross-talk.
 """
 
 from __future__ import annotations
@@ -27,10 +15,8 @@ import threading
 from collections.abc import Iterator
 from typing import Any
 
-# What changed. The box list only redraws for the kinds that alter a row it
-# shows (plus items, which feed the search index); a box page redraws for
-# anything naming its own code. The split lives in web/live.js, which is
-# tested against these names.
+# web/live.js decides which views each kind redraws, and is tested against
+# these names.
 BOX_CREATED = "box.created"
 BOX_UPDATED = "box.updated"
 BOX_DELETED = "box.deleted"
@@ -41,21 +27,16 @@ ITEMS_CHANGED = "items.changed"
 PHOTOS_CHANGED = "photos.changed"
 LABEL_PRINTED = "label.printed"
 
-#: Sent when the connection is idle. Proves the socket is still a socket: a
-#: phone that roams off wifi leaves one that looks open from both ends until
-#: somebody tries to write to it.
+#: Sent when idle: a socket that roamed off wifi looks open until written to.
 PING = "ping"
 
-#: Sent instead of a backlog nobody can catch up on. Means "refetch
-#: everything"; it is safe precisely because clients refetch anyway.
+#: Replaces a backlog a client cannot catch up on. Means "refetch everything".
 RESYNC = "resync"
 
-#: Seconds of silence before a heartbeat. Short enough that a dead socket is
-#: noticed while the phone is still in your hand, long enough to be free.
+#: Seconds of silence before a PING.
 HEARTBEAT_SECONDS = 25.0
 
-#: Events held for a client that is not reading. Beyond this the backlog is
-#: replaced by a single RESYNC -- see _Subscriber.deliver.
+#: Events held for a client that is not reading, before collapsing to RESYNC.
 BACKLOG = 64
 
 
@@ -69,15 +50,13 @@ class _Subscriber:
     def offer(self, event: dict[str, Any]) -> None:
         """Hand an event over from whatever thread published it.
 
-        asyncio.Queue is not thread-safe and publishing happens in FastAPI's
-        threadpool (every route touching the database is a sync ``def``), so
-        the put has to be bounced onto the loop that owns the queue.
+        asyncio.Queue is not thread-safe and routes publish from the threadpool,
+        so the put is bounced onto the loop that owns the queue.
         """
         try:
             self.loop.call_soon_threadsafe(self.deliver, event)
         except RuntimeError:
-            # The loop is closing or closed; this subscriber is on its way out
-            # and there is nobody left to tell.
+            # The loop is closed; this subscriber is on its way out.
             pass
 
     def deliver(self, event: dict[str, Any]) -> None:
@@ -85,11 +64,8 @@ class _Subscriber:
         try:
             self.queue.put_nowait(event)
         except asyncio.QueueFull:
-            # This client has stopped reading -- a phone in a dead spot, or one
-            # that slept mid-frame. It cannot be caught up event by event and
-            # the queue must not grow without bound, so collapse the whole
-            # backlog into one "start over" marker. That loses no information:
-            # every event only ever meant "refetch".
+            # The client stopped reading. Every event only means "refetch",
+            # so one RESYNC loses nothing and bounds the queue.
             while not self.queue.empty():
                 self.queue.get_nowait()
             self.queue.put_nowait({"kind": RESYNC})
@@ -102,8 +78,7 @@ class Hub:
         self.heartbeat = heartbeat
         self.backlog = backlog
         self._subscribers: set[_Subscriber] = set()
-        # Publishers are threadpool workers and subscribers come and go on the
-        # event loop, so the membership set genuinely is shared across threads.
+        # Publishers are threadpool workers; subscribers live on the event loop.
         self._lock = threading.Lock()
 
     @property
@@ -112,18 +87,16 @@ class Hub:
             return len(self._subscribers)
 
     def publish(self, kind: str, code: str | None = None, *, origin: str | None = None) -> dict:
-        """Tell every connected client that `code` changed.
+        """Tell every connected client that `code` changed. Safe from any thread.
 
-        Safe to call from any thread, and safe to call with nobody listening --
-        which is the normal case for the CLI and for a server nobody has opened.
-        Returns the event, which makes it easy to assert on.
+        Returns the event.
         """
         event: dict[str, Any] = {"kind": kind}
         if code is not None:
             event["code"] = code
         if origin:
-            # Who made the change, so that device can ignore its own echo
-            # rather than redrawing over whatever its user started typing.
+            # Lets the device that made the change ignore its own echo, which
+            # would otherwise redraw over what its user is typing.
             event["origin"] = origin
 
         with self._lock:
@@ -146,12 +119,7 @@ class Hub:
 
 
 class Publisher:
-    """A hub bound to one request, so routes need not thread the client id.
-
-    Handed to endpoints as a dependency. The `origin` comes from the caller's
-    ``X-Client-Id`` header and rides along on everything this request
-    publishes.
-    """
+    """A hub bound to one request's ``X-Client-Id``, which rides on every event as `origin`."""
 
     __slots__ = ("hub", "origin")
 

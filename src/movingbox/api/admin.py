@@ -62,8 +62,7 @@ def take_backup(config: Config = Depends(get_config)) -> dict:
     try:
         written = backup.create(config)
     except backup.BackupFailed as failure:
-        # 500, not 200-with-an-error: a backup that silently did not happen is
-        # the worst possible outcome here.
+        # A 500, so a failed backup cannot pass for a successful one.
         raise HTTPException(status_code=500, detail=str(failure)) from failure
 
     return {

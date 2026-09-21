@@ -1,8 +1,7 @@
 """Settings the panel can change.
 
-Everything here is global and lives in the database rather than the
-environment, because it describes the data: a database restored onto another
-machine has to keep issuing codes that match the labels already on boxes.
+Stored in the database, not the environment, because they describe the data: a
+database restored elsewhere must keep issuing codes that match existing labels.
 """
 
 from __future__ import annotations
@@ -34,10 +33,8 @@ def list_kinds(conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
             "label": kinds.label_for(key),
             "contents": kinds.holds_contents(key),
             "prefix": overrides.get(key),
-            # How many labels print for one of these when nobody says.
             "copies": prefs.label_copies(conn, key),
-            # The sizes it can be: all four for a container, none for a thing.
-            # The record page shows the size picker exactly when this is not empty.
+            # Empty for a single thing; the page shows a size picker otherwise.
             "sizes": list(kinds.sizes_for(key)),
         }
         for key in kinds.KINDS
@@ -49,14 +46,10 @@ def photo_reading_spend(
     conn: sqlite3.Connection = Depends(get_conn),
     config: Config = Depends(get_config),
 ) -> dict:
-    """What reading photos has cost, against the cap that stops it costing more.
+    """What reading photos has cost, against the cap.
 
-    Config rather than the database, unlike everything else here: which models
-    are used and how much may be spent belong to the machine and the person
-    paying, not to the move. A cap somebody could raise from a phone at
-    midnight would not be much of a cap.
-
-    Carries whether there *is* a key, never the key.
+    The cap is config, not a setting, so it cannot be raised from a phone.
+    Says whether there *is* a key, never the key.
     """
     return spend.status(conn, config)
 
@@ -85,8 +78,6 @@ def set_code_format(body: CodeFormat, conn: sqlite3.Connection = Depends(get_con
     try:
         codes.set_format(conn, prefix=body.prefix, separator=body.separator, digits=body.digits)
     except ValueError as bad:
-        # 422 with the reason, so the panel can show what is actually wrong
-        # rather than "invalid".
         raise HTTPException(status_code=422, detail=str(bad)) from bad
     return _described(conn)
 
@@ -96,9 +87,7 @@ def set_next_number(body: NextNumber, conn: sqlite3.Connection = Depends(get_con
     shape = codes.get_format(conn)
     candidate = codes.render(body.number, **shape)
 
-    # Winding the counter back onto a code that already exists would put two
-    # boxes behind one printed label -- the single thing the counter exists to
-    # prevent. Setting it by hand must not be a way around that.
+    # Winding back onto an existing code would put two boxes behind one label.
     if conn.execute("SELECT 1 FROM boxes WHERE code = ?", (candidate,)).fetchone():
         raise HTTPException(
             status_code=409,
