@@ -1,89 +1,62 @@
-# Icons — what each one means, and which to ship
+# Icons: what each one means, and where they ship
 
 One family with the home mark: a 16-unit grid, one evenodd path per icon,
-2-unit strokes (the home mark's ring), solid masses, holes only where they
-mean something. `fill="currentColor"`, so one file serves both themes. No
-radius, no accent, no font, no stroke attributes. Subpaths never overlap, so
-the drawing is identical under nonzero — evenodd is used only for the
-deliberate knockouts.
-
-`set/*.svg` are the individual files; `sprite.svg` holds the same paths as
-`<symbol id="i-…">` for inlining once and `<svg><use href="#i-box"/></svg>`.
-The sprite root carries `fill="currentColor"` and `style="display:none"`.
+2-unit strokes, solid masses, holes only where they mean something.
+`fill="currentColor"`, so one file serves both themes. No radius, accent, font
+or stroke attributes. `set/*.svg` are the individual files; `sprite.svg` holds
+them as `<symbol id="i-…">`, and `web/index.html` inlines exactly that sprite (a
+test compares the two). `proof.html` shows the set at every size in both themes.
 
 ## The set
 
-Nav
+- **Nav**: `items` (rows of a thumbnail and a line), `scan` (viewfinder corners
+  round a QR finder pattern), `new` (plus), `settings` (three sliders).
+- **Kinds**: `box` (flaps up), `parts` (three small bins over two wide ones --
+  irregular, since a regular grid reads as a window), `tub` (wide, low,
+  tapered, lid hovering -- taller than wide it is a bin), `crate` (posts and
+  three boards), `bag` (by its handle -- wider than tall, or it is a padlock),
+  `item` (a tag on a string: a single thing that holds nothing), `furniture` (a
+  chair in profile).
+- **Handling flags**, the printed label's own glyphs on this grid: `fragile`
+  (the broken goblet), `heavy` (the weight, its loop squared), `open-first` (a
+  1 -- the label draws a double rule instead, so this is the one invented mark).
+- **Variants, drawn and not shipped**: `scan-qr` (softer at 16), `crate-lid`
+  (at 16 it is two eyes), `open-first-rule` (the label's double rule; at 16 a
+  picture frame).
 
-- `items` — the list: rows of a thumbnail and a line, which is what the Items page is.
-- `scan` — viewfinder corners around a QR finder pattern: point the camera at a label.
-- `new` — plus. Make a record.
-- `settings` — three sliders with square knobs: things you set.
-- `scan-qr` (variant) — scan as a small QR code, three finders and some data. Same meaning, more "QR", less "action"; softer at 16.
+## Where they ship: three places only
 
-Kinds
+1. **The nav bar, always with the word** -- stacked over it at 24 px on a phone,
+   beside it at 20 px on a desktop. "Items" and "New" are not guessable from a
+   list glyph and a plus.
+2. **A list row's empty thumbnail**, showing the record's kind, under the photo.
+   Not in the kind picker: tub, crate and bag are not certain enough at 24 px
+   without their words.
+3. **The handling flags**, in the toggles and badges, because the printed label
+   carries them and the app mirrors the label. The colour is the toggle's
+   state, never the icon's.
 
-- `box` — a cardboard box with its flaps up.
-- `parts` — a compartmented organizer: three small bins over two wide ones. Added 2026-09-21 for the Parts kind, which on the owner's own photos is exactly this -- "clear plastic divided parts box". Irregular on purpose, since a regular 2x2 grid reads as a window, and wider than tall for the same reason as `tub` and `bag`. Distinct from `crate`, whose knockouts are horizontal slats only. Soft at 24 px the way `crate` is: odd coordinates land on half pixels at 1.5x.
-- `tub` — a plastic tub: wide, low, tapered, lid off and hovering. Drawn wider than tall on purpose; taller than wide it is a bin.
-- `crate` — a slatted crate: posts and three boards.
-- `bag` — a bag by its handle. Body wider than tall on purpose; square it is a padlock.
-- `item` — a tag on a string: a single thing that carries a label and holds nothing.
-- `furniture` — a chair, in profile.
-- `crate-lid` (variant) — a lidded moving crate with grips notched into the sides. Right if the crates are the plastic rental kind; at 16 it is two eyes.
+## Tried and turned down -- re-adding one is a regression
 
-Handling flags (the label's own glyphs, redrawn on this grid)
+- **The status track**: open and unpacked are the same open box, delivered is
+  the home mark's house, loaded is a blob at 16, and the track already says
+  done / now / next in words.
+- **Nesting**: arrows into and out of a tray read as download and upload; a box
+  in a box is a finder pattern. The breadcrumb separator (›) stays typographic.
+- **Section headings**: decoration on headings that already say what they are.
+- **Delete**: a bin icon invites the tap the danger section exists to prevent.
+- **Look closer**: a magnifier promises zoom; it is a slower, careful read.
+- **The size row**: there is no honest picture of "medium".
 
-- `fragile` — the label's broken goblet.
-- `heavy` — the label's weight: tapered body, handle loop. The loop is square here where the label's is an arc; side by side they read as the same object.
-- `open-first` — a 1: open this one first. The label has no glyph for this (it uses a double rule round the whole label), so this is the one invented mark.
-- `open-first-rule` (variant) — the label's double rule, drawn round a small label. Faithful, but at 16 it is a picture frame and means nothing without the label beside it.
+## How they hold up, and sizes
 
-## Recommendation: which of 1–6 to ship
+Crisp at 16, 24 and 32: items, scan, new, settings, crate, bag, tub,
+open-first. Soft at 16 (diagonals): box, furniture, fragile, heavy; `parts` and
+`crate` are soft at 24, where odd coordinates land on half pixels. The weakest
+is `item`, an arrow with a dot at 16: a loose thing has no silhouette of its
+own, and the tag is the honest generic.
 
-1. **Nav — ship, always with the word.** Stacked icon over word at 24 px on
-   the phone bar (the bar grows from 48 to 56 px); icon beside word at 20 px
-   on desktop. Never icons alone: "Items" and "New" are not guessable from a
-   list glyph and a plus, and the bar has room for the words.
-2. **Kinds — ship, in the list row's empty thumbnail first.** That frame
-   already shows a placeholder (the same open box on every row); showing the
-   record's kind there costs nothing and says something. In the pushbutton
-   row, icon-and-word is fine and icons-only is not: tub, crate and bag are
-   not certain enough at 24 px to stand without their words.
-3. **Flags — ship.** This is the strongest case in the brief: the printed
-   chip already carries the goblet and the weight, and the app is meant to
-   mirror the label. Use them in the `.chip` toggles (off: muted; on: white on
-   the signal colour, which is the chip's own state, not the icon's) and in
-   the `.flag` badges on the record page. Choose `open-first` (the 1) unless
-   fidelity to the label's double rule matters more than reading at 16.
-4. **Status track — do not ship.** Tried in the real track (see the proof):
-   open and unpacked are the same open box, delivered is the home mark's
-   house, loaded is a blob at 16, and the track already draws progress as
-   done / now / next with the words. Icons there add a second thing to read.
-5. **Nesting — do not ship.** "Put it inside" / "Take it out" drawn as arrows
-   into and out of a tray read as download and upload; "contains" drawn as a
-   box in a box is a finder pattern; the breadcrumb separator is typographic
-   (›) and should stay so. The sentences on those buttons are the icon.
-6. **Mistakes to iconify, beyond 4 and 5:** the section headings (What is in
-   it, Where it is going, Photos, Label, Delete) — decoration on headings that
-   already say what they are; Delete — a bin icon invites the tap the danger
-   section exists to prevent; "Look closer" — a magnifier promises zoom, and
-   it is a slower model read; the size row (small / medium / large / XL) —
-   there is no honest picture of "medium".
-
-## How they hold up (honest)
-
-- Crisp at 16, 24 and 32: items, scan, new, settings, crate, bag, tub,
-  open-first, open-first-rule.
-- Good at 24 and 32, soft at 16 (diagonals): box, furniture, fragile,
-  heavy. All still recognisable at 16 next to their word or in a 44 px frame.
-- Weakest: `item` (the tag). At 16 it is an arrow with a dot; at 24 and in
-  the list thumbnail it is a tag. A single loose thing has no silhouette of
-  its own, and the tag is the honest generic. If it bothers, use the word.
-
-## Sizes to use
-
-Multiples of 8 land every edge on a pixel: 16 (chip text), 24 (phone bar,
-stacked), 32. 20 px (desktop bar) and 26 px (list thumbnail, today's
-placeholder size) are off-grid and fine — the anti-aliasing is symmetric.
-28 is the unkind size, as with the home mark.
+Multiples of 8 land every edge on a pixel: 16 (chips), 24 (the phone bar), 32,
+and 40 (the kind in a container's rows, not the arithmetic 39). 20 (the desktop
+bar) and 26 (the list thumbnail) are off the grid but fine: the anti-aliasing
+is symmetric. 28 is the unkind size, as with the home mark.
