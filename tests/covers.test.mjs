@@ -44,8 +44,8 @@ test("the cover is the photo marked as one", () => {
 });
 
 test("with nothing marked the first photo stands in", () => {
-  // Server-side there is always exactly one cover; this is only the client
-  // refusing to draw a photo strip with no cover at all if that ever slips.
+  // The server keeps exactly one cover; this is the client's fallback if that
+  // ever slips.
   assert.equal(coverOf([{ id: 5, is_primary: 0 }, { id: 6, is_primary: 0 }]).id, 5);
 });
 

@@ -44,8 +44,7 @@ def test_a_thumbnail_is_written_alongside(config, conn_with_box):
 
 
 def test_a_large_photo_is_downscaled_for_storage(config, conn_with_box):
-    # Phone cameras produce 4000px images. Storing them whole fills the disk
-    # for no benefit -- these are inventory snapshots, not photographs.
+    # Phone cameras produce 4000 px images; these are inventory snapshots.
     conn, code = conn_with_box
 
     photo = storage.save_photo(conn, config, code, a_jpeg((4032, 3024)), filename="big.jpg")
@@ -215,7 +214,6 @@ class TestCover:
         assert sorted(self.covers(conn)) == sorted([mine["id"], theirs["id"]])
 
     def test_deleting_the_cover_promotes_another_photo(self, config, conn_with_box):
-        # A box that has photos must never be left without one to show.
         conn, code = conn_with_box
         first, second, _ = self.three(config, conn, code)
 

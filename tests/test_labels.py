@@ -52,8 +52,8 @@ def test_label_is_monochrome_for_black_only_tape(conn):
 
 
 def test_the_rendered_qr_decodes_back_to_the_box_url(conn):
-    # The single property the whole system depends on. If placement, scaling or
-    # the quiet zone are wrong the label looks fine and scans not at all.
+    # If placement, scaling or the quiet zone are wrong, the label looks fine
+    # and does not scan.
     data = a_label()
 
     assert decode_qr(layout.render(data, orientation="portrait")) == data.url

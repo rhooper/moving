@@ -42,7 +42,6 @@ class TestHoldsContents:
         assert kinds.holds_contents("bag")
 
     def test_a_loose_thing_does_not(self):
-        # A bicycle is not a container; a contents list for one is nonsense.
         assert not kinds.holds_contents("item")
         assert not kinds.holds_contents("furniture")
 

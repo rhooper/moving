@@ -81,7 +81,6 @@ class TestQueueing:
         assert [row["status"] for row in jobs] == ["pending"]
 
     def test_a_loose_thing_is_not_inventoried(self, conn, config):
-        # A bicycle has no contents; there is nothing for the model to list.
         bike = store.create_box(conn, kind="item", content_summary="Bicycle")
         photo = storage.save_photo(conn, config, bike["code"], a_jpeg(), filename="p.jpg")
 
@@ -363,8 +362,6 @@ class TestTheSummary:
         assert self.summary(conn, mine["code"]) == ("Grandma's tea set", "manual")
 
     def test_what_is_nested_inside_counts_towards_the_summary(self, conn, config, box):
-        # A crate holding three bags is not an empty crate, and its label
-        # should not read as one.
         for _ in range(3):
             store.create_box(conn, kind="bag", parent_code=box["code"])
         photographed(conn, config, box["code"])

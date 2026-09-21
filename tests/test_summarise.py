@@ -138,7 +138,6 @@ class TestGatheringAWholeSubtree:
         assert named(summarise.contents(nodes)) == [("kettle", 1)]
 
     def test_a_childs_items_reach_the_container(self):
-        # A crate holding a box of things says what they are.
         nodes = [node(0, "crate"), node(1, "box", size="large", items=[("book", 4), ("album", 2)])]
 
         assert named(summarise.contents(nodes)) == [("book", 4), ("album", 2)]

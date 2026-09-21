@@ -79,6 +79,5 @@ class TestScannedLabels:
 
 
 def test_the_api_is_still_reachable_under_the_static_mount(client):
-    # Mounting the PWA at / must not shadow /api.
     assert client.get("/api/boxes").status_code == 200
     assert client.get("/health").status_code == 200

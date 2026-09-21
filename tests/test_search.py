@@ -67,7 +67,6 @@ def test_search_accepts_punctuation_without_raising(conn):
     box_id = make_box(conn, content_summary="pots and pans")
     search.reindex_box(conn, box_id)
 
-    # Users type whatever they like into a search box; none of this may crash.
     for query in ["pots & pans", '"unbalanced', "NEAR(", "*", "a OR", "", "   "]:
         search.search(conn, query)
 

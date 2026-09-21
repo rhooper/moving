@@ -61,7 +61,6 @@ class TestDeleting:
 
         store.delete_box(conn, config, box["code"])
 
-        # Nothing is destroyed by a reversible action.
         assert full.is_file()
 
     def test_the_items_are_kept(self, config, conn, box):
@@ -145,8 +144,6 @@ class TestPurging:
         assert not thumb.exists()
 
     def test_a_living_record_cannot_be_purged_by_accident(self, config, conn, box):
-        # Purging is the destructive one; it only applies to something already
-        # in the bin.
         with pytest.raises(store.NotDeleted):
             store.purge_box(conn, config, box["code"])
 

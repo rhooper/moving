@@ -71,7 +71,6 @@ class TestPrintFailures:
         assert "No such device" in detail
 
     def test_a_failed_print_is_not_recorded_as_printed(self, client, monkeypatch):
-        # A print count that rises when nothing came out is worse than useless.
         code = client.post("/api/boxes", json={"content_summary": "pots and pans"}).json()["code"]
 
         class Broken:

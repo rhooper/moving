@@ -47,7 +47,6 @@ class TestTheGrammar:
         }
 
     def test_a_line_that_is_not_a_setting_is_skipped_not_fatal(self):
-        # Half a file of settings should not stop the app starting.
         assert secrets.parse("nonsense\nANTHROPIC_API_KEY=sk-ant-x\n=novalue\n") == {
             "ANTHROPIC_API_KEY": "sk-ant-x"
         }

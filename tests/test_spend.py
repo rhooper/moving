@@ -83,7 +83,6 @@ class TestTheRunningTotal:
         assert spend.total_usd(conn) == pytest.approx(0.0225)
 
     def test_a_job_that_failed_after_the_call_still_counts(self, conn):
-        # A reply that cost money and then failed to parse still cost money.
         spend.record(conn, a_job(conn, status="error"), read(cost=0.0075))
 
         assert spend.total_usd(conn) == pytest.approx(0.0075)

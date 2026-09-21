@@ -179,7 +179,6 @@ class TestWhatTheParentShows:
 
 class TestTheLabel:
     def test_a_nested_record_with_no_room_prints_its_containers_room(self, client, conn, config):
-        # A nested record goes where its container goes: the label says so.
         from movingbox.api.labels import _label_for
 
         room = client.post("/api/rooms", json={"name": "Kitchen"}).json()["id"]
