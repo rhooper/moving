@@ -208,5 +208,7 @@ im.save(${JSON.stringify(jpeg)}, quality=92)`);
   rmSync(T, { recursive: true, force: true });
   rmSync(profile, { recursive: true, force: true });
 }
-console.log(`\n${NAME}: ${results.filter(Boolean).length}/${results.length} passed`);
+// The house summary line, which browser_checks.sh reads to report a run.
+const passed = results.filter(Boolean).length;
+console.log(passed === results.length ? `\nall ${passed} passed` : `\n${results.length - passed} failed`);
 process.exit(failed ? 1 : 0);

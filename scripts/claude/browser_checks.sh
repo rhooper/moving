@@ -74,6 +74,12 @@ run viewer_check   node scripts/claude/viewer_check.mjs "$B" "$VIEW" "$T/p.jpg" 
 run copies_check   node scripts/claude/copies_check.mjs "$B"
 run autosave_check node scripts/claude/autosave_check.mjs "$B"
 run nesting_check  node scripts/claude/nesting_check.mjs "$B"
+# Its own two servers on its own ports rather than the shared one above: it
+# ships a second revision mid-run to prove a changed strip image is fetched,
+# which the shared server cannot do. The cache-busting it proves is exactly
+# the kind of thing that regresses in silence ("reload it twice"), so it runs
+# every time rather than only on the day it was written.
+run strip_cache    env PORT=$((PORT + 1)) CDP_PORT=$((CDP_PORT + 1)) node scripts/claude/strip_cache_check.mjs
 
 TRACEBACKS=$(grep -a -c Traceback "$T/server.log")
 echo "server tracebacks: $TRACEBACKS"
