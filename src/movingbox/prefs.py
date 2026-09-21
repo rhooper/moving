@@ -1,8 +1,4 @@
-"""Preferences that describe how this move is being done.
-
-In the database with the code format, and for the same reason: they belong to
-the data, not to the machine it happens to be running on.
-"""
+"""Preferences for this move, stored in the database with the code format."""
 
 from __future__ import annotations
 
@@ -10,17 +6,14 @@ import sqlite3
 
 from . import kinds
 
-#: Matches what a print request may ask for. Ten is already a lot of tape.
+#: Matches what a print request may ask for.
 MAX_LABEL_COPIES = 10
 
 
 def label_copies(conn: sqlite3.Connection, kind: str) -> int:
     """How many copies of a full label print for this kind, when nobody says.
 
-    Per kind, because one number cannot be right for a crate and a lamp: the
-    things that get stacked want a label on more than one face, the rest want
-    one. kinds.py holds the defaults; a row here overrides one. (There was a
-    single global number for two days. Nobody ever set it.)
+    kinds.py holds the defaults; a settings row overrides one.
     """
     row = conn.execute(
         "SELECT value FROM settings WHERE key = ?", (f"label_copies:{kind}",)

@@ -1,9 +1,4 @@
-"""The movers' manifest as a PDF.
-
-One page, box counts and weight per destination room, plus the codes so a
-count can be checked against what actually came off the truck. Printed on A4
-and handed over, so it has to be legible in a hallway rather than pretty.
-"""
+"""The movers' manifest as an A4 PDF: box counts, weight and codes per destination room."""
 
 from __future__ import annotations
 
@@ -88,9 +83,7 @@ def render(groups: list[dict[str, Any]], out: IO[bytes]) -> None:
     pdf.drawRightString(MARGIN + 105 * mm, y, str(totals["boxes"]))
     pdf.drawRightString(MARGIN + 140 * mm, y, f"{totals['weight_kg']:.1f} kg")
 
-    # The weight is only what we know. Saying so on the page matters: someone
-    # load-planning from an unqualified total would be reading a number that
-    # omits most of the boxes.
+    # The total covers weighed boxes only, and the page must say so.
     if totals["unweighed"]:
         y -= 5 * mm
         pdf.setFont("Helvetica-Oblique", 9)

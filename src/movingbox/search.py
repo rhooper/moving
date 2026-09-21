@@ -1,9 +1,7 @@
 """Full-text search across boxes and everything hanging off them.
 
-The FTS index is maintained by calling :func:`reindex_box` after any mutation
-that touches a box, its items or its photos -- deliberately not by SQL triggers.
-The indexed text is assembled from four tables, and a plain function is far
-easier to test and to reason about than a web of triggers.
+Call :func:`reindex_box` after any mutation touching a box, its items or its
+photos. There are no triggers: the indexed text spans four tables.
 """
 
 from __future__ import annotations
@@ -11,8 +9,7 @@ from __future__ import annotations
 import re
 import sqlite3
 
-# The row for a box, assembled from the box itself plus its items, photos and
-# rooms. Kept as one query so reindexing a box is a single round trip.
+# One box's index row, from the box, its items, photos and rooms.
 _GATHER = """
 SELECT
     b.code,
@@ -29,9 +26,8 @@ WHERE b.id = ? AND b.deleted_at IS NULL
 
 _COLUMNS = "code, summary, notes, items, photo_captions, rooms, location"
 
-# FTS5 treats -, ", *, NEAR, OR and friends as syntax. Everything a user types
-# goes through this, so a scanned 'B-0042' or a typed 'pots & pans' is matched
-# as literal text rather than blowing up or silently matching nothing.
+# FTS5 treats -, ", *, NEAR, OR and friends as syntax, so user text is split
+# into words and each is quoted: 'B-0042' must match, not raise.
 _WORD = re.compile(r"\w+", re.UNICODE)
 
 
@@ -43,8 +39,7 @@ def _match_expression(query: str) -> str | None:
     words = _WORD.findall(query)
     if not words:
         return None
-    # Every word quoted (so it is a literal, never an operator); the final word
-    # gets a prefix match so search feels responsive as you type.
+    # Quoted, so a literal, never an operator; the last word matches as a prefix.
     quoted = [f'"{word}"' for word in words[:-1]]
     quoted.append(f'"{words[-1]}"*')
     return " AND ".join(quoted)
@@ -55,8 +50,7 @@ def reindex_box(conn: sqlite3.Connection, box_id: int) -> None:
     conn.execute("DELETE FROM box_fts WHERE rowid = ?", (box_id,))
     row = conn.execute(_GATHER, (box_id,)).fetchone()
     if row is None:
-        # Gone, or in the bin: either way removing the stale index row above
-        # is the whole job, and a restore reindexes it back.
+        # Gone or binned; a restore reindexes it.
         return
     placeholders = ", ".join("?" * (len(_COLUMNS.split(", ")) + 1))
     conn.execute(

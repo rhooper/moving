@@ -1,20 +1,14 @@
-"""What a labelled record actually is.
+"""What a labelled record is: a container with contents, or a single thing.
 
-Everything the tracker labels — a box, a tub, a bicycle — needs a code, a QR, a
-destination, a status and a location. Only some of them have *contents*. Making
-that a `kind` on one record rather than a second table means codes, scanning,
-search, the event stream, the manifest and the export all keep working with no
-special cases; the only thing that varies is how the label reads.
+Every kind is one row in `boxes`, so codes, scanning, search and export need no
+special cases.
 """
 
 from __future__ import annotations
 
-#: Ordered for the picker: the common containers first.
-#:
-#: `copies` is how many labels print when nobody says: two for the things that
-#: get stacked, where more than one face is seen; one for the rest. A tub was
-#: not mentioned when these were asked for and is given a box's two -- it is
-#: stacked like one. Each can be changed in Settings (prefs.label_copies).
+#: Ordered for the picker. `copies` is the default number of labels: two for
+#: what gets stacked, one for the rest; Settings can override each
+#: (prefs.label_copies).
 KINDS: dict[str, dict[str, object]] = {
     "box": {"label": "Box", "contents": True, "copies": 2},
     "parts": {"label": "Parts", "contents": True, "copies": 1},
@@ -27,9 +21,7 @@ KINDS: dict[str, dict[str, object]] = {
 
 DEFAULT = "box"
 
-#: How big a container is. Optional, and only for something that holds
-#: contents: "the large box for the kitchen" is how people look for one,
-#: "large lamp" is not.
+#: How big a container is. Optional, and only for something that holds contents.
 SIZES = ("small", "medium", "large", "extra large")
 
 
@@ -46,9 +38,8 @@ def check(kind: str) -> str:
 def holds_contents(kind: str) -> bool:
     """Whether a list of contents makes sense for this kind.
 
-    A bicycle is described by what it *is*. Listing its pedals is a mistake
-    rather than a description, so the label titles it instead of printing a
-    contents column, and the print gate asks for a name rather than contents.
+    A single thing is described by what it *is*: its label shows a title, and
+    the print gate asks for a name rather than contents.
     """
     return bool(KINDS.get(kind, KINDS[DEFAULT])["contents"])
 

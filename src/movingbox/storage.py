@@ -1,15 +1,8 @@
 """Photo storage.
 
-These are inventory snapshots, not photographs: a phone's 4000 px original
-buys nothing and fills the disk, so images are downscaled on the way in.
-
-Two things are done deliberately rather than left to the viewer:
-
-* **EXIF orientation is baked in.** An unrotated phone photo displays sideways
-  in an ``<img>``, and not every viewer honours the tag.
-* **All other metadata is stripped.** Photos taken indoors carry GPS, and this
-  database is served across a tailnet and exported to JSON. The location of
-  the house should not travel with a picture of a box of saucepans.
+Images are downscaled on the way in, with EXIF orientation baked into the
+pixels and all other metadata stripped: indoor photos carry GPS, and this
+database is exported.
 """
 
 from __future__ import annotations
@@ -27,8 +20,7 @@ from .config import Config
 
 #: Long edge for the stored image. Ample for reading a label in a box.
 FULL_MAX = 2048
-#: Long edge for the list thumbnail. Lives with the other derived sizes in
-#: renditions.py; measured as ample, and deliberately left as it was.
+#: Long edge for the list thumbnail.
 THUMB_MAX = renditions.THUMB_MAX
 JPEG_QUALITY = 82
 
@@ -44,8 +36,7 @@ def _prepare(data: bytes) -> Image.Image:
     except (UnidentifiedImageError, OSError) as exc:
         raise NotAnImage("that upload is not a readable image") from exc
 
-    # exif_transpose applies the orientation tag and drops it, so the pixels
-    # are upright and nothing downstream has to interpret it.
+    # Applies the orientation tag and drops it.
     image = ImageOps.exif_transpose(image)
     return image.convert("RGB")
 
@@ -67,18 +58,12 @@ def save_photo(
     filename: str = "photo.jpg",
     caption: str | None = None,
 ) -> dict[str, Any]:
-    """Store a photo against a box. Re-uploading the same bytes is a no-op.
-
-    The phone retries failed uploads, so identical bytes will arrive twice;
-    the ``(box_id, sha256)`` uniqueness makes that harmless rather than
-    producing duplicates.
-    """
+    """Store a photo against a box. Re-uploading the same bytes is a no-op."""
     box = store.get_box(conn, code)
     if box is None:
         raise store.UnknownBox(code)
 
-    # Decode before touching the database or the disk, so a bad upload leaves
-    # nothing behind.
+    # Decode first, so a bad upload leaves nothing behind.
     image = _prepare(data)
     digest = hashlib.sha256(data).hexdigest()
 
@@ -94,9 +79,8 @@ def save_photo(
 
     width, height = _write(image, config.photo_dir / full_name, FULL_MAX)
     _write(image, config.photo_dir / thumb_name, THUMB_MAX)
-    # From the stored full image, not from `image` in hand: `moving thumbnails`
-    # and a request for a missing strip only ever have the stored file, and
-    # all three must make the same bytes -- one URL, one image, forever.
+    # From the stored file, not `image`, so every path that makes a strip
+    # makes the same bytes.
     renditions.write_strip(config.photo_dir, full_name)
     size = (config.photo_dir / full_name).stat().st_size
 
@@ -130,8 +114,7 @@ def save_photo(
 
 
 def list_photos(conn: sqlite3.Connection, code: str) -> list[dict[str, Any]]:
-    # include_deleted: a deleted record keeps its photos, and they are part of
-    # deciding whether to restore it.
+    # Readable in the bin, to help decide whether to restore it.
     box = store.get_box(conn, code, include_deleted=True)
     if box is None:
         raise store.UnknownBox(code)
@@ -142,12 +125,7 @@ def list_photos(conn: sqlite3.Connection, code: str) -> list[dict[str, Any]]:
 
 
 def with_analysis(conn: sqlite3.Connection, photo: dict[str, Any]) -> dict[str, Any]:
-    """The photo as the page gets it: where its analysis has got to, and the
-    images it can be drawn from.
-
-    Every photo sent to a client passes through here, which is why `srcset` is
-    added here too rather than at each route that returns one.
-    """
+    """The photo as a client gets it, with its analysis state and `srcset`."""
     from . import analysis  # local: analysis imports store, which storage also does
 
     photo["analysis"] = analysis.state_of(conn, photo["id"])
@@ -170,15 +148,10 @@ def set_caption(conn: sqlite3.Connection, photo_id: int, caption: str | None) ->
 
 
 def set_cover(conn: sqlite3.Connection, photo_id: int) -> dict[str, Any]:
-    """Make this photo the one its box is recognised by.
+    """Make this photo the one its box is shown with.
 
-    Demote first, promote second: the schema allows exactly one flagged photo
-    per box (see migration 0003), so the other order would collide with the
-    outgoing cover. Choosing the photo that is already the cover is a no-op
-    rather than an error -- two phones can tap the same picture.
-
-    No reindex: ``is_primary`` is not indexed text, and the captions FTS reads
-    are untouched.
+    Demote first: a unique index allows one cover per box (migration 0003).
+    No reindex: ``is_primary`` is not indexed.
     """
     photo = get_photo(conn, photo_id)
     if photo is None:
@@ -200,20 +173,17 @@ def delete_photo(conn: sqlite3.Connection, config: Config, photo_id: int) -> boo
     for name in (photo["filename"], photo["thumb_filename"]):
         if name:
             (config.photo_dir / name).unlink(missing_ok=True)
-    # Every strip of any recipe: they are not in the table, so nothing else
-    # would ever find them again.
+    # Strips are not in the table; only the full image's name finds them.
     for strip in renditions.strip_files(config.photo_dir, photo["filename"]):
         strip.unlink(missing_ok=True)
 
     conn.execute("DELETE FROM photos WHERE id = ?", (photo_id,))
-    # ai_jobs.photo_id has no foreign key (see migration 0006), so the jobs a
-    # photo owns go with it here rather than by cascade.
+    # ai_jobs.photo_id has no foreign key (SQLite will not drop a column that
+    # is part of one, and migration tests roll back by dropping), so the jobs
+    # go here rather than by cascade.
     conn.execute("DELETE FROM ai_jobs WHERE photo_id = ?", (photo_id,))
-    # Promote another photo so a box that still has photos does not lose its
-    # cover. Only when the *cover* went: promoting unconditionally used to be
-    # harmless when the cover was always the oldest photo, but once it is
-    # somebody's choice it silently changes the picture on the box -- and
-    # leaves two flagged photos, which the schema now refuses outright.
+    # Only when the cover went: otherwise the chosen cover would change, and
+    # the one-cover index would refuse a second.
     if photo["is_primary"]:
         remaining = conn.execute(
             "SELECT id FROM photos WHERE box_id = ? ORDER BY id LIMIT 1", (photo["box_id"],)

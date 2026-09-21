@@ -10,8 +10,7 @@ from . import backup, codes, db, export, search, store
 from .config import from_env
 from .labels import layout, printer
 
-# The rooms this move actually uses. `kind` matters: a room can be somewhere
-# boxes come from, somewhere they go, or both -- the pickers filter on it.
+# The rooms this move uses. The pickers filter on `kind`.
 STARTER_ROOMS = [
     # Destinations in the new place.
     ("Living Room", "destination"),
@@ -48,10 +47,8 @@ def cmd_serve(args) -> int:
         host=args.host,
         port=args.port,
         reload=args.reload,
-        # Tailscale terminates TLS and proxies plain HTTP here, setting
-        # X-Forwarded-Proto: https. Without trusting that, anything derived
-        # from request.url reports http:// and would downgrade the phone out
-        # of a secure context -- which silently kills the camera.
+        # Tailscale terminates TLS and sends X-Forwarded-Proto: https; without
+        # trusting it, request.url says http:// and the camera stops working.
         proxy_headers=True,
         forwarded_allow_ips=args.trust_proxy,
     )
@@ -92,8 +89,7 @@ def cmd_print(args) -> int:
 
     conn = db.connect(config.db_path)
     try:
-        # Resolve everything before printing anything: a half-printed batch
-        # wastes tape and leaves you unsure which labels came out.
+        # Resolve every code before printing anything, so a bad code wastes no tape.
         jobs = []
         for code in args.codes:
             box = store.get_box(conn, code)
@@ -246,12 +242,7 @@ def cmd_reindex(args) -> int:
 
 
 def cmd_thumbnails(args) -> int:
-    """Give every photo its sharpened strip image, from the full image.
-
-    Only strips: the list thumbnail is left exactly as it is, and the full
-    image is the record and is never written. Safe to re-run, and safe while
-    the service is running -- see renditions.backfill.
-    """
+    """Give every photo its strip image. Touches nothing else; see renditions.backfill."""
     from . import renditions
 
     config = from_env()
@@ -277,9 +268,7 @@ def cmd_thumbnails(args) -> int:
 def cmd_seed_rooms(args) -> int:
     """Create the standard rooms, and correct the kind of any that already exist.
 
-    Rooms that are not in the list are left alone rather than deleted -- boxes
-    may already point at them, and losing that would be worse than an unused
-    row in a picker.
+    Rooms not in the list are kept: boxes may point at them.
     """
     config = from_env()
     conn = db.connect(config.db_path)
@@ -320,8 +309,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     serve = sub.add_parser("serve", help="run the API and web UI")
-    # Loopback by default: `tailscale serve` proxies to 127.0.0.1, so binding
-    # every interface would also expose the app unauthenticated on the LAN.
+    # Loopback: `tailscale serve` proxies to 127.0.0.1, and binding every
+    # interface would expose the app unauthenticated on the LAN.
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8787)
     serve.add_argument("--reload", action="store_true")
