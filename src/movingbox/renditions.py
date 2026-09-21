@@ -112,9 +112,14 @@ def fitted(width: int, height: int, longest: int) -> tuple[int, int]:
     return x, y
 
 
-def strip_name(filename: str, v: str = VERSION) -> str:
-    """The strip's filename, beside the full image it was made from."""
-    return f"{Path(filename).stem}-strip-{v}.jpg"
+def strip_name(filename: str, v: str | None = None) -> str:
+    """The strip's filename, beside the full image it was made from.
+
+    `v` defaults to the version in force *now*, looked up on each call. A
+    default of `VERSION` would be bound once, at import, and a changed recipe
+    would then write under a filename its own URL could never find.
+    """
+    return f"{Path(filename).stem}-strip-{v or VERSION}.jpg"
 
 
 def strip_files(photo_dir: Path, filename: str) -> list[Path]:

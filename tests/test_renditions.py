@@ -129,6 +129,14 @@ class TestTheVersion:
     def test_it_is_in_the_filename(self):
         assert renditions.VERSION in renditions.strip_name("B-0001-abc123def456.jpg")
 
+    def test_the_filename_follows_the_version_in_force_not_the_one_at_import(self, monkeypatch):
+        # A default argument is bound once, when the module loads. Named that
+        # way, a changed recipe would still write its strips under the old
+        # version's filename -- a file its URL could never find.
+        monkeypatch.setattr(renditions, "VERSION", "abcdef0123")
+
+        assert renditions.strip_name("B-0001-abc123def456.jpg").endswith("-strip-abcdef0123.jpg")
+
     def test_it_is_safe_in_a_url_and_a_filename(self):
         assert renditions.VERSION.isalnum() and renditions.VERSION.islower()
 
