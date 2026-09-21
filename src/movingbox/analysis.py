@@ -301,13 +301,11 @@ def refresh_summary(conn: sqlite3.Connection, code: str, *, described: str | Non
         return False
 
     fallback = " ".join((described or "").split())[: base.SUMMARY_MAX].strip()
-    # What is nested inside counts as contents too: a crate holding three
-    # bags is not empty, and its label should not read as though it were.
-    summary = (
-        summarise.from_contents(store.list_items(conn, code), store.children_of(conn, code))
-        or fallback
-        or None
-    )
+    # The whole subtree counts as contents: a crate holding three bags is not
+    # empty, and a crate holding a box of books should say what the books are.
+    # The same gatherer the button uses, so the two never disagree -- still
+    # assembled here rather than phrased, for the reason in the docstring.
+    summary = summarise.from_subtree(store.subtree(conn, code)) or fallback or None
     if summary == box["content_summary"] and box["summary_source"] == "auto":
         return False
     conn.execute(

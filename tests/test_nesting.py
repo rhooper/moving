@@ -381,6 +381,17 @@ class TestGatheringTheWholeSubtree:
         assert (node["kind"], node["size"]) == ("crate", "large")
         assert node["summary_source"] in ("manual", "auto")
 
+    def test_each_node_says_what_it_is_inside(self, conn):
+        # summarise.contents needs this to tell an empty bag (worth naming)
+        # from a box with books in it (whose books are in the list already).
+        outer, middle, inner = self.nest(conn, depth=3)
+
+        nodes = {n["code"]: n for n in store.subtree(conn, outer)}
+
+        assert nodes[outer]["parent_id"] is None
+        assert nodes[middle]["parent_id"] == nodes[outer]["id"]
+        assert nodes[inner]["parent_id"] == nodes[middle]["id"]
+
     def test_it_stops_at_the_depth_limit(self, conn):
         # A guard, not a feature: the store forbids a cycle, but a button
         # press should never be able to raise a recursion error.

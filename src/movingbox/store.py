@@ -567,7 +567,7 @@ def subtree(
               FROM boxes JOIN tree ON boxes.parent_id = tree.id
              WHERE boxes.deleted_at IS NULL AND tree.depth < ?
         )
-        SELECT boxes.id, boxes.code, boxes.kind, boxes.size,
+        SELECT boxes.id, boxes.parent_id, boxes.code, boxes.kind, boxes.size,
                boxes.content_summary, boxes.summary_source, tree.depth
           FROM tree JOIN boxes ON boxes.id = tree.id
          ORDER BY tree.depth, boxes.id

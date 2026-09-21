@@ -306,8 +306,10 @@ def suggest_summary(
     Proposed, never applied -- the same rule as a photo draft. The caller puts
     it in the field and decides whether to keep it.
 
-    What is inside counts as contents: a crate holding three bags is not empty,
-    and the print gate has said so since nesting landed.
+    What is inside counts as contents, to any depth: a crate holding three
+    bags is not empty, and a crate holding a box of books can say so rather
+    than saying "large box". The print gate has counted children since nesting
+    landed; this is the same view of the record, in words.
 
     `source` says whether a model phrased the line ("model") or it was
     assembled from the list ("assembled"). Assembled is not a failure state --
@@ -315,7 +317,7 @@ def suggest_summary(
     from, and every time Ollama cannot answer. See phrasing.py.
     """
     _require_readable(conn, code)
-    contents = summarise.contents(store.list_items(conn, code), store.children_of(conn, code))
+    contents = summarise.contents(store.subtree(conn, code))
     summary, source = phrasing.summary_for(contents, phraser, model=config.summary_model)
     return {"summary": summary, "source": source}
 

@@ -1,18 +1,24 @@
-"""Run the real summary model over realistic contents lists, and time it.
+"""Run the real summary model over realistic contents, and time it.
 
 Not a test -- it calls a live model, so it is slow and non-deterministic. Use
 it to confirm Ollama is reachable, the model is pulled, and that the line it
 writes is one you would want printed on tape. It goes through the app's own
-request, parser and fallback, so what it prints is what the button returns.
+gatherer, request, parser and fallback, so what it prints is what the button
+returns.
 
-The contents lists are the shapes that actually turn up: a crate of kitchen
-things, a box of cables, a container whose children are three unnamed bags,
-and a list long enough that the assembler has to truncate it.
+The built-in cases are the shapes that turn up: a crate of kitchen things, a
+box of cables, a container whose children are three unnamed bags, a container
+whose children are described, and a list long enough that the assembler has to
+truncate it. `--code` reads a real record's whole subtree out of a database
+instead, which is the only way to see what deep nesting actually does.
 
 Usage:
     uv run python scripts/claude/try_summary.py
     uv run python scripts/claude/try_summary.py --model qwen2.5:7b --model gemma3:4b
-    uv run python scripts/claude/try_summary.py --repeat 3
+    MOVING_DB_PATH=/tmp/copy.db uv run python scripts/claude/try_summary.py --code B-0015
+
+Point MOVING_DB_PATH at a *copy* for --code. The live database is in the main
+checkout, and db.connect migrates whatever it opens.
 """
 
 import argparse
@@ -22,71 +28,101 @@ import time
 from movingbox import phrasing, summarise
 from movingbox.config import from_env
 
-#: (items, children) per case -- children shaped as store.children_of returns
-#: them, so the mapping in summarise.describe is exercised too.
-CASES: dict[str, tuple[list[dict], list[dict]]] = {
-    "a crate of kitchen things": (
-        [
-            {"name": "stock pot", "qty": 1},
-            {"name": "baking pan", "qty": 3},
-            {"name": "stand mixer", "qty": 1},
-            {"name": "colander", "qty": 1},
-            {"name": "mixing bowl", "qty": 2},
-            {"name": "tea towel", "qty": 6},
-            {"name": "wooden spoon", "qty": 4},
-            {"name": "chopping board", "qty": 1},
-        ],
-        [],
-    ),
-    "a box of cables and electronics": (
-        [
-            {"name": "HDMI cable", "qty": 4},
-            {"name": "USB charger", "qty": 3},
-            {"name": "power strip", "qty": 1},
-            {"name": "old router", "qty": 1},
-            {"name": "label maker", "qty": 1},
-            {"name": "soldering iron", "qty": 1},
-            {"name": "tin of resistors", "qty": 1},
-            {"name": "ethernet cable", "qty": 2},
-        ],
-        [],
-    ),
-    "a crate holding three unnamed bags": (
-        [],
-        [{"kind": "bag", "content_summary": None, "size": None} for _ in range(3)],
-    ),
-    "a crate holding described things": (
-        [{"name": "kettle", "qty": 1}],
-        [
-            {"kind": "bag", "content_summary": "winter coats and scarves", "size": None},
-            {"kind": "box", "content_summary": None, "size": "large"},
-            {"kind": "box", "content_summary": "books and photo albums", "size": None},
-        ],
-    ),
-    "a long list the assembler has to cut": (
-        [
-            {"name": name, "qty": 1}
-            for name in (
-                "winter coat",
-                "wool scarf",
-                "leather gloves",
-                "snow boots",
-                "thermal socks",
-                "ski goggles",
-                "woolly hat",
-                "down jacket",
-                "fleece",
-                "rain shell",
-                "hiking boots",
-                "waterproof trousers",
-                "balaclava",
-                "hand warmers",
-                "gaiters",
-            )
-        ],
-        [],
-    ),
+
+#: Each case is a subtree, shaped as store.subtree returns one: the record at
+#: depth 0, then what is nested inside it, each node carrying its own items.
+def _node(box_id, parent_id, depth, kind, *, summary=None, source="manual", size=None, items=()):
+    return {
+        "id": box_id,
+        "parent_id": parent_id,
+        "depth": depth,
+        "code": f"X-{box_id:04d}",
+        "kind": kind,
+        "size": size,
+        "content_summary": summary,
+        "summary_source": source,
+        "items": [{"name": name, "qty": qty} for name, qty in items],
+    }
+
+
+KITCHEN = [
+    ("stock pot", 1),
+    ("baking pan", 3),
+    ("stand mixer", 1),
+    ("colander", 1),
+    ("mixing bowl", 2),
+    ("tea towel", 6),
+    ("wooden spoon", 4),
+    ("chopping board", 1),
+]
+CABLES = [
+    ("HDMI cable", 4),
+    ("USB charger", 3),
+    ("power strip", 1),
+    ("old router", 1),
+    ("label maker", 1),
+    ("soldering iron", 1),
+    ("tin of resistors", 1),
+    ("ethernet cable", 2),
+]
+WINTER = [
+    (name, 1)
+    for name in (
+        "winter coat",
+        "wool scarf",
+        "leather gloves",
+        "snow boots",
+        "thermal socks",
+        "ski goggles",
+        "woolly hat",
+        "down jacket",
+        "fleece",
+        "rain shell",
+        "hiking boots",
+        "waterproof trousers",
+        "balaclava",
+        "hand warmers",
+        "gaiters",
+    )
+]
+
+CASES: dict[str, list[dict]] = {
+    "a crate of kitchen things": [_node(1, None, 0, "crate", items=KITCHEN)],
+    "a box of cables and electronics": [_node(1, None, 0, "box", items=CABLES)],
+    "a crate holding three unnamed bags": [
+        _node(1, None, 0, "crate"),
+        *(_node(n, 1, 1, "bag") for n in (2, 3, 4)),
+    ],
+    # The case the last report called out: the crate could only say "large
+    # box" where the box itself holds books.
+    "a crate holding described things": [
+        _node(1, None, 0, "crate", items=[("kettle", 1)]),
+        _node(2, 1, 1, "bag", summary="winter coats and scarves"),
+        _node(3, 1, 1, "box", size="large"),
+        _node(4, 1, 1, "box", summary="books and photo albums", source="auto"),
+        _node(5, 3, 2, "bag", items=[("hardback novel", 12), ("photo album", 3)]),
+    ],
+    "a long list the assembler has to cut": [_node(1, None, 0, "box", items=WINTER)],
 }
+
+
+def real_subtrees(config, codes: list[str]) -> dict[str, list[dict]]:
+    """Whole subtrees read out of a database, by code."""
+    from movingbox import db, store
+
+    found = {}
+    conn = db.connect(config.db_path)
+    try:
+        for code in codes:
+            nodes = store.subtree(conn, code)
+            if not nodes:
+                print(f"  (no record {code} in {config.db_path})")
+                continue
+            deepest = max(n["depth"] for n in nodes)
+            found[f"{code} ({len(nodes)} records, {deepest} deep)"] = nodes
+    finally:
+        conn.close()
+    return found
 
 
 def main() -> int:
@@ -102,6 +138,13 @@ def main() -> int:
         "--repeat", type=int, default=1, help="how many times to ask each case, for a timing median"
     )
     parser.add_argument(
+        "--code",
+        action="append",
+        dest="codes",
+        metavar="CODE",
+        help="summarise a real record's whole subtree; repeat for several",
+    )
+    parser.add_argument(
         "--no-warm",
         action="store_true",
         help="skip the warm ping, to see what a press costs on a model Ollama has unloaded",
@@ -110,6 +153,10 @@ def main() -> int:
 
     config = from_env()
     models = args.models or [config.summary_model]
+    cases = dict(CASES)
+    if args.codes:
+        print(f"database {config.db_path}")
+        cases = real_subtrees(config, args.codes)
 
     print(f"ollama   {config.ollama_url}")
     print(
@@ -133,10 +180,11 @@ def main() -> int:
 
         times: list[float] = []
         fell_back = 0
-        for label, (items, children) in CASES.items():
-            contents = summarise.contents(items, children)
+        for label, nodes in cases.items():
+            contents = summarise.contents(nodes)
             assembled = summarise.from_items(contents)
             print(f"{label}")
+            print(f"  gathered   {len(contents)} distinct things from {len(nodes)} record(s)")
             print(f"  assembled  {assembled}")
             for _ in range(args.repeat):
                 started = time.monotonic()
