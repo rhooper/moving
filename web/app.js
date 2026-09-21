@@ -220,7 +220,7 @@ async function refreshPrinterBadge() {
   }
 }
 
-// Chrome only; elsewhere the Dictate button stays hidden.
+// Where the Web Speech API is missing (Firefox), the Dictate button stays hidden.
 const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
 function wireDictation(scope) {
@@ -414,7 +414,7 @@ function retire(session, { force = false } = {}) {
 }
 
 // The location has its own endpoint because each change is written to the
-// box's history, which is also why it alone saves only when left.
+// box's history, which is also why it saves only on leaving the field or Return.
 async function saveField(session, key, value) {
   const path = `/boxes/${encodeURIComponent(session.code)}`;
   const sent = ROOM_FIELDS.has(key) ? (value ? Number(value) : null) : (value || null);
@@ -703,8 +703,9 @@ function addInside({ parent, kinds, rooms, shape }) {
   let captured = null;   // { blob, name } from the viewfinder
   let preview = null;    // the object URL behind the thumbnail, to be revoked
 
-  // The one place tracks stop: `close` fires for Cancel, Escape, the backdrop
-  // and Add alike. A running track keeps the camera light on and drains the phone.
+  // Every exit stops the tracks here: `close` fires for Cancel, Escape, the
+  // backdrop and Add alike, and pagehide covers the tab going away. A running
+  // track keeps the camera light on and drains the phone.
   const release = () => {
     if (stream) for (const track of stream.getTracks()) track.stop();
     stream = null;
@@ -787,7 +788,7 @@ function addInside({ parent, kinds, rooms, shape }) {
     return file ? { blob: file, name: file.name || "photo.jpg" } : null;
   };
 
-  // Once the record exists, Add retries the photo and Add and open opens it.
+  // Once made, the record is not made again: the buttons retry the photo.
   let made = null;
   const said = dialog.querySelector("#adder-said");
   const acts = dialog.querySelector(".adder-acts");
@@ -1854,7 +1855,7 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
     api("/printer").catch(() => null),
     api("/settings/kinds"),
   ]);
-  // Kept up to date in place; the delete note and the print override read them.
+  // Kept up to date in place; the delete note and Print read them.
   let box = drawnBox;
   let items = drawnItems;
   let photos = drawnPhotos;
@@ -2573,7 +2574,7 @@ async function viewNew(parentCode = null) {
   }
 
   // Enter must never spend tape. A browser submits with the *first* submit
-  // button, which prints the stub, so Enter is pointed at plain Create.
+  // button, which may print the stub, so Enter is pointed at plain Create.
   document.getElementById("new").addEventListener("keydown", (event) => {
     if (event.key !== "Enter" || event.target.tagName !== "INPUT") return;
     event.preventDefault();
@@ -2971,7 +2972,7 @@ for (const kind of ["focusout", "change"]) {
 function socketUrl() {
   const scheme = location.protocol === "https:" ? "wss:" : "ws:";
   const key = keyStore.get();
-  // In the query: a WebSocket handshake cannot carry a header.
+  // In the query: the browser's WebSocket cannot add a header to the handshake.
   return `${scheme}//${location.host}/api/events${key ? `?key=${encodeURIComponent(key)}` : ""}`;
 }
 

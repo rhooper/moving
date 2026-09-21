@@ -244,6 +244,7 @@ export function readingWith(spend) {
       why: "Nothing is spent. Set MOVING_VISION_PROVIDER=claude to use the cloud tier.",
     };
   }
+  // `key` says only whether one is set: the value never reaches the browser.
   if (!s.key) {
     return {
       ...bar, state: "nokey",
