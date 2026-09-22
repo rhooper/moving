@@ -114,19 +114,19 @@ test("every one of them points at the way that still works", () => {
 
 test("with no camera and no photo there is nothing to show", () => {
   assert.deepEqual(viewfinderState({ live: false, shown: false }), {
-    box: false, cam: false, still: false, shots: false, shutter: false, retake: false,
+    box: false, cam: false, still: false, shots: false, shutter: false, retake: false, start: true,
   });
 });
 
 test("a running camera is a viewfinder and a shutter", () => {
   assert.deepEqual(viewfinderState({ live: true, shown: false }), {
-    box: true, cam: true, still: false, shots: true, shutter: true, retake: false,
+    box: true, cam: true, still: false, shots: true, shutter: true, retake: false, start: false,
   });
 });
 
 test("a frame taken shows the frame, and offers another", () => {
   assert.deepEqual(viewfinderState({ live: true, shown: true }), {
-    box: true, cam: false, still: true, shots: true, shutter: false, retake: true,
+    box: true, cam: false, still: true, shots: true, shutter: false, retake: true, start: false,
   });
 });
 
@@ -134,8 +134,22 @@ test("a photo chosen from the picker has nothing to retake", () => {
   // No stream: the camera was refused, or never asked for, and the file picker
   // is what supplied the photo. Offering "Take another" would do nothing.
   assert.deepEqual(viewfinderState({ live: false, shown: true }), {
-    box: true, cam: false, still: true, shots: false, shutter: false, retake: false,
+    box: true, cam: false, still: true, shots: false, shutter: false, retake: false, start: true,
   });
+});
+
+test("with no camera running there is a way to start one", () => {
+  // The page does not ask for a camera nobody has allowed yet, so the button
+  // is how it is asked for -- and it is gone the moment there is a viewfinder
+  // or a photograph.
+  assert.equal(viewfinderState({ live: false, shown: false }).start, true);
+  assert.equal(viewfinderState({ live: true, shown: false }).start, false);
+  assert.equal(viewfinderState({ live: true, shown: true }).start, false);
+});
+
+test("a photo chosen from the picker still leaves the camera offered", () => {
+  // Nothing is running, so the way to a viewfinder is still worth showing.
+  assert.equal(viewfinderState({ live: false, shown: true }).start, true);
 });
 
 test("a camera that failed leaves no dead grey rectangle", () => {

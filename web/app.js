@@ -672,6 +672,7 @@ function photoField({ id, hint, fileName }) {
     </div>
     <p class="meta" id="${id}-line">${escape(hint)}</p>
     <div class="row">
+      <button class="btn quiet" type="button" id="${id}-camera">Use the camera</button>
       <label class="btn quiet" for="${id}-shot">Choose a photo
         <input id="${id}-shot" type="file" accept="image/*" hidden>
       </label>
@@ -684,6 +685,9 @@ function photoField({ id, hint, fileName }) {
   const shutter = part("shutter");
   const retake = part("retake");
   const shot = part("shot");
+  // "-camera", not "-open": the add-inside dialog's own "Add and open" button
+  // is #adder-open, and two of an id in one document is a silent wrong click.
+  const opener = part("camera");
   const line = part("line");
 
   let stream = null;
@@ -701,6 +705,7 @@ function photoField({ id, hint, fileName }) {
     shots.hidden = !parts.shots;
     shutter.hidden = !parts.shutter;
     retake.hidden = !parts.retake;
+    opener.hidden = !parts.start;
     say(photoLine({
       state, hint, name,
       quality: state === "live" ? streamQuality(cam.videoWidth, cam.videoHeight) : null,
@@ -732,6 +737,8 @@ function photoField({ id, hint, fileName }) {
     await cam.play().catch(() => { /* autoplay refused; the frames still come */ });
     paint("live");
   }
+
+  opener.addEventListener("click", () => start());
 
   shutter.addEventListener("click", async () => {
     const size = frameSize(cam.videoWidth, cam.videoHeight);
@@ -765,6 +772,8 @@ function photoField({ id, hint, fileName }) {
     paint("chosen", { name: file.name });
   });
 
+  paint("none");
+
   return {
     root,
     start,
@@ -778,6 +787,26 @@ function photoField({ id, hint, fileName }) {
     },
     say,
   };
+}
+
+// Whether the camera can be opened without asking anybody anything. Firefox
+// does not know the name "camera" here and throws, and an unsupported
+// Permissions API is the same answer: the button is the way in.
+async function cameraAllowed() {
+  try {
+    return (await navigator.permissions.query({ name: "camera" })).state === "granted";
+  } catch {
+    return false;
+  }
+}
+
+// Started only where it is already allowed: opening a page is not asking for a
+// camera, and a phone that said no once should not be asked again on every
+// visit. Otherwise "Use the camera" is one press. **Never awaited by a view**:
+// an await before the listeners are attached leaves a form that a fast press
+// submits natively, and this one is called after everything is wired.
+function startIfAllowed(field) {
+  cameraAllowed().then((allowed) => { if (allowed && field.root.isConnected) field.start(); });
 }
 
 // A page has no `close` event to let go of things on. It is left by a route
@@ -3100,7 +3129,6 @@ async function viewNew(parentCode = null) {
   // A page has no `close` event: this is what stops the tracks on the way out,
   // by whatever means the page is left.
   holdOnPage(field.release);
-  field.start();
 
   // Enter must never spend tape. A browser submits with the *first* submit
   // button; that is plain Create now, and this keeps it so whatever the order.
@@ -3218,6 +3246,10 @@ async function viewNew(parentCode = null) {
       }
     } catch (error) { failed(error.message, "Not created"); }
   });
+
+  // Last, and not awaited: every listener above is attached before anything
+  // asks the browser for a camera.
+  startIfAllowed(field);
 }
 
 // --- live updates ---------------------------------------------------------

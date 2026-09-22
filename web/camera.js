@@ -72,6 +72,9 @@ export function viewfinderState({ live = false, shown = false } = {}) {
     shots: live,
     shutter: live && !shown,
     retake: live && shown,
+    // Nothing running: the way to a viewfinder. A page does not ask for a
+    // camera nobody has allowed yet, so this is how it is asked for.
+    start: !live,
   };
 }
 

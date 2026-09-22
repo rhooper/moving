@@ -208,9 +208,23 @@ try {
   check("Enter creates the record", (await madeCode()) !== bare, await evaluate("location.hash"));
   check("and never spends tape", byEnter.every((w) => !w.includes("/labels/print")), byEnter.join(" | "));
 
-  // --- a refused camera is ordinary ---
+  // --- not allowed yet: nothing is asked for until it is asked for ---
+  //
+  // Opening New is not asking for a camera, and a phone that said no once
+  // should not be asked again on every visit -- so the page only starts one
+  // where the permission is already granted, and "Use the camera" is the way
+  // in otherwise.
   await camera(false);
   await goNew();
+  await sleep(800);
+  seen = await field();
+  check("with the camera not allowed yet, none is asked for",
+        !seen.box && !seen.live && seen.track === null, JSON.stringify(seen));
+  check("and the way to one is a button, beside the picker",
+        (await evaluate(`Boolean(${q("#new-photo-camera")}) && !${q("#new-photo-camera")}.hidden`)) && seen.picker);
+
+  // --- and pressing it, with the camera refused, is ordinary ---
+  await click("#new-photo-camera");
   await waitFor(`/declined|no camera|would not start/i.test(${q("#new-photo-line")}.textContent)`,
                 "the refusal to be said", 200);
   seen = await field();
