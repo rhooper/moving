@@ -565,8 +565,26 @@ Each is a choice; changing one is a decision, not the fixing of a gap.
   `pagehide` for the tab going away. A track left running keeps the camera
   light on and drains a phone carried round a house. `newbox_check` reads the
   track back after leaving the page and requires `ended`.
-- **The camera starts with the page** on `#/new` -- a deliberate "new thing",
-  not browsing -- and with the dialog when it opens, never at page load.
+- **The page starts a camera only where one is already allowed**
+  (`navigator.permissions.query({name: "camera"})`, which Firefox does not know
+  that name for and so answers "no"); otherwise **"Use the camera"** sits beside
+  "Choose a photo" and one press brings the viewfinder up. Opening New is not
+  asking for a camera, and a phone that declined once must not be asked again
+  on every visit. The dialog still starts one when it opens -- taking a photo
+  is its point -- but never at page load.
+- **A declined camera cost a later save, measured.** With the page asking and
+  being denied, `autosave_check` lost the `pagehide` + `keepalive` save of the
+  last edit before leaving the site: 4 runs failed with the camera started and
+  denied, 2 passed with it not started, 1 passed with it granted and running,
+  all against one server. Headless Chrome's own state after a denied permission
+  may be the whole of it; asking for nothing nobody allowed avoids it either
+  way.
+- **An `await` in the middle of a view leaves its form unwired**: asking the
+  permission before the submit listener was attached let a fast press submit
+  natively. `startIfAllowed` runs last and is never awaited.
+- **Two of an id in one document is a silent wrong click**: the field's button
+  was `#adder-open`, which the dialog already uses for "Add and open". Ids
+  inside the field are prefixed per call site for exactly this reason.
 
 ### Kinds and input
 
