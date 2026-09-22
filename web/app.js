@@ -16,8 +16,10 @@ import {
   reconcile,
 } from "/live.js";
 import {
-  addedInside, addInsideRequest, blockedDelete, cameraTrouble, CAMERA_REQUEST, describe, editorSections,
-  frameSize, streamQuality,
+  CAMERA_REQUEST, cameraTrouble, frameSize, photoLine, streamQuality, viewfinderState,
+} from "/camera.js";
+import {
+  addedInside, addInsideRequest, blockedDelete, describe, editorSections,
   groupMatches, inheritedRoom, kindsToAddInside, mayHold, notYetFragile, trail,
 } from "/nesting.js";
 import { contentsLine, tilesFor, expandedGroups, facts } from "/record.js";
@@ -644,6 +646,152 @@ async function offerFragileClimb(record) {
 // Upload size only: the server re-encodes.
 const PHOTO_QUALITY = 0.82;
 
+// --- one live camera, for the two places that take a photograph -------------
+//
+// "Add something inside" and the new-record form both point, shoot and create,
+// before there is a record for the photo to hang on. This builds that field:
+// the viewfinder, the shutter, the frame just taken with Take another, the
+// file picker underneath, and the one line that says what is going on. The
+// decisions -- what to ask the browser for, what a frame comes out as, what
+// each failure reads like, which parts show -- are camera.js's.
+//
+// `id` prefixes the ids inside it (it is a constant at each call site, never a
+// value from anywhere). `release()` stops the tracks: a dialog hangs that on
+// its `close` event, a page on `holdOnPage`.
+function photoField({ id, hint, fileName }) {
+  const root = document.createElement("div");
+  root.className = "photo-field";
+  root.innerHTML = `
+    <div class="shotbox" id="${id}-box" hidden>
+      <video id="${id}-cam" playsinline muted hidden></video>
+      <img id="${id}-still" alt="What was just photographed" hidden>
+    </div>
+    <div class="row" id="${id}-shots" hidden>
+      <button class="btn" type="button" id="${id}-shutter">Take the photo</button>
+      <button class="btn quiet" type="button" id="${id}-retake" hidden>Take another</button>
+    </div>
+    <p class="meta" id="${id}-line">${escape(hint)}</p>
+    <div class="row">
+      <label class="btn quiet" for="${id}-shot">Choose a photo
+        <input id="${id}-shot" type="file" accept="image/*" hidden>
+      </label>
+    </div>`;
+  const part = (name) => root.querySelector(`#${id}-${name}`);
+  const box = part("box");
+  const cam = part("cam");
+  const still = part("still");
+  const shots = part("shots");
+  const shutter = part("shutter");
+  const retake = part("retake");
+  const shot = part("shot");
+  const line = part("line");
+
+  let stream = null;
+  let captured = null;   // { blob, name } from the viewfinder
+  let preview = null;    // the object URL behind the still, to be revoked
+
+  const say = (text) => setText(line, text);
+
+  function paint(state, { name = "" } = {}) {
+    const shown = state === "shot" || state === "chosen";
+    const parts = viewfinderState({ live: Boolean(stream), shown });
+    box.hidden = !parts.box;
+    cam.hidden = !parts.cam;
+    still.hidden = !parts.still;
+    shots.hidden = !parts.shots;
+    shutter.hidden = !parts.shutter;
+    retake.hidden = !parts.retake;
+    say(photoLine({
+      state, hint, name,
+      quality: state === "live" ? streamQuality(cam.videoWidth, cam.videoHeight) : null,
+    }));
+  }
+
+  const release = () => {
+    if (stream) for (const track of stream.getTracks()) track.stop();
+    stream = null;
+    if (preview) { URL.revokeObjectURL(preview); preview = null; }
+  };
+
+  async function start() {
+    // Checked first: on a plain LAN address getUserMedia fails with nothing
+    // that explains itself.
+    if (!window.isSecureContext) { say(cameraTrouble(null, { secure: false })); return; }
+    paint("starting");
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(CAMERA_REQUEST);
+    } catch (error) {
+      stream = null;
+      say(cameraTrouble(error));
+      return;
+    }
+    // Closed, or navigated away from, while it was asking.
+    if (!root.isConnected) { release(); return; }
+    cam.srcObject = stream;
+    cam.addEventListener("resize", () => { if (!cam.hidden) paint("live"); });
+    await cam.play().catch(() => { /* autoplay refused; the frames still come */ });
+    paint("live");
+  }
+
+  shutter.addEventListener("click", async () => {
+    const size = frameSize(cam.videoWidth, cam.videoHeight);
+    if (!size) { say("The camera has not quite started. Give it a moment."); return; }
+    const canvas = document.createElement("canvas");
+    canvas.width = size.width;
+    canvas.height = size.height;
+    canvas.getContext("2d").drawImage(cam, 0, 0, size.width, size.height);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", PHOTO_QUALITY));
+    if (!blob) { say("That frame could not be kept. Take another, or choose a photo."); return; }
+    if (preview) URL.revokeObjectURL(preview);
+    preview = URL.createObjectURL(blob);
+    captured = { blob, name: fileName };
+    shot.value = "";   // this photo wins over an earlier choice
+    still.src = preview;
+    paint("shot");
+  });
+
+  retake.addEventListener("click", () => {
+    captured = null;
+    paint("live");
+  });
+
+  shot.addEventListener("change", () => {
+    const file = shot.files[0];
+    if (!file) { paint("none"); return; }
+    captured = null;   // the chosen file wins over a frame taken here
+    if (preview) URL.revokeObjectURL(preview);
+    preview = URL.createObjectURL(file);
+    still.src = preview;
+    paint("chosen", { name: file.name });
+  });
+
+  return {
+    root,
+    start,
+    release,
+    // What to upload once the record exists, or null: a photo is optional
+    // everywhere this is used.
+    photo() {
+      if (captured) return captured;
+      const file = shot.files[0];
+      return file ? { blob: file, name: file.name || fileName } : null;
+    },
+    say,
+  };
+}
+
+// A page has no `close` event to let go of things on. It is left by a route
+// change or by the tab going away, and a camera track left running keeps the
+// light on and drains the phone -- so whatever a page holds is registered
+// here, and `route()` lets go of it before drawing the next one.
+const pageHolds = new Set();
+const holdOnPage = (release) => pageHolds.add(release);
+function letGoOfPage() {
+  for (const release of pageHolds) release();
+  pageHolds.clear();
+}
+addEventListener("pagehide", letGoOfPage);
+
 // --- adding something inside a container ----------------------------------------
 //
 // Resolves when the dialog closes. Creates the record, then uploads the photo.
@@ -659,20 +807,7 @@ function addInside({ parent, kinds, rooms, shape }) {
     <p class="meta">It goes where the ${what} goes. Everything else can be done from its own page.</p>
     <div data-seg="kind"></div>
     <p class="dlabel">A photo of it, if there is something to see</p>
-    <div class="shotbox" id="adder-box" hidden>
-      <video id="adder-cam" playsinline muted hidden></video>
-      <img id="adder-still" alt="What was just photographed" hidden>
-    </div>
-    <div class="row" id="adder-shots" hidden>
-      <button class="btn" type="button" id="adder-shutter">Take the photo</button>
-      <button class="btn quiet" type="button" id="adder-retake" hidden>Take another</button>
-    </div>
-    <p class="meta" id="adder-photo">No photo yet, and none is needed. A photo is read in the background and names what is inside.</p>
-    <div class="row">
-      <label class="btn quiet" for="adder-shot">Choose a photo
-        <input id="adder-shot" type="file" accept="image/*" hidden>
-      </label>
-    </div>
+    <div data-photo></div>
     <div data-seg="source_room_id"></div>
     <p class="meta warn" id="adder-said" hidden></p>
     <form method="dialog" class="row adder-acts">
@@ -688,115 +823,16 @@ function addInside({ parent, kinds, rooms, shape }) {
     name: "source_room_id", legend: "Packed from", options: roomChoices(forSource(rooms)),
     optional: true, empty: "Not recorded" }));
 
-  // A live viewfinder, started when the dialog opens rather than at page load.
-  // Every camera failure (refused, none, a LAN address) is ordinary: the line
-  // says which, the box is put away, and the file picker still works. The
-  // picker has no `capture` on purpose: it is for a photo already taken.
-  const shot = dialog.querySelector("#adder-shot");
-  const photoLine = dialog.querySelector("#adder-photo");
-  const box = dialog.querySelector("#adder-box");
-  const cam = dialog.querySelector("#adder-cam");
-  const still = dialog.querySelector("#adder-still");
-  const shots = dialog.querySelector("#adder-shots");
-  const shutter = dialog.querySelector("#adder-shutter");
-  const retake = dialog.querySelector("#adder-retake");
-  const say = (text) => setText(photoLine, text);
-  let stream = null;
-  let captured = null;   // { blob, name } from the viewfinder
-  let preview = null;    // the object URL behind the thumbnail, to be revoked
-
-  // Every exit stops the tracks here: `close` fires for Cancel, Escape, the
-  // backdrop and Add alike, and pagehide covers the tab going away. A running
-  // track keeps the camera light on and drains the phone.
-  const release = () => {
-    if (stream) for (const track of stream.getTracks()) track.stop();
-    stream = null;
-    if (preview) { URL.revokeObjectURL(preview); preview = null; }
-  };
-
-  function showViewfinder() {
-    box.hidden = false;
-    still.hidden = true;
-    cam.hidden = false;
-    shots.hidden = false;
-    shutter.hidden = false;
-    retake.hidden = true;
-    say(viewfinderLine());
-  }
-
-  function viewfinderLine() {
-    const point = "Point it at what is going in, then take the photo.";
-    const got = streamQuality(cam.videoWidth, cam.videoHeight);
-    if (!got) return point;
-    if (got.enough) return `${point} Camera: ${got.size}.`;
-    return `${point} This camera only gives ${got.size}, so small labels may not be readable. `
-      + "For detail, tap Choose a photo and use the phone's own camera.";
-  }
-
-  function showPhoto(url, note) {
-    box.hidden = false;
-    still.src = url;
-    still.hidden = false;
-    cam.hidden = true;
-    shots.hidden = !stream;
-    shutter.hidden = true;
-    retake.hidden = !stream;
-    say(note);
-  }
-
-  async function startCamera() {
-    // Checked first: on a plain LAN address getUserMedia fails with nothing
-    // that explains itself.
-    if (!window.isSecureContext) { say(cameraTrouble(null, { secure: false })); return; }
-    say("Starting the camera…");
-    try {
-      stream = await navigator.mediaDevices.getUserMedia(CAMERA_REQUEST);
-    } catch (error) {
-      say(cameraTrouble(error));
-      return;
-    }
-    if (!dialog.isConnected) { release(); return; }   // closed while it was asking
-    cam.srcObject = stream;
-    cam.addEventListener("resize", () => { if (!cam.hidden) say(viewfinderLine()); });
-    await cam.play().catch(() => { /* autoplay refused; the frames still come */ });
-    showViewfinder();
-  }
-
-  shutter.addEventListener("click", async () => {
-    const size = frameSize(cam.videoWidth, cam.videoHeight);
-    if (!size) { say("The camera has not quite started. Give it a moment."); return; }
-    const canvas = document.createElement("canvas");
-    canvas.width = size.width;
-    canvas.height = size.height;
-    canvas.getContext("2d").drawImage(cam, 0, 0, size.width, size.height);
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", PHOTO_QUALITY));
-    if (!blob) { say("That frame could not be kept. Take another, or choose a photo."); return; }
-    if (preview) URL.revokeObjectURL(preview);
-    preview = URL.createObjectURL(blob);
-    captured = { blob, name: `${parent.code}-inside.jpg` };
-    shot.value = "";   // this photo wins over an earlier choice
-    showPhoto(preview, "This is the photo. It is read in the background and names what is inside.");
+  // The camera, the shutter, the still and the picker under it: one field,
+  // shared with the new-record form. Started when the dialog opens rather than
+  // at page load -- nobody wants a camera prompt for browsing a list.
+  const field = photoField({
+    id: "adder",
+    hint: "No photo yet, and none is needed. A photo is read in the background and names what is inside.",
+    fileName: `${parent.code}-inside.jpg`,
   });
-
-  retake.addEventListener("click", () => {
-    captured = null;
-    showViewfinder();
-  });
-
-  shot.addEventListener("change", () => {
-    const file = shot.files[0];
-    if (!file) { say("No photo yet, and none is needed."); return; }
-    captured = null;   // the chosen file wins over a frame taken here
-    if (preview) URL.revokeObjectURL(preview);
-    preview = URL.createObjectURL(file);
-    showPhoto(preview, `Photo: ${file.name || "chosen"}. It will be read once the record exists.`);
-  });
-
-  const photoToSend = () => {
-    if (captured) return captured;
-    const file = shot.files[0];
-    return file ? { blob: file, name: file.name || "photo.jpg" } : null;
-  };
+  dialog.querySelector("[data-photo]").replaceWith(field.root);
+  const release = () => field.release();
 
   // Once made, the record is not made again: the buttons retry the photo.
   let made = null;
@@ -818,7 +854,7 @@ function addInside({ parent, kinds, rooms, shape }) {
             body: JSON.stringify(addInsideRequest({ kind, parentCode: parent.code, sourceRoom: source })),
           });
         }
-        const photo = photoToSend();
+        const photo = field.photo();
         if (photo) {
           const body = new FormData();
           body.append("file", photo.blob, photo.name);
@@ -861,7 +897,7 @@ function addInside({ parent, kinds, rooms, shape }) {
   document.body.append(dialog);
   closesOnEscape(dialog, () => dialog.close("no"));
   dialog.showModal();
-  startCamera();
+  field.start();
 }
 
 function tell({ text, warn }, code) {
@@ -3026,6 +3062,10 @@ async function viewNew(parentCode = null) {
         <div data-seg="size"></div>
       </div>
       <div class="section">
+        <h2>A photo, if there is something to see</h2>
+        <div data-photo></div>
+      </div>
+      <div class="section">
         <h2>Where it is going</h2>
         <div data-seg="destination_room_id"></div>
       </div>
@@ -3047,6 +3087,20 @@ async function viewNew(parentCode = null) {
   if (parentCode && !parent) {
     announce(`There is no ${parentCode} to put this inside; it will be on its own.`, { warn: true });
   }
+
+  // The same camera as the add-inside dialog. It is started here rather than
+  // at page load elsewhere: this page is a deliberate "new thing", not
+  // browsing. The photo stays optional -- Create never waits for it.
+  const field = photoField({
+    id: "new-photo",
+    hint: "No photo yet, and none is needed. A photo is read in the background and names what is in it.",
+    fileName: "new-record.jpg",
+  });
+  app.querySelector("[data-photo]").replaceWith(field.root);
+  // A page has no `close` event: this is what stops the tracks on the way out,
+  // by whatever means the page is left.
+  holdOnPage(field.release);
+  field.start();
 
   // Enter must never spend tape. A browser submits with the *first* submit
   // button, which may print the stub, so Enter is pointed at plain Create.
@@ -3124,8 +3178,20 @@ async function viewNew(parentCode = null) {
 
     try {
       let unprinted = null;
+      let unphotographed = null;
       const box = await busy(pressed, wantsLabel ? "Creating and printing…" : "Creating…", async () => {
         const made = await api("/boxes", { method: "POST", body: JSON.stringify(payload) });
+        // The record first, then the photo it has nowhere to live until now.
+        // A photo that will not upload leaves the record standing and says so:
+        // neither a half-made thing nor a picture silently dropped.
+        const photo = field.photo();
+        if (photo) {
+          const body = new FormData();
+          body.append("file", photo.blob, photo.name);
+          try {
+            await api(`/boxes/${encodeURIComponent(made.code)}/photos`, { method: "POST", body });
+          } catch (error) { unphotographed = error.message; }
+        }
         if (wantsLabel) {
           try {
             await api("/labels/print", {
@@ -3145,6 +3211,10 @@ async function viewNew(parentCode = null) {
       if (unprinted) {
         failed(`${box.code} was created, but its ${printing} did not print: ${unprinted}`,
                printing === "stub" ? "Stub not printed" : "Label not printed");
+      }
+      if (unphotographed) {
+        failed(`${box.code} was created, but its photo did not upload: ${unphotographed}. `
+               + "Take or choose another from its own page.", "Photo not uploaded");
       }
     } catch (error) { failed(error.message, "Not created"); }
   });
@@ -3720,6 +3790,7 @@ async function route() {
   showNotice();
   forgetParts();
   leaveEveryRecord();
+  letGoOfPage();
   // The page is being replaced anyway, so a pending reload costs nothing; it
   // lands on the new route.
   if (updateTo && (await reloadWhenSafe("leaving"))) return;

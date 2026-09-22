@@ -289,7 +289,7 @@ try {
   const doc = await send("DOM.getDocument");
   const shotNode = await send("DOM.querySelector", { nodeId: doc.result.root.nodeId, selector: "dialog.adder #adder-shot" });
   await send("DOM.setFileInputFiles", { nodeId: shotNode.result.nodeId, files: [photo] });
-  check("choosing a photo is acknowledged", /Photo: /.test(await evaluate(`${q("#adder-photo")}.textContent`)));
+  check("choosing a photo is acknowledged", /Photo: /.test(await evaluate(`${q("#adder-line")}.textContent`)));
   await click("#adder-add");
   await waitFor(`!document.querySelector("dialog.adder")`, "Add to close the dialog", 150);
   const added = (await api(`/boxes/${crate}`)).children.at(-1);
@@ -639,7 +639,7 @@ try {
              stillWidth: d.querySelector("#adder-still").naturalWidth,
              stillHeight: d.querySelector("#adder-still").naturalHeight,
              picker: Boolean(d.querySelector("#adder-shot")),
-             said: d.querySelector("#adder-photo").textContent }; })()`);
+             said: d.querySelector("#adder-line").textContent }; })()`);
 
   await camera(true);
   await goto(`#/b/${crate}/edit`, `Boolean(${q("#add-inside")})`);
@@ -700,7 +700,7 @@ try {
   await camera(false);
   await click("#add-inside");
   await waitFor(`Boolean(document.querySelector("dialog.adder[open]"))`, "the dialog again");
-  await waitFor(`/declined/.test(${q("#adder-photo")}.textContent)`, "the refusal to be said", 200);
+  await waitFor(`/declined/.test(${q("#adder-line")}.textContent)`, "the refusal to be said", 200);
   seen = await viewfinder();
   check("a refused camera says so in a line, with no dead grey box",
         !seen.box && !seen.live && seen.track === null, JSON.stringify(seen));

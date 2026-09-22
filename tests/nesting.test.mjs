@@ -6,8 +6,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  addedInside, addInsideRequest, blockedDelete, cameraTrouble, CAMERA_REQUEST, describe, editorSections, frameSize,
-  streamQuality,
+  addedInside, addInsideRequest, blockedDelete, describe, editorSections,
   groupMatches, inheritedRoom, kindsToAddInside, mayHold, notYetFragile, trail,
 } from "../web/nesting.js";
 
@@ -272,78 +271,6 @@ test("a record the server has not described yet is still all there", () => {
   assert.deepEqual(openOf({ code: "B-0009", kind: "bag" }, undefined, bagShape), ["kind"]);
 });
 
-// --- the viewfinder in the add dialog ------------------------------------------------
-//
-// The live camera can fail in half a dozen ordinary ways -- no permission, no
-// camera, a plain LAN address -- and none of them is an error state: the file
-// picker is still there, and the line says which of them happened.
-
-test("no secure context is the one that is about the address, not the camera", () => {
-  // getUserMedia rejects silently on a LAN IP; this is checked before asking.
-  const said = cameraTrouble(null, { secure: false });
-  assert.match(said, /secure connection/);
-  assert.match(said, /[Cc]hoose a photo/);
-});
-
-test("a refusal says so plainly, and is not an error", () => {
-  const said = cameraTrouble({ name: "NotAllowedError" });
-  assert.match(said, /declined/);
-  assert.match(said, /[Cc]hoose a photo/);
-  assert.doesNotMatch(said, /error|failed/i);
-});
-
-test("no camera, and a camera somebody else is using, read differently", () => {
-  assert.match(cameraTrouble({ name: "NotFoundError" }), /No camera/);
-  assert.match(cameraTrouble({ name: "OverconstrainedError" }), /No camera/);
-  assert.match(cameraTrouble({ name: "NotReadableError" }), /already in use|busy/i);
-});
-
-test("anything else names itself rather than pretending to know", () => {
-  const said = cameraTrouble({ name: "AbortError" });
-  assert.match(said, /AbortError/);
-  assert.match(said, /[Cc]hoose a photo/);
-});
-
-test("every one of them points at the way that still works", () => {
-  for (const name of ["NotAllowedError", "NotFoundError", "NotReadableError", "AbortError", undefined]) {
-    assert.match(cameraTrouble(name ? { name } : null), /[Cc]hoose a photo/);
-  }
-});
-
-// --- what a captured frame comes out as ----------------------------------------------
-//
-// The server keeps 2048 px at most, so there is no point uploading more.
-
-test("a big frame comes down to what the server keeps: 2048 on the short edge", () => {
-  assert.deepEqual(frameSize(4032, 3024), { width: 2731, height: 2048 });
-  // Held upright, the short edge is the width.
-  assert.deepEqual(frameSize(3024, 4032), { width: 2048, height: 2731 });
-});
-
-test("a very wide frame is held to 4096 on its long edge", () => {
-  assert.deepEqual(frameSize(8000, 1000), { width: 4096, height: 512 });
-});
-
-test("a small frame is left alone rather than blown up", () => {
-  assert.deepEqual(frameSize(640, 480), { width: 640, height: 480 });
-  assert.deepEqual(frameSize(1080, 1920), { width: 1080, height: 1920 });
-  assert.deepEqual(frameSize(2048, 1536), { width: 2048, height: 1536 });
-});
-
-test("the shape is kept, to whole pixels", () => {
-  const { width, height } = frameSize(3500, 2333);
-  assert.equal(height, 2048);
-  assert.equal(width, Math.round(3500 * (2048 / 2333)));
-  assert.ok(Number.isInteger(width));
-});
-
-test("a frame with no size yet is not a frame", () => {
-  // The video element has no dimensions until it has data.
-  for (const bad of [[0, 0], [640, 0], [Number.NaN, 480]]) {
-    assert.equal(frameSize(...bad), null);
-  }
-});
-
 // --- search results read as a tree -------------------------------------------------
 //
 // The container first, what matched inside it indented under it. Search is the
@@ -426,24 +353,4 @@ test("a row is handed back whole, so the list draws it as it draws any row", () 
   assert.equal(under.row, row);
   assert.equal(under.depth, 1);
   assert.equal(under.context, false);
-});
-
-test("the live camera asks for a size, not only for the back camera", () => {
-  // With no size asked for, the browser hands back its default 640x480.
-  const video = CAMERA_REQUEST.video;
-  assert.deepEqual(video.facingMode, { ideal: "environment" });
-  assert.ok(video.width.ideal >= 2048 && video.height.ideal >= 2048);
-});
-
-test("a stream says what size it is, and whether it is enough", () => {
-  assert.deepEqual(streamQuality(3840, 2160), { edge: 3840, enough: true, size: "3840 × 2160" });
-  assert.deepEqual(streamQuality(1920, 1080), { edge: 1920, enough: true, size: "1920 × 1080" });
-  assert.deepEqual(streamQuality(1080, 1920), { edge: 1920, enough: true, size: "1080 × 1920" });
-  assert.equal(streamQuality(1280, 720).enough, false);
-  assert.equal(streamQuality(640, 480).enough, false);
-});
-
-test("a stream with no dimensions yet says nothing", () => {
-  assert.equal(streamQuality(0, 0), null);
-  assert.equal(streamQuality(undefined, undefined), null);
 });

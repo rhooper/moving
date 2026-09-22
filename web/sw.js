@@ -15,6 +15,7 @@ const SHELL = [
   "/scan.js",
   "/segmented.js",
   "/text.js",
+  "/camera.js",
   "/covers.js",
   "/reload.js",
   "/wedge.js",
