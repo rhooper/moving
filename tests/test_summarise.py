@@ -74,6 +74,7 @@ def node(
     """One record of a subtree, shaped as store.subtree returns it."""
     return {
         "id": box_id,
+        "code": f"B-{box_id or 0:04d}",
         "parent_id": parent_id,
         "depth": depth,
         "kind": kind,
@@ -217,3 +218,116 @@ class TestGatheringAWholeSubtree:
     def test_an_empty_subtree_summarises_to_nothing(self):
         assert summarise.from_subtree([]) == ""
         assert summarise.from_subtree([node(0, "box")]) == ""
+
+
+class TestTheNormalisedName:
+    """One rule for "the same thing", shared with what a photo's reading merges.
+
+    It lives here because both callers already import this module and only one
+    of them may import the other.
+    """
+
+    def test_case_and_spacing_do_not_make_two_things(self):
+        assert summarise.name_key("Stock  Pot") == summarise.name_key("stock pot")
+
+    def test_nor_does_a_trailing_plural(self):
+        assert summarise.name_key("resistors") == summarise.name_key("resistor")
+        assert summarise.name_key("boxes") == summarise.name_key("box")
+
+    def test_a_short_word_keeps_its_ending(self):
+        # "gas" is not two "ga"s.
+        assert summarise.name_key("gas") != summarise.name_key("ga")
+
+
+class TestTheItemsOfAWholeSubtree:
+    """What the view's expanded contents list is built from.
+
+    Asked for as "include items from subitems with a small item-id heading,
+    putting them after box-level items. sort and deduplicate items when showing
+    them."
+    """
+
+    def test_each_record_keeps_its_own_items(self):
+        groups = summarise.grouped_items(
+            [
+                node(0, "box", box_id=1, items=(("resistors", 3),)),
+                node(1, "tub", box_id=2, parent_id=1, items=(("a soldering iron", 1),)),
+            ]
+        )
+
+        assert [g["code"] for g in groups] == ["B-0001", "B-0002"]
+        assert [i["name"] for i in groups[0]["items"]] == ["resistors"]
+        assert [i["name"] for i in groups[1]["items"]] == ["a soldering iron"]
+
+    def test_the_order_is_the_subtree_s_own_closeness(self):
+        groups = summarise.grouped_items(
+            [
+                node(0, "crate", box_id=1, items=(("tape", 1),)),
+                node(1, "tub", box_id=2, parent_id=1, items=(("wire", 1),)),
+                node(2, "bag", box_id=3, parent_id=2, items=(("clips", 1),)),
+            ]
+        )
+
+        assert [g["code"] for g in groups] == ["B-0001", "B-0002", "B-0003"]
+
+    def test_repeats_within_a_record_become_one_line_with_the_count_summed(self):
+        groups = summarise.grouped_items(
+            [
+                node(0, "box", box_id=1, items=(("resistors", 3), ("Resistor", 1), ("LEDs", 2))),
+            ]
+        )
+
+        assert groups[0]["items"] == [
+            {"name": "LEDs", "qty": 2},
+            {"name": "resistors", "qty": 4},
+        ]
+
+    def test_the_same_name_in_two_records_stays_two_lines(self):
+        # The crate's tape and the tub's tape are two rolls in two places, and
+        # that is exactly what the headings exist to say.
+        groups = summarise.grouped_items(
+            [
+                node(0, "crate", box_id=1, items=(("tape", 1),)),
+                node(1, "tub", box_id=2, parent_id=1, items=(("tape", 1),)),
+            ]
+        )
+
+        assert [g["items"] for g in groups] == [
+            [{"name": "tape", "qty": 1}],
+            [{"name": "tape", "qty": 1}],
+        ]
+
+    def test_items_are_sorted_within_a_record_whatever_order_they_were_added(self):
+        groups = summarise.grouped_items(
+            [
+                node(0, "box", box_id=1, items=(("wire", 1), ("Anvil", 1), ("clips", 1))),
+            ]
+        )
+
+        assert [i["name"] for i in groups[0]["items"]] == ["Anvil", "clips", "wire"]
+
+    def test_a_record_that_lists_nothing_is_not_a_group(self):
+        groups = summarise.grouped_items(
+            [
+                node(0, "crate", box_id=1, items=()),
+                node(1, "tub", box_id=2, parent_id=1, items=(("wire", 1),)),
+            ]
+        )
+
+        assert [g["code"] for g in groups] == ["B-0002"]
+
+    def test_nothing_anywhere_is_no_groups(self):
+        assert summarise.grouped_items([]) == []
+        assert summarise.grouped_items(None) == []
+
+    def test_a_summary_is_not_an_item(self):
+        # node_contents falls back to a record's summary, or to what it is;
+        # this is a list of *items*, so a record with none contributes none.
+        groups = summarise.grouped_items(
+            [
+                node(0, "box", box_id=1, items=(("wire", 1),)),
+                node(1, "bag", box_id=2, parent_id=1, summary="winter coats", items=()),
+            ]
+        )
+
+        assert [g["code"] for g in groups] == ["B-0001"]

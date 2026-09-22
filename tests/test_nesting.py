@@ -489,3 +489,48 @@ class TestGatheringTheWholeSubtree:
             conn.set_trace_callback(None)
 
         assert len(statements) <= 3, statements
+
+
+class TestTheExpandedContentsList:
+    """What the read-only view shows when its contents line is opened.
+
+    A separate request, made only on opening it: B-0015 is 59 items of its own
+    plus twenty tubs' worth, and putting that on every record GET would slow
+    down opening any record for a list most people never open.
+    """
+
+    def test_it_lists_the_record_s_own_items_first(self, client):
+        crate = made(client, kind="crate")
+        client.post(f"/api/boxes/{crate}/items", json={"name": "tape"})
+        tub = made(client, kind="tub", parent_code=crate)
+        client.post(f"/api/boxes/{tub}/items", json={"name": "wire"})
+
+        groups = client.get(f"/api/boxes/{crate}/contents").json()
+
+        assert [g["code"] for g in groups] == [crate, tub]
+        assert [i["name"] for i in groups[0]["items"]] == ["tape"]
+
+    def test_it_reaches_past_the_things_directly_inside(self, client):
+        crate = made(client, kind="crate")
+        tub = made(client, kind="tub", parent_code=crate)
+        bag = made(client, kind="bag", parent_code=tub)
+        client.post(f"/api/boxes/{bag}/items", json={"name": "clips"})
+
+        groups = client.get(f"/api/boxes/{crate}/contents").json()
+
+        assert [g["code"] for g in groups] == [bag]
+
+    def test_repeats_in_one_record_are_one_line_summed(self, client):
+        box = made(client)
+        client.post(f"/api/boxes/{box}/items", json={"name": "resistors", "qty": 3})
+        client.post(f"/api/boxes/{box}/items", json={"name": "Resistor"})
+
+        groups = client.get(f"/api/boxes/{box}/contents").json()
+
+        assert groups[0]["items"] == [{"name": "resistors", "qty": 4}]
+
+    def test_a_record_with_nothing_listed_anywhere_has_no_groups(self, client):
+        assert client.get(f"/api/boxes/{made(client)}/contents").json() == []
+
+    def test_an_unknown_code_is_a_404(self, client):
+        assert client.get("/api/boxes/B-9999/contents").status_code == 404

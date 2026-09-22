@@ -34,6 +34,59 @@ def plural(name: str, qty: int) -> str:
     return f"{name}s"
 
 
+def name_key(name: str) -> str:
+    """What makes two item names the same thing: case, spacing, a trailing plural.
+
+    Deliberately crude: a wrong merge loses an item, a missed one only leaves a
+    near-duplicate to delete. One rule, shared with what a photo's reading
+    merges into a record (`analysis`) -- and it lives here because that module
+    already imports this one and the dependency may not run both ways.
+    """
+    key = " ".join(name.lower().split())
+    for ending in ("es", "s"):
+        stem = key[: -len(ending)]
+        if key.endswith(ending) and len(stem) > 2 and not stem.endswith("s"):
+            return stem
+    return key
+
+
+def grouped_items(nodes: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """The items of a record and of everything nested inside it, by record.
+
+    What the read-only view lists when its contents line is expanded: "include
+    items from subitems with a small item-id heading, putting them after
+    box-level items. sort and deduplicate items when showing them."
+
+    Merged and sorted *within* a record and never across them: the same name in
+    a crate and in a tub inside it is two things in two places, which is what
+    the heading exists to say. The order is `store.subtree`'s own -- the record
+    itself, then what is directly inside it, then deeper. A record that lists
+    nothing is left out rather than being an empty heading; this is a list of
+    items, so a record described only by a summary contributes none.
+    """
+    groups = []
+    for node in nodes or ():
+        merged: dict[str, dict[str, Any]] = {}
+        for item in node.get("items") or ():
+            name = " ".join(str(item.get("name") or "").split())
+            if not name:
+                continue
+            try:
+                qty = max(1, int(item.get("qty") or 1))
+            except (TypeError, ValueError):
+                qty = 1
+            found = merged.setdefault(name_key(name), {"name": name, "qty": 0})
+            found["qty"] += qty
+        if merged:
+            groups.append(
+                {
+                    "code": node.get("code"),
+                    "items": sorted(merged.values(), key=lambda item: item["name"].lower()),
+                }
+            )
+    return groups
+
+
 def _merge(contents: list[dict[str, Any]]) -> list[tuple[str, int]]:
     """Combine repeats of the same thing, keeping first-seen order."""
     order: list[str] = []
