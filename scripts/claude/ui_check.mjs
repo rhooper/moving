@@ -61,6 +61,13 @@ const IN_PAGE = async () => {
   const check = (name, passed, detail = "") => results.push([name, Boolean(passed), String(detail)]);
 
   await wait(() => $("#summary-form"), "the box page");
+  // The code from the page's own hash: this runs inside the page, where the
+  // harness's variables are not in scope.
+  const onEdit = location.hash.replace(/^#\/b\//, "").replace(/\/edit$/, "");
+  const back = $("#done");
+  check("the editor offers a way back to the sheet",
+        Boolean(back) && back.getAttribute("href") === `#/b/${onEdit}`,
+        back ? back.getAttribute("href") : "no #done on the editor");
 
   // Every write the page attempts is counted from here. Everything below is
   // arranged to cause none: fields are changed and put back *at once*, and
@@ -432,6 +439,13 @@ const IN_VIEW = async () => {
     strip[0].click();
     await wait(() => $("dialog.viewer"), "the viewer");
     check("a photo opens the viewer, over the sheet", Boolean($("dialog.viewer[open]")));
+    // Strictly read-only: re-reading a photo queues work and spends money, so
+    // it is offered from the editor's viewer and not from the sheet's.
+    const reads = $("dialog.viewer .reads");
+    check("and it offers nothing that would read the photo again",
+          Boolean($("dialog.viewer [data-rerun]")?.hidden) && Boolean($("dialog.viewer [data-closer]")?.hidden)
+            && (!reads || reads.hidden),
+          `rerun ${$("dialog.viewer [data-rerun]")?.hidden} closer ${$("dialog.viewer [data-closer]")?.hidden}`);
     $("dialog.viewer").close();
     await wait(() => !$("dialog.viewer"), "the viewer to close");
   }

@@ -1212,7 +1212,7 @@ async function editSubitem(code, { kinds, rooms, onSaved }) {
 // `showing` lets the strip repaint an open viewer when a reading lands.
 const showing = { id: null, render: null };
 
-function viewPhoto(photo, { readable = true } = {}) {
+function viewPhoto(photo, { readable = true, readOnly = false } = {}) {
   const dialog = document.createElement("dialog");
   dialog.className = "viewer";
   const full = `/photos/${encodeURIComponent(photo.id)}/full`;
@@ -1263,13 +1263,15 @@ function viewPhoto(photo, { readable = true } = {}) {
       return row;
     }));
     list.hidden = !seen.items.length;
+    // Reading a photo again queues work and spends money, so the sheet's
+    // viewer offers neither; the editor's does.
     const rerun = dialog.querySelector("[data-rerun]");
-    rerun.hidden = !seen.rerun;
+    rerun.hidden = readOnly || !seen.rerun;
     if (seen.rerun) setText(rerun, seen.rerun);
-    const offerCloser = seen.closer === "offer";
+    const offerCloser = !readOnly && seen.closer === "offer";
     dialog.querySelector("[data-closer]").hidden = !offerCloser;
     dialog.querySelector(".closer-hint").hidden = !offerCloser;
-    dialog.querySelector(".reads").hidden = !seen.rerun && !offerCloser;
+    dialog.querySelector(".reads").hidden = readOnly || (!seen.rerun && !offerCloser);
   };
   render(photo);
 
@@ -1282,8 +1284,10 @@ function viewPhoto(photo, { readable = true } = {}) {
       render(queued);
     } catch (error) { failed(error.message, problem); }
   });
-  ask(dialog.querySelector("[data-rerun]"), "", "Could not read the photo");
-  ask(dialog.querySelector("[data-closer]"), "?detail=true", "Could not look closer");
+  if (!readOnly) {
+    ask(dialog.querySelector("[data-rerun]"), "", "Could not read the photo");
+    ask(dialog.querySelector("[data-closer]"), "?detail=true", "Could not look closer");
+  }
 
   showing.id = photo.id;
   showing.render = render;
@@ -2003,7 +2007,7 @@ async function drawRecord(code, { at = null } = {}) {
     tile.append(frame);
     tile.addEventListener("click", () => {
       const photo = seen.get(tile.dataset.key);
-      if (photo) viewPhoto(photo, { readable: Boolean(shape.contents) });
+      if (photo) viewPhoto(photo, { readable: Boolean(shape.contents), readOnly: true });
     });
     return tile;
   }
@@ -2337,7 +2341,10 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
         </div>
       </div>` : ""}
     <nav class="trail" id="trail" aria-label="Inside" hidden></nav>
-    <h1 class="code">${escape(box.code)}</h1>
+    <div class="top">
+      <h1 class="code">${escape(box.code)}</h1>
+      <a class="btn quiet" id="done" href="#/b/${escape(encodeURIComponent(box.code))}">Done</a>
+    </div>
     ${flags.length ? `<div class="flags">${flags.map((f) => `<span class="flag">${iconMarkup(flagIcon(f.key))}${escape(f.label)}</span>`).join("")}</div>` : ""}
     <div class="band" id="room-band"${room ? "" : " hidden"}>${escape(room?.name || "")}</div>
     <form id="summary-form">
