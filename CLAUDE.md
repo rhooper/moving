@@ -95,7 +95,8 @@ destructive.
 (views and wiring), `sw.js`, and pure modules tested by `tests/*.test.mjs`:
 `live.js` (event socket, when a refresh is safe, `reconcile`), `autosave.js`,
 `reload.js`, `nesting.js`, `covers.js`, `record.js` (the read-only sheet),
-`segmented.js`, `wedge.js`, `scan.js` (+ vendored `jsQR.js`), `text.js`. `scripts/claude/`: operational scripts with
+`camera.js` (the live camera's rules), `segmented.js`, `wedge.js`, `scan.js`
+(+ vendored `jsQR.js`), `text.js`. `scripts/claude/`: operational scripts with
 purpose headers, the browser checks (`*_check.mjs`), `hooks/`, `lib/launchd.sh`.
 
 ## Constraints and traps
@@ -277,9 +278,9 @@ purpose headers, the browser checks (`*_check.mjs`), `hooks/`, `lib/launchd.sh`.
 - **Run `make browser-check` after touching `web/`.** A throwaway server (own
   database, fake printer, stub vision, `MOVING_REVISION` set) runs `ui_check`
   and `wedge_check` (read-only, assert they wrote nothing), `autosave_check`,
-  `copies_check`, `viewer_check`, `nesting_check` (these write, and **refuse
-  port 8787 and any non-loopback host**), then `strip_cache_check` and
-  `reload_check` on servers of their own.
+  `copies_check`, `viewer_check`, `nesting_check`, `newbox_check` (these write,
+  and **refuse port 8787 and any non-loopback host**), then `strip_cache_check`
+  and `reload_check` on servers of their own.
 - **Never `pkill` Chrome by pattern** -- agents run in parallel and kill each
   other's. Give each Chrome its own debugging port and `--user-data-dir`
   (`make browser-check CHECK_PORT=8801 CDP_PORT=9366`). `--screenshot` with a
@@ -371,7 +372,13 @@ Each is a choice; changing one is a decision, not the fixing of a gap.
   then centres rather than sitting high over empty tape -- so a long code
   loses the barcode and keeps the QR. **Two symbols on it now**, so a test
   that decodes a stub must filter by symbol type, as the full label's already
-  must. Enter on the new-record form never prints.
+  must. It counts in `label_print_count` like any label -- the purge warning
+  is about anything scannable stuck to a box.
+- **Making a record prints nothing** ("default to no stub label"): plain Create
+  is the first, filled button on the new-record form and the stub is the quiet
+  one beside it, one press away. Enter reaches Create by arrangement now, and
+  the handler that points it there stays -- it is also what stops a barcode
+  reader's Return submitting from a focused pushbutton.
 - `orientation="portrait"` (cut to content, 300-1063 px) still works;
   `MOVING_LABEL_ORIENTATION` picks the default.
 - **Printing refuses a box with no contents** (409 without `allow_empty`; one
@@ -531,11 +538,58 @@ Each is a choice; changing one is a decision, not the fixing of a gap.
   (`inheritedRoom()`, `store.going_to()`).
 - **Fragile climbs, never descends**: marking a nested thing fragile offers to
   mark its containers; clearing touches nothing else.
-- **"Add something inside" is a dialog** (kind, photo, source room). Its live
-  camera starts when it opens, checks `isSecureContext` first, and stops in
-  the dialog's `close` handler and on `pagehide`.
+- **"Add something inside" is a dialog** (kind, photo, source room), and its
+  camera is the shared one below.
 - **Tapping something inside opens its editor as a modal** (`editSubitem`);
   closing commits and waits. Empty sections fold; nothing with content does.
+
+### Taking a photograph before there is a record
+
+- **One camera, for the two places that take one**: the "Add something inside"
+  dialog and the new-record page (asked for as "add a live camera to the new
+  box page - optional image"). `photoField` in `app.js` builds the field --
+  viewfinder, shutter, the frame just taken with Take another, the file picker
+  underneath, the line -- and `web/camera.js` holds the decisions:
+  `CAMERA_REQUEST` (asking for a size, or the browser gives 640x480),
+  `frameSize` (what the server keeps), `cameraTrouble`, `streamQuality`,
+  `viewfinderState`, `photoLine`. A second copy for a second page is how two
+  cameras start drifting apart.
+- **`isSecureContext` is checked before asking**: on a plain LAN address
+  `getUserMedia` rejects with nothing that explains itself.
+- **Every failure is ordinary** -- refused, none there, one already in use, an
+  insecure address: a line says which, the box is put away rather than left as
+  a dead grey rectangle, and the file picker underneath still works. The picker
+  has no `capture` attribute on purpose: the live camera is the camera now.
+- **The photo is optional everywhere it appears**, and never stands between
+  anyone and the buttons. The record is created first and the photograph
+  uploaded to it after, so a photo that will not upload leaves the record
+  standing and says so.
+- **A dialog stops its tracks on `close`; a page has no such event.** The
+  new-record page registers its camera with `holdOnPage`, and `route()` lets go
+  of it before drawing the next view (beside `leaveEveryRecord()`), with
+  `pagehide` for the tab going away. A track left running keeps the camera
+  light on and drains a phone carried round a house. `newbox_check` reads the
+  track back after leaving the page and requires `ended`.
+- **The page starts a camera only where one is already allowed**
+  (`navigator.permissions.query({name: "camera"})`, which Firefox does not know
+  that name for and so answers "no"); otherwise **"Use the camera"** sits beside
+  "Choose a photo" and one press brings the viewfinder up. Opening New is not
+  asking for a camera, and a phone that declined once must not be asked again
+  on every visit. The dialog still starts one when it opens -- taking a photo
+  is its point -- but never at page load.
+- **A declined camera cost a later save, measured.** With the page asking and
+  being denied, `autosave_check` lost the `pagehide` + `keepalive` save of the
+  last edit before leaving the site: 4 runs failed with the camera started and
+  denied, 2 passed with it not started, 1 passed with it granted and running,
+  all against one server. Headless Chrome's own state after a denied permission
+  may be the whole of it; asking for nothing nobody allowed avoids it either
+  way.
+- **An `await` in the middle of a view leaves its form unwired**: asking the
+  permission before the submit listener was attached let a fast press submit
+  natively. `startIfAllowed` runs last and is never awaited.
+- **Two of an id in one document is a silent wrong click**: the field's button
+  was `#adder-open`, which the dialog already uses for "Add and open". Ids
+  inside the field are prefixed per call site for exactly this reason.
 
 ### Kinds and input
 

@@ -79,6 +79,7 @@ run viewer_check   node scripts/claude/viewer_check.mjs "$B" "$VIEW" "$T/p.jpg" 
 run copies_check   node scripts/claude/copies_check.mjs "$B"
 run autosave_check node scripts/claude/autosave_check.mjs "$B"
 run nesting_check  node scripts/claude/nesting_check.mjs "$B"
+run newbox_check   node scripts/claude/newbox_check.mjs "$B"
 # Its own two servers on its own ports: it ships a second revision mid-run,
 # which the shared server cannot.
 run strip_cache    env PORT=$((PORT + 1)) CDP_PORT=$((CDP_PORT + 1)) node scripts/claude/strip_cache_check.mjs

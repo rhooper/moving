@@ -731,10 +731,12 @@ const IN_NEW = async () => {
   const press = (name, value) => form.querySelector(`.seg[data-name="${name}"] input[value="${value}"]`).labels[0].click();
 
   const create = document.querySelector("#new #create");
-  check("the first button creates and prints the stub",
-        buttons[0]?.dataset.print === "stub", buttons[0]?.textContent);
-  check("the plain Create prints nothing",
-        buttons.includes(create) && !create.hasAttribute("data-print"), create?.textContent);
+  // "default to no stub label": making a record prints nothing, and tape is a
+  // deliberate second choice. Enter reaches the first submit button.
+  check("the first button is the plain Create, and it prints nothing",
+        buttons[0] === create && !create.hasAttribute("data-print"), buttons[0]?.textContent);
+  check("the stub is still one press away, beside it",
+        buttons[1]?.dataset.print === "stub", buttons[1]?.textContent);
   check("the last button is the one that prints the full label",
         buttons.at(-1)?.dataset.print === "label", buttons.at(-1)?.textContent);
   check("Create names the kind it makes",

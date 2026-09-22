@@ -573,6 +573,10 @@ dialog.editor #child-links { margin: 0.75rem 0 0.5rem; }
 .fold-body > .seg:first-child { margin-top: 0; }
 
 /* One fixed shape for the viewfinder and its still, so the dialog does not jump. */
+/* The live camera's own field, the same in the add-inside dialog and on the
+   new-record form. Its parts are hidden until there is something to show, so
+   a refused camera adds nothing but a line. */
+.photo-field .row { margin-top: 0.5rem; }
 .shotbox { aspect-ratio: 4 / 3; margin-top: 0.5rem; background: var(--sunk); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .shotbox video, .shotbox img { display: block; width: 100%; height: 100%; object-fit: cover; }
 
