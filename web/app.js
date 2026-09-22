@@ -20,7 +20,7 @@ import {
   frameSize, streamQuality,
   groupMatches, inheritedRoom, kindsToAddInside, mayHold, notYetFragile, trail,
 } from "/nesting.js";
-import { contentsLine, coverTiles, expandedGroups, facts } from "/record.js";
+import { contentsLine, tilesFor, expandedGroups, facts } from "/record.js";
 import {
   CHECK_MS, liveRevision, nextStep, readTried, rememberTried, reloadBlocked, runningRevision,
 } from "/reload.js";
@@ -1891,6 +1891,7 @@ async function drawRecord(code, { at = null } = {}) {
   // Every cover rather than the first screenful, and the whole contents list,
   // which is a request of its own made when it is first opened.
   let allCovers = false;
+  let allPhotos = false;
   let groups = null;
 
   show(`
@@ -1914,7 +1915,7 @@ async function drawRecord(code, { at = null } = {}) {
     <div class="flags" id="flags" hidden></div>
 
     <div class="sheet" id="sheet" hidden>
-      <div class="strip" id="view-photos" aria-label="Photos of this ${escape(shape.label.toLowerCase())}"></div>
+      <div class="grid" id="view-photos" aria-label="Photos of this ${escape(shape.label.toLowerCase())}"></div>
       <p class="count" id="photo-count" hidden><span>Photos of this ${escape(shape.label.toLowerCase())}</span><b></b></p>
       <div class="grid" id="view-inside" aria-label="What is inside"></div>
       <p class="count" id="inside-count" hidden><span>Inside, each a record you can open</span><b></b></p>
@@ -1994,7 +1995,8 @@ async function drawRecord(code, { at = null } = {}) {
 
   const seen = new Map();   // photo id -> the photo as last heard
 
-  function photoTile() {
+  function photoTile(cell) {
+    if (cell.more) return moreTile(cell, () => { allPhotos = true; drawPhotos(); });
     const tile = document.createElement("button");
     tile.type = "button";
     tile.className = "tile";
@@ -2012,7 +2014,9 @@ async function drawRecord(code, { at = null } = {}) {
     return tile;
   }
 
-  function fillPhotoTile(tile, photo) {
+  function fillPhotoTile(tile, cell) {
+    if (cell.more) { fillMoreTile(tile, cell, photos.length); return; }
+    const photo = cell.photo;
     seen.set(String(photo.id), photo);
     // The viewer reads the photo as last heard, so one left open while a
     // reading lands fills in by itself.
@@ -2022,11 +2026,12 @@ async function drawRecord(code, { at = null } = {}) {
   }
 
   function drawPhotos() {
-    const strip = document.getElementById("view-photos");
-    reconcile(strip, stripFor(photos), {
-      key: (photo) => photo.id, create: photoTile, update: fillPhotoTile,
-    });
-    strip.hidden = !photos.length;
+    const grid = document.getElementById("view-photos");
+    const { tiles, more } = tilesFor(stripFor(photos), { all: allPhotos });
+    const cells = tiles.map((photo) => ({ key: String(photo.id), photo }));
+    if (more) cells.push({ key: "+more", more });
+    reconcile(grid, cells, { key: (cell) => cell.key, create: photoTile, update: fillPhotoTile });
+    grid.hidden = !photos.length;
     const count = document.getElementById("photo-count");
     setText(count.querySelector("b"), String(photos.length));
     count.hidden = !photos.length;
@@ -2034,20 +2039,28 @@ async function drawRecord(code, { at = null } = {}) {
   }
 
   // A cover, or the last cell of a full grid: the way in to the rest.
+  // The last cell of a capped grid: the way in to the rest, in both halves.
+  function moreTile(cell, open) {
+    const tile = document.createElement("button");
+    tile.type = "button";
+    tile.className = "tile";
+    const badge = document.createElement("span");
+    badge.className = "more";
+    const cap = document.createElement("span");
+    cap.className = "cap";
+    cap.textContent = "show all";
+    tile.append(badge, cap);
+    tile.addEventListener("click", open);
+    return tile;
+  }
+
+  function fillMoreTile(tile, cell, total) {
+    setText(tile.querySelector(".more"), `+${cell.more}`);
+    tile.setAttribute("aria-label", `Show all ${total}`);
+  }
+
   function coverTile(cell) {
-    if (cell.more) {
-      const tile = document.createElement("button");
-      tile.type = "button";
-      tile.className = "tile";
-      const badge = document.createElement("span");
-      badge.className = "more";
-      const cap = document.createElement("span");
-      cap.className = "cap";
-      cap.textContent = "show all";
-      tile.append(badge, cap);
-      tile.addEventListener("click", () => { allCovers = true; drawInside(); });
-      return tile;
-    }
+    if (cell.more) return moreTile(cell, () => { allCovers = true; drawInside(); });
     const tile = document.createElement("a");
     tile.className = "tile";
     const frame = document.createElement("span");
@@ -2065,11 +2078,7 @@ async function drawRecord(code, { at = null } = {}) {
   }
 
   function fillCoverTile(tile, cell) {
-    if (cell.more) {
-      setText(tile.querySelector(".more"), `+${cell.more}`);
-      tile.setAttribute("aria-label", `Show all ${(box.children || []).length}`);
-      return;
-    }
+    if (cell.more) { fillMoreTile(tile, cell, (box.children || []).length); return; }
     const child = cell.child;
     tile.setAttribute("href", `#/b/${encodeURIComponent(child.code)}`);
     setText(tile.querySelector(".cap"), child.code);
@@ -2081,7 +2090,7 @@ async function drawRecord(code, { at = null } = {}) {
   function drawInside() {
     const grid = document.getElementById("view-inside");
     const children = box.children || [];
-    const { tiles, more } = coverTiles(children, { all: allCovers });
+    const { tiles, more } = tilesFor(children, { all: allCovers });
     const cells = tiles.map((child) => ({ key: child.code, child }));
     if (more) cells.push({ key: "+more", more });
     reconcile(grid, cells, { key: (cell) => cell.key, create: coverTile, update: fillCoverTile });

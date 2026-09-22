@@ -141,10 +141,11 @@ a { color: inherit; }
    question; only what is inside carries a code, because only that can be
    opened. --tile is local: it is this sheet's measure, not the app's. */
 .sheet { --tile: 78px; border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 1rem; }
-.sheet .strip { display: flex; gap: 4px; padding: 6px; overflow-x: auto; scrollbar-width: thin; }
-.sheet .strip .tile { flex: 0 0 var(--tile); }
-.sheet .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--tile), 1fr)); gap: 4px; padding: 6px; border-top: 1px solid var(--line); }
-.sheet[data-photos="none"] .grid { border-top: 0; }
+.sheet .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--tile), 1fr)); gap: 4px; padding: 6px; }
+/* Both halves are the same grid, so the rule between them belongs to the
+   second and only when there is a first. */
+.sheet #view-inside { border-top: 1px solid var(--line); }
+.sheet[data-photos="none"] #view-inside { border-top: 0; }
 .sheet .tile { display: block; width: 100%; min-height: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; text-decoration: none; cursor: pointer; }
 .sheet .pic { position: relative; display: grid; place-items: center; aspect-ratio: 1; background: var(--sunk); border-radius: var(--radius); overflow: hidden; }
 .sheet .pic img { position: relative; display: block; width: 100%; height: 100%; object-fit: cover; }

@@ -8,7 +8,7 @@ import { test } from "node:test";
 import {
   COVERS,
   contentsLine,
-  coverTiles,
+  tilesFor,
   expandedGroups,
   facts,
 } from "../web/record.js";
@@ -20,14 +20,14 @@ const named = (names) => names.map((name, id) => ({ id, name, qty: 1 }));
 // --- the covers of what is inside -------------------------------------------
 
 test("a few things inside are all shown", () => {
-  const { tiles, more } = coverTiles(children(3));
+  const { tiles, more } = tilesFor(children(3));
 
   assert.deepEqual(tiles.map((t) => t.code), ["B-0001", "B-0002", "B-0003"]);
   assert.equal(more, 0);
 });
 
 test("exactly a screenful is still all shown, with nothing left over", () => {
-  const { tiles, more } = coverTiles(children(COVERS));
+  const { tiles, more } = tilesFor(children(COVERS));
 
   assert.equal(tiles.length, COVERS);
   assert.equal(more, 0);
@@ -36,7 +36,7 @@ test("exactly a screenful is still all shown, with nothing left over", () => {
 test("more than that keeps room for the tile that opens the rest", () => {
   // B-0015 holds 20 tubs: the grid stays one tidy block, and the last cell
   // says how many are behind it rather than being a twenty-first tub.
-  const { tiles, more } = coverTiles(children(20));
+  const { tiles, more } = tilesFor(children(20));
 
   assert.equal(tiles.length, COVERS - 1);
   assert.equal(more, 20 - (COVERS - 1));
@@ -44,15 +44,15 @@ test("more than that keeps room for the tile that opens the rest", () => {
 });
 
 test("show all means all of them, and nothing left to open", () => {
-  const { tiles, more } = coverTiles(children(20), { all: true });
+  const { tiles, more } = tilesFor(children(20), { all: true });
 
   assert.equal(tiles.length, 20);
   assert.equal(more, 0);
 });
 
 test("nothing inside is no tiles", () => {
-  assert.deepEqual(coverTiles([]), { tiles: [], more: 0 });
-  assert.deepEqual(coverTiles(null), { tiles: [], more: 0 });
+  assert.deepEqual(tilesFor([]), { tiles: [], more: 0 });
+  assert.deepEqual(tilesFor(null), { tiles: [], more: 0 });
 });
 
 // --- the contents line -------------------------------------------------------
@@ -217,4 +217,14 @@ test("the order the server sent is kept: the record, then outwards", () => {
   ]);
 
   assert.deepEqual(groups.map((g) => g.code), ["B-0015", "B-0016", "B-0099"]);
+});
+
+test("the same cap applies to a record's own photographs", () => {
+  // Asked for as "make the images on the item behave the same as the
+  // subitems": one rule, so the two halves of the sheet cannot drift apart.
+  const photos = Array.from({ length: 15 }, (_, i) => ({ id: i + 1 }));
+  const { tiles, more } = tilesFor(photos);
+
+  assert.equal(tiles.length, COVERS - 1);
+  assert.equal(more, 15 - (COVERS - 1));
 });

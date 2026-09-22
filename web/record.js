@@ -9,23 +9,26 @@
 //
 // Kept out of app.js (which touches the DOM on import) so it can be tested.
 
-/** Cells in the grid of covers before the last one becomes a way in to the
- *  rest. B-0015 holds twenty tubs: a wall of them buries the facts under it,
- *  and a screenful is what the question "what is in here?" actually needs. */
+/** Cells in a grid before the last one becomes a way in to the rest. B-0015
+ *  holds twenty tubs and fifteen photographs: a wall of either buries the
+ *  facts under it, and a screenful is what the question "what is in here?"
+ *  actually needs. The same cap for both, so the two halves of the sheet
+ *  behave alike. */
 export const COVERS = 8;
 
 /** Names on the contents line before it trails off. */
 export const NAMES = 4;
 
 /**
- * Which covers to draw, and how many are left over.
+ * Which tiles to draw, and how many are left over. Used for both halves of the
+ * sheet: the record's own photographs and the covers of what is inside it.
  *
  * Over the cap the last cell is spent on the way in to the rest rather than on
- * one more tub, so the grid stays one block and nothing is hidden without
+ * one more tile, so the grid stays one block and nothing is hidden without
  * saying so.
  */
-export function coverTiles(children, { shown = COVERS, all = false } = {}) {
-  const list = children || [];
+export function tilesFor(list_, { shown = COVERS, all = false } = {}) {
+  const list = list_ || [];
   if (all || list.length <= shown) return { tiles: [...list], more: 0 };
   return { tiles: list.slice(0, shown - 1), more: list.length - (shown - 1) };
 }

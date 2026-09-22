@@ -418,9 +418,20 @@ const IN_VIEW = async () => {
   const strip = [...document.querySelectorAll("#view-photos .tile")];
   if (strip.length) {
     const square = strip[0].querySelector(".pic").getBoundingClientRect();
-    check("a photo is a square tile, and the sheet scrolls rather than wrapping",
-          Math.abs(square.width - square.height) <= 1 && getComputedStyle($("#view-photos")).overflowX === "auto",
-          `${Math.round(square.width)}x${Math.round(square.height)}`);
+    // Both halves of the sheet are the same grid: square tiles that wrap and
+    // cap, so a record's own photographs behave like the covers under them.
+    const photoGrid = getComputedStyle($("#view-photos"));
+    const covers = $("#view-inside");
+    // The columns only compare when both halves are on screen: a hidden grid
+    // computes no tracks at all.
+    const sameTracks = covers.hidden
+      || photoGrid.gridTemplateColumns === getComputedStyle(covers).gridTemplateColumns;
+    check("a photo is a square tile in a grid, laid out like the covers under it",
+          Math.abs(square.width - square.height) <= 1
+            && photoGrid.display === "grid" && photoGrid.overflowX !== "auto" && sameTracks,
+          `${Math.round(square.width)}x${Math.round(square.height)}, ${photoGrid.display}, covers hidden ${covers.hidden}, same tracks ${sameTracks}`);
+    check("and it never draws more tiles than the cap",
+          strip.length <= 8, String(strip.length));
   }
 
   const facts_ = [...document.querySelectorAll("#facts .fact")].map((f) => f.querySelector("dt").textContent);
