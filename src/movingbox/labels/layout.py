@@ -476,10 +476,17 @@ def _render_landscape(data: LabelData) -> Image.Image:
 STUB_LENGTH = 300  # 1 inch at 300 dpi
 STUB_CODE_SIZE = 105  # fits B-0042 beside the QR; longer codes shrink
 STUB_QR_MODULE = 7  # 259 px for the codes in use, inside the stub's 300
+#: The number's own barcode, for a keyboard-wedge reader. Same module as the
+#: full label's, so both read the same on the same scanner; the number sits
+#: above it and the pair is centred in the space the QR leaves.
+STUB_BARCODE_MODULE = 3
+STUB_BARCODE_HEIGHT = 64
+STUB_BARCODE_TOP = 170
+STUB_CODE_MIDDLE = 105
 
 
 def render_stub(data: LabelData) -> Image.Image:
-    """The number and the QR only: a stub is printed before anything is packed."""
+    """The number, its barcode and the QR: a stub is printed before anything is packed."""
     width, height = PRINTABLE_WIDTH, STUB_LENGTH
     canvas = Image.new("L", (width, height), 255)
     draw = ImageDraw.Draw(canvas)
@@ -487,7 +494,36 @@ def render_stub(data: LabelData) -> Image.Image:
     qr = _qr(data.url, border=QR_QUIET, module=STUB_QR_MODULE)
     canvas.paste(qr, (width - qr.width, (height - qr.height) // 2))
 
-    font = _fit(draw, data.code, width - qr.width - MARGIN - 12, start=STUB_CODE_SIZE, weight=800)
-    draw.text((MARGIN, height // 2), data.code, font=font, fill=0, anchor="lm")
+    room = width - qr.width
+
+    # Skipped, not shrunk, if it cannot keep a ten-module quiet zone clear of
+    # the QR: a barcode too narrow to be read reliably is worse than none.
+    quiet = 10 * STUB_BARCODE_MODULE
+    try:
+        bars = code128.width(data.code, STUB_BARCODE_MODULE)
+    except ValueError:
+        bars = None  # a character Code 128 set B cannot carry
+    barcoded = bars is not None and quiet + bars + quiet <= room
+
+    font = _fit(draw, data.code, room - MARGIN - 12, start=STUB_CODE_SIZE, weight=800)
+    # The number sits above its barcode, or in the middle when there is none:
+    # a long code that loses its barcode should not sit high over empty tape.
+    draw.text(
+        (MARGIN, STUB_CODE_MIDDLE if barcoded else height // 2),
+        data.code,
+        font=font,
+        fill=0,
+        anchor="lm",
+    )
+
+    if barcoded:
+        code128.draw(
+            draw,
+            quiet,
+            STUB_BARCODE_TOP,
+            data.code,
+            module=STUB_BARCODE_MODULE,
+            height=STUB_BARCODE_HEIGHT,
+        )
 
     return canvas.point(lambda p: 255 if p > 128 else 0).convert("1")

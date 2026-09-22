@@ -365,8 +365,13 @@ Each is a choice; changing one is a decision, not the fixing of a gap.
 - **No contents column** (the list is one scan away): `LabelData` has no
   `items`; a box with items but no summary prints no description.
 - **The stub** (`render_stub`, `stub` on print or preview): one inch (696 x
-  300), number and QR, for a box still empty; exempt from the contents gate.
-  Enter on the new-record form never prints.
+  300) for a box still empty -- the number, a Code 128 of it beneath, and the
+  QR; exempt from the contents gate. The barcode is **skipped, not shrunk**,
+  when it cannot keep a ten-module quiet zone clear of the QR, and the number
+  then centres rather than sitting high over empty tape -- so a long code
+  loses the barcode and keeps the QR. **Two symbols on it now**, so a test
+  that decodes a stub must filter by symbol type, as the full label's already
+  must. Enter on the new-record form never prints.
 - `orientation="portrait"` (cut to content, 300-1063 px) still works;
   `MOVING_LABEL_ORIENTATION` picks the default.
 - **Printing refuses a box with no contents** (409 without `allow_empty`; one

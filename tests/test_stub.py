@@ -1,4 +1,4 @@
-"""The stub: one inch of tape carrying just the number and the QR.
+"""The stub: one inch of tape carrying the number, its barcode, and the QR.
 
 For the moment a box is created, before anything is in it: stick the stub on,
 pack, and print the full label at the end. It reads *across* the tape -- a
@@ -41,9 +41,16 @@ class TestTheStubItself:
         assert layout.STUB_LENGTH == 300
 
     def test_its_qr_scans_to_the_box(self):
-        found = pyzbar.decode(layout.render_stub(a_stub()))
+        found = pyzbar.decode(layout.render_stub(a_stub()), symbols=[pyzbar.ZBarSymbol.QRCODE])
 
         assert found and found[0].data.decode() == URL
+
+    def test_its_barcode_reads_the_box_number(self):
+        # For a keyboard-wedge reader, which types what it reads: the number
+        # alone, never the URL the QR carries.
+        found = pyzbar.decode(layout.render_stub(a_stub()), symbols=[pyzbar.ZBarSymbol.CODE128])
+
+        assert found and found[0].data.decode() == "B-0042"
 
     def test_it_carries_the_number_beside_the_qr(self):
         image = layout.render_stub(a_stub()).convert("L")
@@ -69,9 +76,19 @@ class TestTheStubItself:
         assert printer.to_raster(stub).size == stub.size
 
     def test_a_long_code_shrinks_rather_than_hitting_the_qr(self):
-        found = pyzbar.decode(layout.render_stub(a_stub(code="WAREHOUSE-000123")))
+        found = pyzbar.decode(
+            layout.render_stub(a_stub(code="WAREHOUSE-000123")), symbols=[pyzbar.ZBarSymbol.QRCODE]
+        )
 
         assert found and found[0].data.decode() == URL
+
+    def test_a_code_too_long_to_fit_loses_the_barcode_and_not_the_qr(self):
+        # Skipped rather than shrunk: a barcode too narrow to keep its quiet
+        # zone is one a reader misreads, which is worse than no barcode.
+        stub = layout.render_stub(a_stub(code="WAREHOUSE-000123"))
+
+        assert not pyzbar.decode(stub, symbols=[pyzbar.ZBarSymbol.CODE128])
+        assert pyzbar.decode(stub, symbols=[pyzbar.ZBarSymbol.QRCODE])
 
 
 class TestOverTheApi:
