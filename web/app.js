@@ -3041,14 +3041,14 @@ async function viewNew(parentCode = null) {
     // An unknown container code is not fatal: the form is drawn on its own.
     parentCode ? api(`/boxes/${encodeURIComponent(parentCode)}`).catch(() => null) : null,
   ]);
-  // Inside a container plain Create comes first: nested things rarely get a label.
-  const creates = parent
-    ? `<button class="btn" type="submit" id="create">Create</button>
+  // "default to no stub label": making a record prints nothing, and a stub is
+  // the deliberate second choice rather than the one under the thumb. Enter
+  // reaches the first submit button, which is now plain Create by arrangement
+  // as well as by the handler below.
+  const creates = `
+       <button class="btn" type="submit" id="create">Create</button>
        <button class="btn quiet" type="submit" id="create-stub" data-print="stub" style="margin-top:0.75rem">Create and print stub</button>
-       <button class="btn quiet" type="submit" id="create-print" data-print="label" style="margin-top:0.5rem">Create and print label</button>`
-    : `<button class="btn" type="submit" id="create-stub" data-print="stub">Create and print stub</button>
        <p class="meta" style="margin:0.35rem 0 0">One inch of tape: just the number and the QR, to stick on before you pack.</p>
-       <button class="btn quiet" type="submit" id="create" style="margin-top:0.75rem">Create</button>
        <button class="btn quiet" type="submit" id="create-print" data-print="label" style="margin-top:0.5rem">Create and print label</button>`;
   show(`
     <h1 class="code">New</h1>
@@ -3103,7 +3103,7 @@ async function viewNew(parentCode = null) {
   field.start();
 
   // Enter must never spend tape. A browser submits with the *first* submit
-  // button, which may print the stub, so Enter is pointed at plain Create.
+  // button; that is plain Create now, and this keeps it so whatever the order.
   document.getElementById("new").addEventListener("keydown", (event) => {
     if (event.key !== "Enter" || event.target.tagName !== "INPUT") return;
     event.preventDefault();
