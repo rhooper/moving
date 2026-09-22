@@ -112,8 +112,19 @@ check("nothing focused: a scanned QR (URL, slashes and all) opens the box",
       (await atPage(`${host}/b/${B}`)) === `#/b/${B}`, await hash());
 check("nothing focused: a mis-scan shows as a search", (await atPage("B-9999")) === "#/search/B-9999", await hash());
 
+// A label on a box is scanned by somebody holding it, so it opens the record
+// to read: nothing on the page saves when it is brushed.
+await atPage(A);
+await waitFor("#edit");
+check("a scan lands on the record to read, with Edit a deliberate step",
+      (await evaluate(`Boolean(document.querySelector("#edit")) && !document.querySelector("#summary-form")`)),
+      await evaluate(`document.querySelector("#app h1")?.textContent`));
+check("and the Edit button goes to the editor",
+      (await evaluate(`document.querySelector("#edit").getAttribute("href")`)) === `#/b/${A}/edit`,
+      await evaluate(`document.querySelector("#edit").getAttribute("href")`));
+
 // --- the dangerous one: a button has the focus ---
-await goto(`#/b/${B}`);
+await goto(`#/b/${B}/edit`);
 await waitFor("#print");
 await evaluate(`document.getElementById("print").focus()`);
 check("(setup) the Print button really has the focus",
@@ -128,7 +139,7 @@ check("Print focused: the reader's Return did NOT press Print",
 // Whichever radio was tapped last keeps the focus, as Print does. Taken for
 // typing, the scan would be dropped and its Return would submit the radio's
 // form.
-await goto(`#/b/${B}`);
+await goto(`#/b/${B}/edit`);
 await waitFor('.seg[data-name="kind"] input:checked');
 await evaluate(`document.querySelector('.seg[data-name="kind"] input:checked').focus()`);
 check("(setup) a pushbutton really has the focus",
@@ -143,7 +154,7 @@ check("pushbutton focused on the new-record form: the scan opens the box, and cr
       (await hash()) === `#/b/${A}`, await hash());
 
 // --- a modal is a question being asked ---
-await goto(`#/b/${B}`);
+await goto(`#/b/${B}/edit`);
 await waitFor("#delete");
 await evaluate(`document.getElementById("delete").click()`);
 await sleep(300);

@@ -150,7 +150,7 @@ im.save(${JSON.stringify(jpeg)}, quality=92)`);
   // Controlled now: from here every image goes through it.
   await send("Page.reload");
   await waitFor(`[...document.querySelectorAll("main img")].some((i) => i.currentSrc.includes(${JSON.stringify(thumbUrl)}) && i.complete)`, "the list's cover");
-  await send("Page.navigate", { url: `${BASE}/#/b/${code}` });
+  await send("Page.navigate", { url: `${BASE}/#/b/${code}/edit` });
   await waitFor(`document.querySelectorAll(".shots img").length > 0`, "the strip");
   const stripA = await stripOnPage();
   const stripSeenA = await pageSees(stripA);
@@ -171,7 +171,7 @@ im.save(${JSON.stringify(jpeg)}, quality=92)`);
   server = startServer("proof-b", ["1.0", "120", "3"]); await up();
   const versionB = log.match(/version (\w+)/)[1];
   console.log(`\nphase B: revision proof-b, strip version ${versionB}`);
-  await send("Page.navigate", { url: `${BASE}/#/b/${code}` });
+  await send("Page.navigate", { url: `${BASE}/#/b/${code}/edit` });
   // The deploy's new worker installs, activates and deletes the old cache.
   // Wait until that has really happened, or this proves nothing about it.
   await waitFor(`caches.keys().then((k) => k.length === 1 && k[0] === "proof-b")`,
