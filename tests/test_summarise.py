@@ -45,6 +45,15 @@ def test_the_summary_is_capped_to_fit_a_label():
     assert len(result) <= summarise.MAX_LENGTH
 
 
+def test_the_cap_is_what_the_label_can_actually_show():
+    # Rendered, not chosen: the summary is wrapped and cut by LINES, and a
+    # landscape label with a room band leaves three of them -- about 100
+    # characters of real text. 240 was never the binding limit; the tape was,
+    # and a longer line was silently cut with an ellipsis. Cutting here
+    # instead ends on "and N more", which says something.
+    assert summarise.MAX_LENGTH == 100
+
+
 def test_truncation_says_how_many_were_left_out():
     # "and 12 more" is far more useful on tape than a sentence cut mid-word.
     contents = items(*[f"item {n}" for n in range(60)])

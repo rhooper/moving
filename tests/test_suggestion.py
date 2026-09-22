@@ -161,14 +161,15 @@ class TestTheAssembledSummary:
     def test_a_nested_records_items_can_carry_it_past_the_model_threshold(self, client, empty):
         # A crate holding one box reaches ENOUGH through the box's items.
         inner = client.post("/api/boxes", json={"kind": "box", "parent_code": empty}).json()["code"]
-        for name in ("stock pot", "stand mixer", "colander"):
+        stocked = ("stock pot", "stand mixer", "colander", "mixing bowl")
+        for name in stocked:
             client.post(f"/api/boxes/{inner}/items", json={"name": name})
-        said = phrased(client, "Kitchen gear - a stock pot and a stand mixer")
+        said = phrased(client, "Kitchen gear: cookware and utensils, with a stand mixer")
 
         suggestion = client.get(f"/api/boxes/{empty}/summary-suggestion").json()
 
         assert suggestion["source"] == "model"
-        assert [thing["name"] for thing in said.seen] == ["stock pot", "stand mixer", "colander"]
+        assert [thing["name"] for thing in said.seen] == list(stocked)
 
     def test_a_box_with_no_items_suggests_nothing(self, client, empty):
         assert client.get(f"/api/boxes/{empty}/summary-suggestion").json()["summary"] == ""
@@ -190,14 +191,19 @@ class TestWhenAModelWritesIt:
         }
 
     def test_the_model_is_shown_what_is_nested_inside_as_well(self, client, empty):
-        stock(client, empty, "kettle", "toaster")
+        stock(client, empty, "kettle", "toaster", "tea towel")
         for _ in range(3):
             client.post("/api/boxes", json={"kind": "bag", "parent_code": empty})
         said = phrased(client, "Kitchen things and three bags")
 
         client.get(f"/api/boxes/{empty}/summary-suggestion")
 
-        assert [thing["name"] for thing in said.seen] == ["kettle", "toaster", "bag"]
+        assert [thing["name"] for thing in said.seen] == [
+            "kettle",
+            "toaster",
+            "tea towel",
+            "bag",
+        ]
         assert said.seen[-1]["qty"] == 3
 
     def test_a_model_that_does_not_answer_costs_nothing_but_the_phrasing(self, client, empty):

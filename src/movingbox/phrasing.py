@@ -24,7 +24,7 @@ from .config import Config
 
 log = logging.getLogger(__name__)
 
-PROMPT_VERSION = "2026-09-20.1"
+PROMPT_VERSION = "2026-09-22.1"
 
 #: How long Ollama keeps the model loaded; its default of five minutes is
 #: shorter than the gap between boxes.
@@ -49,7 +49,7 @@ TIMEOUT = 5.0
 
 #: Fewer distinct things than this are not sent to a model: there is nothing
 #: to generalise from, and models pad the answer from the prompt's example.
-ENOUGH = 3
+ENOUGH = 4
 
 
 class Unusable(ValueError):
@@ -66,23 +66,25 @@ class Phraser(Protocol):
 
 SYSTEM = (
     "You write the one line that is printed on a moving box's label. Somebody "
-    "reads it from across a room to decide whether to open the box. Say what "
-    "kind of things are inside, then name a few of them as examples. Use only "
-    "what you are given; never invent contents."
+    "reads it from across a room to decide whether to open the box, so what "
+    "matters is the kinds of things inside, far more than which exact items. "
+    "Use only what you are given; never invent contents."
 )
 
 INSTRUCTION = (
     "Write the label line for a container holding:\n\n{contents}\n\n"
     'Return a JSON object and nothing else: {{"summary": "<the line>"}}\n\n'
     "Rules:\n"
-    "- Begin with a few words naming the kind of things these are.\n"
-    "- Then name two or three of them, taken word for word from the list, as examples.\n"
-    "- Every thing you name must appear in the list above. Do not add anything else, "
-    "and do not guess what is inside something the list does not describe.\n"
-    "- One line, under 200 characters, no full stop at the end.\n\n"
-    "For example, for a list of 1 circular saw, 4 clamps, 1 tin of screws and "
-    "2 spirit levels:\n"
-    '  {{"summary": "Garage tools - a circular saw, clamps and a tin of screws"}}'
+    "- Say what KINDS of things are in there: two or three groups that between them\n"
+    "  cover most of the list.\n"
+    "- Then, at the end, add a few specific examples in support.\n"
+    "- Describe only what is in the list. Do not name a kind of thing the list does\n"
+    "  not support, and do not guess what is inside something it does not describe.\n"
+    "- One line, about 90 characters, no full stop at the end.\n\n"
+    "For a list of 1 circular saw, 4 clamps, 1 tin of screws, 2 spirit levels, "
+    "a box of drill bits and 3 sanding blocks:\n"
+    '  {{"summary": "Garage tools and fixings: power tools, hand tools and abrasives, '
+    'with a tin of screws"}}'
 )
 
 SCHEMA = {
@@ -113,7 +115,11 @@ def build_request(model: str, contents: list[dict[str, Any]]) -> dict:
         "stream": False,
         "format": SCHEMA,
         "keep_alive": KEEP_ALIVE,
-        "options": {"temperature": 0.2, "num_ctx": CONTEXT},
+        # Greedy. Measured over seven real records, three runs each: this took
+        # repeated answers from identical on 5 of 7 records to 7 of 7. Nothing
+        # here wants invention, and pressing the button twice should not
+        # rewrite the label.
+        "options": {"temperature": 0, "num_ctx": CONTEXT},
         "messages": [
             {"role": "system", "content": SYSTEM},
             {"role": "user", "content": INSTRUCTION.format(contents=as_lines(contents))},

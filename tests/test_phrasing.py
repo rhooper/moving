@@ -93,6 +93,41 @@ class TestTheRequest:
         assert "1 kettle" not in request["messages"][-1]["content"]
 
 
+class TestTheShapeAskedFor:
+    """The line leads with the kinds of things; examples are in support.
+
+    Asked for as "prefer a high level view of the kinds of things in the box,
+    not the exact items" -- so the prompt is what carries it, and these pin
+    the parts of it that decide the shape.
+    """
+
+    def test_it_asks_for_kinds_first_and_examples_after(self):
+        asked = phrasing.build_request("m", KITCHEN)["messages"][-1]["content"]
+
+        assert "KINDS" in asked
+        assert "groups" in asked
+        assert "examples in support" in asked
+
+    def test_it_asks_for_a_length_the_label_can_show(self):
+        # The stated number steers the model: "under 200 characters" produced
+        # a 64-character median, "about 90" an 87-character one. It is not
+        # obeyed as a ceiling, though -- one answer came back at 147 -- so the
+        # cap is enforced in _tidy, and this only has to aim.
+        asked = phrasing.build_request("m", KITCHEN)["messages"][-1]["content"]
+
+        assert "about 90 characters" in asked
+
+    def test_the_same_contents_ask_the_same_question_every_time(self):
+        # temperature 0: measured over seven real records, three runs each,
+        # this took the answers from identical on 5 of 7 to 7 of 7. The
+        # run-to-run variation an earlier attempt blamed on its prompt was
+        # mostly sampling.
+        assert phrasing.build_request("m", KITCHEN)["options"]["temperature"] == 0
+
+    def test_the_prompt_is_versioned_for_the_new_shape(self):
+        assert phrasing.PROMPT_VERSION == "2026-09-22.1"
+
+
 class TestTheReply:
     def test_a_well_formed_reply_is_the_summary(self):
         payload = {"message": {"content": json.dumps({"summary": "Kitchen gear - a stock pot"})}}
@@ -178,17 +213,22 @@ class TestFallingBackIsNormal:
         assert said.calls == 0
 
     def test_too_few_things_to_generalise_are_not_sent_to_the_model(self):
-        # On a one- or two-line list every model tried padded its answer from
-        # the prompt's own example; "kettle, toaster" is already the best line.
-        said = Says("Kitchen essentials - a kettle, clamps and a tin of screws")
+        # Measured against the label's own capacity: up to three distinct
+        # things, the assembled list still fits the two lines a label with a
+        # room band and handling chips leaves, so there is nothing to
+        # summarise. It is also the band where the model invents -- three
+        # unrelated things came back as "Home decor: paint, photo albums,
+        # kitchen helper", a category the list does not support.
+        said = Says("Kitchen essentials: kettles, toasters and mugs")
 
-        summary, source = phrasing.summary_for(things("kettle", "toaster"), said, model="m")
+        summary, source = phrasing.summary_for(things("kettle", "toaster", "mug"), said, model="m")
 
-        assert (summary, source) == ("kettle, toaster", "assembled")
+        assert (summary, source) == ("kettle, toaster, mug", "assembled")
         assert said.calls == 0
 
     def test_enough_things_are_sent(self):
-        said = Says("Kitchen gear - a stock pot")
+        # Four is where an assembled list stops fitting those two lines.
+        said = Says("Kitchen gear: cookware and utensils, with a stand mixer")
 
         assert phrasing.summary_for(KITCHEN, said, model="m")[1] == "model"
         assert said.calls == 1

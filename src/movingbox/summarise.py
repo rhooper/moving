@@ -9,8 +9,15 @@ from typing import Any
 
 from . import kinds
 
-#: Characters; the same cap as a model's summary (vision.base.SUMMARY_MAX).
-MAX_LENGTH = 240
+#: Characters, and it is the *tape* that sets it. A landscape label wraps the
+#: summary and keeps only the lines that fit above the handling chips: three
+#: with a room band, two if the label also carries a chip. Measured on real
+#: text at the label's own font and width, three lines hold about 100
+#: characters. Past that the renderer cuts mid-sentence with an ellipsis,
+#: where cutting here ends on "and N more", which at least says how much is
+#: missing. (vision.base.SUMMARY_MAX is still 240: a photo's own sentence is
+#: capped where the model is read, not where a label is printed.)
+MAX_LENGTH = 100
 
 #: Words already plural or unchanged in the plural.
 UNCOUNTED = {
