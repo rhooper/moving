@@ -20,6 +20,7 @@ import {
   frameSize, streamQuality,
   groupMatches, inheritedRoom, kindsToAddInside, mayHold, notYetFragile, trail,
 } from "/nesting.js";
+import { contentsLine, coverTiles, expandedGroups, facts } from "/record.js";
 import {
   CHECK_MS, liveRevision, nextStep, readTried, rememberTried, reloadBlocked, runningRevision,
 } from "/reload.js";
@@ -844,7 +845,9 @@ function addInside({ parent, kinds, rooms, shape }) {
       return;
     }
     dialog.close(pressed);
-    if (pressed === "open") location.hash = `#/b/${made.code}`;
+    // Straight to the editor: a record just made is one to fill in, and the
+    // dialog only asked for a kind, a photo and where it came from.
+    if (pressed === "open") location.hash = `#/b/${made.code}/edit`;
   });
 
   dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close("no"); });
@@ -865,7 +868,7 @@ function tell({ text, warn }, code) {
   const line = document.getElementById("inside-said");
   if (!line) return;
   const link = document.createElement("a");
-  link.setAttribute("href", `#/b/${encodeURIComponent(code)}`);
+  link.setAttribute("href", `#/b/${encodeURIComponent(code)}/edit`);
   link.textContent = "Open it";
   line.replaceChildren(text, " ", link);
   line.classList.toggle("warn", warn);
@@ -925,7 +928,7 @@ async function editSubitem(code, { kinds, rooms, onSaved }) {
         ${AUTOSAVE_LINE}
       </form>
       <p class="meta" id="child-links">
-        <a href="#/b/${escape(encodeURIComponent(child.code))}" id="child-full">Open its whole page</a>
+        <a href="#/b/${escape(encodeURIComponent(child.code))}/edit" id="child-full">Open its whole page</a>
       </p>
       <div class="row">
         <button class="btn" type="button" id="child-close" autofocus>Close</button>
@@ -1835,6 +1838,453 @@ async function viewBoxes(query) {
 // An event arriving while a whole-page draw is fetching may be applied to the
 // page about to be replaced, and the replacement may predate it. So draws are
 // counted, and a part that changed meanwhile is asked for again (`overtaken`).
+// --- the record, to read --------------------------------------------------
+//
+// `#/b/CODE` reads; `#/b/CODE/edit` is the page that saves itself. Asked for
+// as "a view mode with an edit button for viewing boxes. make it compact, and
+// gather photos and subitem covers near each other, near the top": somebody
+// standing over a sealed box wants to know what it is, and every control on
+// the editor writes the moment it is touched.
+//
+// Nothing here edits by itself. No `editSession` is made for this route, so
+// there is no field to hold a live refresh and nothing to commit on the way
+// out; printing, adding something inside and restoring from the bin are
+// deliberate presses that ask first, as they do on the editor.
+
+async function viewRecord(code, options) {
+  // The editor may still owe a save: a page fetched before it lands would show
+  // the old text, and nothing here would correct it (the socket drops this
+  // device's own echo).
+  const open = sessions.get(code);
+  if (open) {
+    open.auto.commitAll();
+    await open.auto.idle();
+  }
+  drawing += 1;
+  try {
+    await drawRecord(code, options);
+  } finally {
+    drawing -= 1;
+    if (!drawing) replayOvertaken();
+  }
+}
+
+async function drawRecord(code, { at = null } = {}) {
+  const path = `/boxes/${encodeURIComponent(code)}`;
+  const [drawnBox, drawnItems, rooms, drawnPhotos, allKinds] = await Promise.all([
+    api(path),
+    api(`${path}/items`),
+    api("/rooms"),
+    api(`${path}/photos`),
+    api("/settings/kinds"),
+  ]);
+  let box = drawnBox;
+  let items = drawnItems;
+  let photos = drawnPhotos;
+  const shape = allKinds.find((k) => k.kind === box.kind) || allKinds[0];
+  if (at !== null && here() !== at) return;
+
+  // Every cover rather than the first screenful, and the whole contents list,
+  // which is a request of its own made when it is first opened.
+  let allCovers = false;
+  let groups = null;
+
+  show(`
+    <div id="say" class="say" hidden></div>
+    ${box.deleted_at ? `
+      <div class="say warn">
+        <strong>Deleted.</strong> It is out of the list and out of search, and
+        nothing has been destroyed.
+        <div class="row" style="margin-top:0.5rem">
+          <button class="btn" id="restore">Restore</button>
+        </div>
+      </div>` : ""}
+    <nav class="trail" id="trail" aria-label="Inside" hidden></nav>
+    <div class="top">
+      <h1 class="code">${escape(box.code)}</h1>
+      <a class="btn" id="edit" href="#/b/${escape(encodeURIComponent(box.code))}/edit">Edit</a>
+    </div>
+    <div class="band" id="room-band" hidden></div>
+    <p class="meta" id="goes-with" hidden></p>
+    <p class="summary" id="summary"></p>
+    <div class="flags" id="flags" hidden></div>
+
+    <div class="sheet" id="sheet" hidden>
+      <div class="strip" id="view-photos" aria-label="Photos of this ${escape(shape.label.toLowerCase())}"></div>
+      <p class="count" id="photo-count" hidden><span>Photos of this ${escape(shape.label.toLowerCase())}</span><b></b></p>
+      <div class="grid" id="view-inside" aria-label="What is inside"></div>
+      <p class="count" id="inside-count" hidden><span>Inside, each a record you can open</span><b></b></p>
+    </div>
+
+    <dl class="facts" id="facts"></dl>
+
+    <div class="view-acts">
+      <button class="btn quiet" type="button" id="print">Print label</button>
+      ${shape.contents ? '<button class="btn quiet" type="button" id="add-inside">Add something inside</button>' : ""}
+    </div>`);
+
+  // --- identity: the way out, the room it is going to, what it holds ---
+  function drawIdentity() {
+    const nav = document.getElementById("trail");
+    const steps = trail(box.path);
+    nav.replaceChildren(...steps.flatMap((step) => {
+      const link = document.createElement("a");
+      link.setAttribute("href", `#/b/${encodeURIComponent(step.code)}`);
+      link.title = step.hint;
+      link.textContent = step.code;
+      const sep = document.createElement("span");
+      sep.className = "sep";
+      sep.setAttribute("aria-hidden", "true");
+      sep.textContent = "›";
+      return [link, sep];
+    }));
+    if (steps.length) {
+      const now = document.createElement("span");
+      now.setAttribute("aria-current", "page");
+      now.textContent = "this";
+      nav.append(now);
+    }
+    nav.hidden = !steps.length;
+
+    // Nested, it goes where the nearest container with a room goes, over a
+    // room of its own -- as the label does (store.going_to).
+    const from = inheritedRoom(box.path);
+    const going = rooms.find((r) => r.id === (from ? from.room : box.destination_room_id));
+    const band = document.getElementById("room-band");
+    setText(band, going?.name || "");
+    band.hidden = !going;
+
+    const whose = document.getElementById("goes-with");
+    whose.hidden = !from;
+    if (from) {
+      const link = document.createElement("a");
+      link.setAttribute("href", `#/b/${encodeURIComponent(from.code)}`);
+      link.textContent = from.code;
+      whose.replaceChildren(
+        "Goes where ", link,
+        going ? ` goes: ${going.name}.` : " goes; no room chosen for it yet.",
+      );
+    }
+
+    const said = document.getElementById("summary");
+    const summary = (box.content_summary || "").trim();
+    setText(said, summary || "Nothing written down yet");
+    said.classList.toggle("none", !summary);
+
+    const raised = flagsOf(box);
+    const flags = document.getElementById("flags");
+    flags.replaceChildren(...raised.map((flag) => {
+      const chip = document.createElement("span");
+      chip.className = "flag";
+      chip.append(iconNode(flagIcon(flag.key)), flag.label);
+      return chip;
+    }));
+    flags.hidden = !raised.length;
+  }
+
+  // --- the contact sheet ---
+  //
+  // The record's own photographs, then the covers of the things inside it:
+  // both are pictures of what this is, so they are one field, and only what is
+  // inside carries a code, because only that can be opened.
+
+  const seen = new Map();   // photo id -> the photo as last heard
+
+  function photoTile() {
+    const tile = document.createElement("button");
+    tile.type = "button";
+    tile.className = "tile";
+    const frame = document.createElement("span");
+    frame.className = "pic";
+    const image = document.createElement("img");
+    image.alt = "";
+    image.loading = "lazy";
+    frame.append(image);
+    tile.append(frame);
+    tile.addEventListener("click", () => {
+      const photo = seen.get(tile.dataset.key);
+      if (photo) viewPhoto(photo, { readable: Boolean(shape.contents) });
+    });
+    return tile;
+  }
+
+  function fillPhotoTile(tile, photo) {
+    seen.set(String(photo.id), photo);
+    // The viewer reads the photo as last heard, so one left open while a
+    // reading lands fills in by itself.
+    if (showing.id === photo.id) showing.render(photo);
+    setThumb(tile.querySelector("img"), photo.thumb);
+    tile.setAttribute("aria-label", `A photo of ${box.code}`);
+  }
+
+  function drawPhotos() {
+    const strip = document.getElementById("view-photos");
+    reconcile(strip, stripFor(photos), {
+      key: (photo) => photo.id, create: photoTile, update: fillPhotoTile,
+    });
+    strip.hidden = !photos.length;
+    const count = document.getElementById("photo-count");
+    setText(count.querySelector("b"), String(photos.length));
+    count.hidden = !photos.length;
+    showSheet();
+  }
+
+  // A cover, or the last cell of a full grid: the way in to the rest.
+  function coverTile(cell) {
+    if (cell.more) {
+      const tile = document.createElement("button");
+      tile.type = "button";
+      tile.className = "tile";
+      const badge = document.createElement("span");
+      badge.className = "more";
+      const cap = document.createElement("span");
+      cap.className = "cap";
+      cap.textContent = "show all";
+      tile.append(badge, cap);
+      tile.addEventListener("click", () => { allCovers = true; drawInside(); });
+      return tile;
+    }
+    const tile = document.createElement("a");
+    tile.className = "tile";
+    const frame = document.createElement("span");
+    frame.className = "pic";
+    const image = document.createElement("img");
+    image.alt = "";
+    image.loading = "lazy";
+    // Under the photo, not instead of it: a cover arriving later paints over
+    // the mark, so nothing has to decide which of the two shows.
+    frame.append(iconNode(kindIcon(cell.child), "i tk"), image);
+    const cap = document.createElement("span");
+    cap.className = "cap";
+    tile.append(frame, cap);
+    return tile;
+  }
+
+  function fillCoverTile(tile, cell) {
+    if (cell.more) {
+      setText(tile.querySelector(".more"), `+${cell.more}`);
+      tile.setAttribute("aria-label", `Show all ${(box.children || []).length}`);
+      return;
+    }
+    const child = cell.child;
+    tile.setAttribute("href", `#/b/${encodeURIComponent(child.code)}`);
+    setText(tile.querySelector(".cap"), child.code);
+    tile.setAttribute("aria-label", `${child.code}, ${rowStatus(child).kind}`);
+    setIcon(tile.querySelector(".tk"), kindIcon(child));
+    setThumb(tile.querySelector("img"), coverUrl(child));
+  }
+
+  function drawInside() {
+    const grid = document.getElementById("view-inside");
+    const children = box.children || [];
+    const { tiles, more } = coverTiles(children, { all: allCovers });
+    const cells = tiles.map((child) => ({ key: child.code, child }));
+    if (more) cells.push({ key: "+more", more });
+    reconcile(grid, cells, { key: (cell) => cell.key, create: coverTile, update: fillCoverTile });
+    grid.hidden = !children.length;
+    const count = document.getElementById("inside-count");
+    setText(count.querySelector("b"), String(children.length));
+    count.hidden = !children.length;
+    showSheet();
+  }
+
+  function showSheet() {
+    const sheet = document.getElementById("sheet");
+    sheet.hidden = !photos.length && !(box.children || []).length;
+    // The rule between the two halves belongs to the second, and only when
+    // there is a first.
+    sheet.dataset.photos = photos.length ? "some" : "none";
+  }
+
+  // --- the lines under the pictures ---
+  function drawFacts() {
+    const list = document.getElementById("facts");
+    const contents = shape.contents ? contentsLine(items, { children: box.children || [] }) : null;
+    const lines = facts(box, {
+      // rowStatus makes the phrase, so a list row and this page agree.
+      what: rowStatus(box).kind,
+      source: rooms.find((r) => r.id === box.source_room_id) || null,
+      contents,
+    });
+    reconcile(list, lines, { key: (fact) => fact.key, create: factRow, update: fillFact });
+  }
+
+  function factRow(fact) {
+    const row = document.createElement("div");
+    row.className = "fact";
+    const label = document.createElement("dt");
+    const value = document.createElement("dd");
+    row.append(label, value);
+    if (fact.key !== "contents") return row;
+    const fold = document.createElement("details");
+    fold.className = "fold";
+    const head = document.createElement("summary");
+    const body = document.createElement("div");
+    body.className = "groups";
+    fold.append(head, body);
+    fold.addEventListener("toggle", () => { if (fold.open) loadGroups(); });
+    const plain = document.createElement("span");
+    plain.className = "plain";
+    value.append(fold, plain);
+    return row;
+  }
+
+  function fillFact(row, fact) {
+    setText(row.querySelector("dt"), fact.label);
+    const value = row.querySelector("dd");
+    if (fact.key === "contents") {
+      const said = fact.detail ? `${fact.value} · ${fact.detail}` : fact.value;
+      const fold = value.querySelector("details");
+      const plain = value.querySelector(".plain");
+      fold.hidden = !fact.expandable;
+      plain.hidden = fact.expandable;
+      setText(fold.querySelector("summary"), said);
+      setText(plain, said);
+      if (fact.expandable && fold.open) drawGroups();
+      return;
+    }
+    if (fact.pill) {
+      if (!value.querySelector(".pill")) {
+        const pill = document.createElement("span");
+        pill.className = "pill";
+        value.replaceChildren(pill);
+      }
+      setText(value.querySelector(".pill"), fact.value);
+      return;
+    }
+    setText(value, fact.value);
+  }
+
+  // The whole list is its own request, made when it is opened: B-0015 is 59
+  // items of its own plus twenty tubs' worth.
+  async function loadGroups() {
+    if (groups) { drawGroups(); return; }
+    drawGroups("Reading the list…");
+    try {
+      groups = await api(`${path}/contents`);
+    } catch (error) {
+      drawGroups(error.message);
+      return;
+    }
+    drawGroups();
+  }
+
+  function drawGroups(note = null) {
+    const body = document.querySelector("#facts .groups");
+    if (!body) return;
+    const shown = note === null && groups ? expandedGroups(groups) : [];
+    if (!shown.length) {
+      const said = document.createElement("p");
+      said.className = "meta";
+      said.textContent = note === null && groups
+        ? "Nothing listed here, or in anything inside it."
+        : (note || "");
+      body.replaceChildren(said);
+      return;
+    }
+    body.replaceChildren(...shown.flatMap((group) => {
+      const parts = [];
+      if (group.heading) {
+        // The code, so an item's place is never in doubt.
+        const heading = document.createElement("h3");
+        heading.textContent = group.code;
+        parts.push(heading);
+      }
+      const list = document.createElement("ul");
+      list.append(...group.items.map((item) => {
+        const line = document.createElement("li");
+        const name = document.createElement("span");
+        name.textContent = item.name;
+        line.append(name);
+        if (item.qty > 1) {
+          const qty = document.createElement("span");
+          qty.className = "qty";
+          qty.textContent = `×${item.qty}`;
+          line.append(qty);
+        }
+        return line;
+      }));
+      parts.push(list);
+      return parts;
+    }));
+  }
+
+  drawIdentity();
+  drawPhotos();
+  drawInside();
+  drawFacts();
+
+  // --- the deliberate actions ---
+  document.getElementById("restore")?.addEventListener("click", async (event) => {
+    try {
+      await busy(event.target, "Restoring…", () => api(`${path}/restore`, { method: "POST" }));
+      await viewRecord(code);
+    } catch (error) { failed(error.message); }
+  });
+
+  document.getElementById("add-inside")?.addEventListener("click", () => {
+    addInside({ parent: box, kinds: allKinds, rooms, shape });
+  });
+
+  const printButton = document.getElementById("print");
+  printButton.addEventListener("click", async () => {
+    const contents = hasContents(box, items) || (box.children || []).length > 0;
+    const room = Boolean(inheritedRoom(box.path) || box.destination_room_id);
+    const sure = await confirmThinLabel(code, { contents, room });
+    if (!sure) return;
+    // The kind's own number of copies; choosing another for one print is
+    // something the editor offers.
+    const copies = Math.min(10, Math.max(1, Number(shape.copies) || 1));
+    let result;
+    try {
+      result = await busy(printButton, "Printing…", () =>
+        api("/labels/print", {
+          method: "POST",
+          body: JSON.stringify({ codes: [code], copies, allow_empty: !contents }),
+        }));
+    } catch (error) {
+      failed(error.message, "Label not printed");
+      return;
+    }
+    if (result.backend === "fake") {
+      announce(
+        `No label printed: the server is using the '${result.backend}' printer, ` +
+        `which only writes a preview image. Set MOVING_PRINTER_BACKEND=brother_ql.`,
+        { warn: true },
+      );
+    } else {
+      const made = result.printed?.[0]?.copies ?? copies;
+      announce(`Printed ${made} ${made === 1 ? "copy" : "copies"} of ${code}.`);
+    }
+  });
+
+  // Last, so a half-built page is never what a refresh redraws. The name is
+  // "box" because affects() knows that one and the list and nothing else.
+  watch({
+    name: "box",
+    code,
+    refresh: (a) => viewRecord(code, { at: a }),
+    parts: {
+      items: async () => {
+        items = await api(`${path}/items`);
+        groups = null;   // what is listed has moved; ask again if it is open
+        drawFacts();
+        if (document.querySelector("#facts details[open]")) await loadGroups();
+      },
+      photos: async () => {
+        photos = await api(`${path}/photos`);
+        drawPhotos();
+      },
+      summary: async () => {
+        box = await api(path);
+        drawIdentity();
+        drawInside();
+        drawFacts();
+      },
+    },
+  });
+}
+
 async function viewBox(code, options) {
   // Pending saves are sent *and waited for*: a page fetched before a save
   // lands would show the old text and adopt it as the baseline. What cannot be
@@ -2674,7 +3124,8 @@ async function viewNew(parentCode = null) {
         return made;
       });
       if (payload.fragile && box.path?.length) await offerFragileClimb(box);
-      location.hash = `#/b/${box.code}`;
+      // The editor, not the sheet: it was made to be filled in.
+      location.hash = `#/b/${box.code}/edit`;
       if (unprinted) {
         failed(`${box.code} was created, but its ${printing} did not print: ${unprinted}`,
                printing === "stub" ? "Stub not printed" : "Label not printed");
@@ -3233,7 +3684,10 @@ async function viewDeleted() {
 const routes = [
   [/^#?\/?$/, viewBoxes],
   [/^#\/search\/(.+)$/, (q) => viewBoxes(decodeURIComponent(q))],
-  [/^#\/b\/([^/]+)$/, viewBox],
+  [/^#\/b\/([^/]+)$/, viewRecord],
+  // The editor, one step from the sheet: `[^/]+` cannot match "CODE/edit", so
+  // this is one more row and no change to the one above.
+  [/^#\/b\/([^/]+)\/edit$/, viewBox],
   [/^#\/new$/, () => viewNew()],
   [/^#\/new\/in\/([^/]+)$/, (inside) => viewNew(decodeURIComponent(inside))],
   [/^#\/settings$/, viewSettings],

@@ -11,6 +11,7 @@ const SHELL = [
   "/autosave.js",
   "/live.js",
   "/nesting.js",
+  "/record.js",
   "/scan.js",
   "/segmented.js",
   "/text.js",
