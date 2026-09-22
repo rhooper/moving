@@ -70,7 +70,7 @@ try {
     if (msg.method === "Runtime.exceptionThrown") thrown.push(msg.params.exceptionDetails.exception?.description || "?");
   });
   await send("Emulation.setDeviceMetricsOverride", { width: 400, height: 860, deviceScaleFactor: 2, mobile: true });
-  await send("Page.navigate", { url: `${base}/#/b/${code}` });
+  await send("Page.navigate", { url: `${base}/#/b/${code}/edit` });
   await waitFor(`Boolean(document.getElementById("shot"))`, "the record page");
 
   // Upload through the API (the page hears about it over the websocket).
@@ -82,7 +82,7 @@ try {
   // --- open it while it is still being read ---
   await evaluate(`document.querySelector(".shots figure .pic a").click()`);
   await waitFor(`Boolean(document.querySelector("dialog.viewer")?.open)`, "the viewer");
-  check("a tap opens the viewer, not a new tab", await evaluate(`location.hash`) === `#/b/${code}`);
+  check("a tap opens the viewer, not a new tab", await evaluate(`location.hash`) === `#/b/${code}/edit`);
   check("it says the photo is still being read",
         /being read/.test(await evaluate(`document.querySelector("dialog.viewer .note").textContent`)),
         await evaluate(`document.querySelector("dialog.viewer .note").textContent`));
@@ -193,7 +193,7 @@ try {
   const bikeForm = new FormData();
   bikeForm.append("file", new Blob([readFileSync(photoPath)], { type: "image/jpeg" }), "bike.jpg");
   await fetch(`${base}/api/boxes/${bike}/photos`, { method: "POST", body: bikeForm });
-  await evaluate(`location.hash = ${JSON.stringify(`#/b/${bike}`)}`);
+  await evaluate(`location.hash = ${JSON.stringify(`#/b/${bike}/edit`)}`);
   await waitFor(`document.querySelector("h1.code")?.textContent === ${JSON.stringify(bike)} && Boolean(document.querySelector(".shots figure .pic a"))`,
                 "the single thing's page and photo");
   await evaluate(`document.querySelector(".shots figure .pic a").click()`);

@@ -132,6 +132,10 @@ const press = async (key, code = key, vk = 0, text = "") => {
   await sleep(60);
 };
 
+// `#/b/CODE` reads and `#/b/CODE/edit` edits; creating a record lands on the
+// editor, so the code is the hash with both ends taken off.
+const codeIn = (hash) => hash.slice(4).replace(/\/edit$/, "");
+
 const results = [];
 const check = (name, ok, detail = "") => results.push([name, Boolean(ok), String(detail)]);
 const dialog = () => evaluate(`(() => { const d = document.querySelector("dialog.ask[open]"); if (!d) return null;
@@ -158,7 +162,7 @@ try {
   await send("Page.enable");
   await send("Runtime.enable");
   await send("Emulation.setFocusEmulationEnabled", { enabled: true });
-  await send("Page.navigate", { url: `${base}/#/b/${bag}` });
+  await send("Page.navigate", { url: `${base}/#/b/${bag}/edit` });
   await waitFor(`Boolean(${q("#trail")}) && !${q("#trail")}.hidden`, "the nested record");
   await sleep(300);
 
@@ -249,7 +253,7 @@ try {
   check("created inside with Fragile ticked: it asks about the container", asked && asked.text.includes(tub), JSON.stringify(asked));
   await click("dialog.ask [value=yes]");
   await waitFor(`location.hash.startsWith("#/b/") && Boolean(${q("#trail")}) && !${q("#trail")}.hidden`, "landing on the new record");
-  const made = (await evaluate("location.hash")).slice(4);
+  const made = codeIn(await evaluate("location.hash"));
   check("saying yes marks the container, and then you are on the new record", (await fragileOf(tub)) === 1 && (await fragileOf(made)) === 1 && made !== tub,
         `${made}: ${await fragileOf(made)}, tub ${await fragileOf(tub)}`);
 
@@ -257,13 +261,13 @@ try {
   const photo = join(profile, "shot.png");
   writeFileSync(photo, png(96, [180, 150, 110]));
   const source = rooms.find((r) => r.kind !== "destination");
-  await goto(`#/b/${crate}`, `Boolean(${q("#add-inside")})`);
+  await goto(`#/b/${crate}/edit`, `Boolean(${q("#add-inside")})`);
   const insideBefore = (await api(`/boxes/${crate}`)).children.length;
   await evaluate(`${q("#summary-form [name=content_summary]")}.__mark = "stayed"`);
   await click("#add-inside");
   await waitFor(`Boolean(document.querySelector("dialog.adder[open]"))`, "the add-inside dialog");
   check("Add something inside opens a dialog, not another page",
-        (await evaluate("location.hash")) === `#/b/${crate}` && (await evaluate(`document.activeElement?.value`)) === "no");
+        (await evaluate("location.hash")) === `#/b/${crate}/edit` && (await evaluate(`document.activeElement?.value`)) === "no");
   check("it asks for a kind, a photo and a source, and nothing else",
         await evaluate(`(() => { const d = document.querySelector("dialog.adder");
           return d.querySelector('.seg[data-name="kind"]') && d.querySelector("#adder-cam")
@@ -291,14 +295,14 @@ try {
   const added = (await api(`/boxes/${crate}`)).children.at(-1);
   check("Add makes it inside, with the source, and stays on the container",
         (await api(`/boxes/${crate}`)).children.length === insideBefore + 1 && added.kind === "bag" && added.source_room_id === source.id
-          && (await evaluate("location.hash")) === `#/b/${crate}`, JSON.stringify(added));
+          && (await evaluate("location.hash")) === `#/b/${crate}/edit`, JSON.stringify(added));
   // The row arrives by the in-place refetch, which waits out the click first.
   await waitFor(q(`#inside li[data-key="${added.code}"]`), "the new row to appear inside");
   check("the new row appears in place, the page not redrawn",
         (await evaluate(`${q("#summary-form [name=content_summary]")}.__mark`)) === "stayed");
   check("the line says what was added, with a link to open it",
         (await evaluate(`${q("#inside-said")}.textContent`)) === `Added ${added.code} (bag). Open it`
-          && (await evaluate(`${q("#inside-said a")}.getAttribute("href")`)) === `#/b/${added.code}`, await evaluate(`${q("#inside-said")}.textContent`));
+          && (await evaluate(`${q("#inside-said a")}.getAttribute("href")`)) === `#/b/${added.code}/edit`, await evaluate(`${q("#inside-said")}.textContent`));
   const photos = await api(`/boxes/${added.code}/photos`);
   check("the photo went to the new record and is being read", photos.length === 1 && Boolean(photos[0].analysis), JSON.stringify(photos.map((p) => p.analysis?.status)));
 
@@ -314,12 +318,12 @@ try {
   await waitFor(`Boolean(document.querySelector("dialog.adder[open]"))`, "the dialog a third time");
   await click(`dialog.adder .seg[data-name="kind"] input[value="item"] + span`);
   await click("#adder-open");
-  await waitFor(`location.hash !== ${JSON.stringify(`#/b/${crate}`)} && Boolean(${q("#trail")}) && !${q("#trail")}.hidden`, "landing on the new record");
-  const opened = (await evaluate("location.hash")).slice(4);
+  await waitFor(`location.hash !== ${JSON.stringify(`#/b/${crate}/edit`)} && Boolean(${q("#trail")}) && !${q("#trail")}.hidden`, "landing on the new record");
+  const opened = codeIn(await evaluate("location.hash"));
   check("Add and open lands on the new record, inside the container", (await api(`/boxes/${opened}`)).parent?.code === crate && (await api(`/boxes/${opened}`)).kind === "item");
 
   // A photo that fails to upload: the record stands, and the dialog says so.
-  await goto(`#/b/${crate}`, `Boolean(${q("#add-inside")})`);
+  await goto(`#/b/${crate}/edit`, `Boolean(${q("#add-inside")})`);
   await send("Fetch.enable", { patterns: [{ urlPattern: `${base}/api/boxes/*/photos`, requestStage: "Request" }] });
   failing = { matches: (request) => request.method === "POST", left: 1 };
   const before = (await api(`/boxes/${crate}`)).children.length;
@@ -372,7 +376,7 @@ try {
     await evaluate(`document.querySelector("dialog.editor").__mark = "same"`);
   };
 
-  await goto(`#/b/${crate}`, `Boolean(${q(`#inside li[data-key="${bare}"]`)})`);
+  await goto(`#/b/${crate}/edit`, `Boolean(${q(`#inside li[data-key="${bare}"]`)})`);
   const onContainer = await evaluate("location.hash");
   await openEditorOn(bare);
   let shown = await editor();
@@ -486,7 +490,7 @@ try {
   // The whole page is still the whole truth, and still one tap away.
   await openEditorOn(full);
   await click("#child-full");
-  await waitFor(`location.hash === ${JSON.stringify(`#/b/${full}`)} && !document.querySelector("dialog.editor")`,
+  await waitFor(`location.hash === ${JSON.stringify(`#/b/${full}/edit`)} && !document.querySelector("dialog.editor")`,
                 "the link to the whole page");
   check("the link inside opens the record's own page, and the modal gets out of the way",
         (await evaluate(`Boolean(${q("#summary-form")}) && ${q("h1.code")}.textContent === ${JSON.stringify(full)}`)));
@@ -528,7 +532,7 @@ try {
              focused: document.activeElement?.tagName + "/" + (document.activeElement?.closest("dialog")?.className || "page"),
            }; })()`);
 
-  await goto(`#/b/${crate}`, `Boolean(${q(`#inside li[data-key="${pictured}"]`)})`);
+  await goto(`#/b/${crate}/edit`, `Boolean(${q(`#inside li[data-key="${pictured}"]`)})`);
   await openEditorOn(pictured);
   let pics = await shelf();
   const stored = await api(`/boxes/${pictured}/photos`);
@@ -608,7 +612,7 @@ try {
   // A record with no photos has no photo section at all. (A fresh one: `bare`
   // was given a photo earlier, to watch a change from elsewhere arrive.)
   const unphotographed = (await api("/boxes", "POST", { kind: "bag", parent_code: crate })).code;
-  await goto(`#/b/${crate}`, `Boolean(${q(`#inside li[data-key="${unphotographed}"]`)})`);
+  await goto(`#/b/${crate}/edit`, `Boolean(${q(`#inside li[data-key="${unphotographed}"]`)})`);
   await openEditorOn(unphotographed);
   check("a record with no photos has no photo section in the modal",
         (await evaluate(`Boolean(document.querySelector('dialog.editor [data-fold="photos"]'))`)) === false);
@@ -638,7 +642,7 @@ try {
              said: d.querySelector("#adder-photo").textContent }; })()`);
 
   await camera(true);
-  await goto(`#/b/${crate}`, `Boolean(${q("#add-inside")})`);
+  await goto(`#/b/${crate}/edit`, `Boolean(${q("#add-inside")})`);
   const insideNow = (await api(`/boxes/${crate}`)).children.length;
   await click("#add-inside");
   await waitFor(`Boolean(document.querySelector("dialog.adder[open]"))`, "the add dialog");
@@ -760,6 +764,62 @@ try {
   check("search: at 320px nothing is pushed off the right-hand edge",
         drawn.overflow <= 0 && drawn.right <= 320, `overflow ${drawn.overflow}, right edge ${drawn.right}`);
   await send("Emulation.clearDeviceMetricsOverride");
+
+  // --- the sheet: a screenful of covers, then the rest ---------------------
+  //
+  // Twelve tubs in a crate, which is the shape of the record this was designed
+  // against (B-0015 holds twenty), and items that have to be merged and sorted
+  // to read right.
+  const spares = (await api("/boxes", "POST", { kind: "crate", content_summary: "spares" })).code;
+  await api(`/boxes/${spares}/items`, "POST", { name: "resistors", qty: 3 });
+  await api(`/boxes/${spares}/items`, "POST", { name: "Resistor" });
+  await api(`/boxes/${spares}/items`, "POST", { name: "anvil" });
+  const tubs = [];
+  for (let i = 0; i < 12; i++) {
+    tubs.push((await api("/boxes", "POST", { kind: "tub", parent_code: spares })).code);
+  }
+  await api(`/boxes/${tubs[0]}/items`, "POST", { name: "a soldering iron" });
+
+  await goto(`#/b/${spares}`, `Boolean(${q("#view-inside .tile")})`);
+  const grid = () => evaluate(`(() => {
+    const cells = [...document.querySelector("#view-inside").children];
+    return {
+      cells: cells.length,
+      keys: cells.map((c) => c.dataset.key || ""),
+      caps: cells.map((c) => c.querySelector(".cap")?.textContent || ""),
+      more: document.querySelector("#view-inside .more")?.textContent || "",
+      count: document.querySelector("#inside-count b")?.textContent || "",
+      first: document.querySelector("#view-inside a.tile")?.getAttribute("href") || "",
+    };
+  })()`);
+  let cells = await grid();
+  check("the covers stop at a screenful, the last cell opening the rest",
+        cells.cells === 8 && cells.more === "+5" && cells.caps.at(-1) === "show all", JSON.stringify(cells));
+  check("the count says how many there really are", cells.count === "12", cells.count);
+  check("every tile carries the key an update finds it by",
+        cells.keys.every(Boolean) && new Set(cells.keys).size === cells.cells, cells.keys.join(" "));
+  check("a cover is a link into that record, to read", cells.first === `#/b/${tubs[0]}`, cells.first);
+  await click("#view-inside .tile:last-child");
+  cells = await grid();
+  check("show all draws every one, and takes the extra cell away",
+        cells.cells === 12 && cells.more === "", JSON.stringify(cells));
+
+  // --- the contents, opened -------------------------------------------------
+  await click("#facts details summary");
+  await waitFor(`Boolean(${q("#facts .groups h3")})`, "the whole contents list");
+  const listed = await evaluate(`(() => [...document.querySelectorAll("#facts .groups > *")].map((el) =>
+    el.tagName === "H3" ? \`# \${el.textContent}\` : [...el.querySelectorAll("li")].map((li) => li.textContent).join(" / ")))()`);
+  check("the record's own items come first, under its code, merged and sorted",
+        listed[0] === `# ${spares}` && listed[1] === "anvil / resistors\u00d74", JSON.stringify(listed));
+  check("then what is inside it, each under its own code",
+        listed[2] === `# ${tubs[0]}` && listed[3] === "a soldering iron", JSON.stringify(listed));
+  check("a record that lists nothing is not an empty heading", listed.length === 4, JSON.stringify(listed));
+
+  // --- and Edit is the way to the page that saves --------------------------
+  await click("#edit");
+  await waitFor(`Boolean(${q("#summary-form")})`, "the editor");
+  check("Edit opens the page that saves itself",
+        (await evaluate("location.hash")) === `#/b/${spares}/edit`, await evaluate("location.hash"));
 
   check("nothing threw in the page", thrown.length === 0, thrown.join(" | "));
 } catch (error) { check(`harness: ${error.message}`, false); }

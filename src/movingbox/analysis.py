@@ -210,18 +210,10 @@ def state_of(conn: sqlite3.Connection, photo_id: int) -> dict[str, Any] | None:
 # --- applying what was seen -------------------------------------------------------
 
 
-def _key(name: str) -> str:
-    """What makes two item names the same thing: case, spacing, a trailing plural.
-
-    Deliberately crude: a wrong merge loses an item, a missed one only leaves a
-    near-duplicate to delete.
-    """
-    key = " ".join(name.lower().split())
-    for ending in ("es", "s"):
-        stem = key[: -len(ending)]
-        if key.endswith(ending) and len(stem) > 2 and not stem.endswith("s"):
-            return stem
-    return key
+#: What makes two item names the same thing. It moved to `summarise` when the
+#: view's expanded contents list needed the same rule: one normaliser, and
+#: this module already imports that one.
+_key = summarise.name_key
 
 
 def merge_items(conn: sqlite3.Connection, code: str, found: list[base.DraftItem]) -> bool:

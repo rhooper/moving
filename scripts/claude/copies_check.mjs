@@ -121,7 +121,7 @@ try {
         await evaluate(`JSON.stringify(window.__puts)`));
 
   // --- a complete label: no question asked ---
-  await goto(`#/b/${full}`, "#print");
+  await goto(`#/b/${full}/edit`, "#print");
   check("record page: a box's copies starts at the number stored for boxes", (await evaluate(`document.getElementById("copies").value`)) === "3");
   await evaluate(`document.getElementById("print").click()`);
   await sleep(800);
@@ -132,7 +132,7 @@ try {
   check("complete label: the count rose by the copies", (await api(`/boxes/${full}`)).label_print_count === 3);
 
   // --- changing copies for one print, without dirtying the page ---
-  await goto(`#/b/${full}`, "#print");
+  await goto(`#/b/${full}/edit`, "#print");
   await evaluate(`(() => { const f = document.getElementById("copies"); f.value = "1"; f.dispatchEvent(new Event("input", { bubbles: true })); })()`);
   check("copies: changing it does not leave the page looking half-edited",
         (await evaluate(`(() => { const f = document.getElementById("copies"); return f.dataset.initial === f.value; })()`)));
@@ -142,7 +142,7 @@ try {
   check("copies: the stored number is untouched", (await copiesOf("box")) === 3);
 
   // --- a single thing has its own number ---
-  await goto(`#/b/${chair}`, "#print");
+  await goto(`#/b/${chair}/edit`, "#print");
   check("record page: a chair's copies starts at the number stored for furniture",
         (await evaluate(`document.getElementById("copies").value`)) === "1");
   await evaluate(`document.getElementById("print").click()`);
@@ -151,7 +151,7 @@ try {
         JSON.stringify((await prints()).at(-1)));
 
   // --- no room ---
-  await goto(`#/b/${noRoom}`, "#print");
+  await goto(`#/b/${noRoom}/edit`, "#print");
   let before = (await prints()).length;
   await evaluate(`document.getElementById("print").click()`);
   await waitFor("dialog.ask");
@@ -164,7 +164,7 @@ try {
   check("no room: saying no prints nothing", (await prints()).length === before);
 
   // --- nothing at all ---
-  await goto(`#/b/${bare}`, "#print");
+  await goto(`#/b/${bare}/edit`, "#print");
   before = (await prints()).length;
   await evaluate(`document.getElementById("print").click()`);
   await waitFor("dialog.ask");
@@ -193,7 +193,7 @@ try {
   await evaluate(`document.getElementById("create-stub").click()`);
   await sleep(1200);
   check("new form: the stub never asks", (await dialogText()) === null && (await evaluate(`location.hash`)).startsWith("#/b/"));
-  check("new form: and prints one", (await prints()).at(-1).stub === true && (await api(`/boxes/${(await evaluate(`location.hash`)).slice(4)}`)).label_print_count === 1);
+  check("new form: and prints one", (await prints()).at(-1).stub === true && (await api(`/boxes/${(await evaluate(`location.hash`)).split("/")[2]}`)).label_print_count === 1);
 } catch (error) { check(`harness: ${error.message}`, false); }
 
 let failures = 0;

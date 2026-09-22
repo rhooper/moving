@@ -197,7 +197,7 @@ try {
   // --- a dev server: revision unknown ---------------------------------------
   await serve("unknown");
   const record = (await api("/boxes", "POST", { content_summary: "kettle and mugs" })).code;
-  await send("Page.navigate", { url: `${base}/#/b/${record}` });
+  await send("Page.navigate", { url: `${base}/#/b/${record}/edit` });
   await waitFor(drawn(record), "the record, served by a dev server");
   check("dev: the shell is served unversioned", (await shell()) === "/app.js", await shell());
   let before = loads;
@@ -236,7 +236,7 @@ try {
   await until(() => loads > before, "an idle page to reload itself", 45000);
   await waitFor(drawn(record), "the record to draw again");
   check("idle: the page reloaded itself", loads === before + 1, `${loads - before} reloads`);
-  check("idle: on the same route", (await evaluate("location.hash")) === `#/b/${record}`, await evaluate("location.hash"));
+  check("idle: on the same route", (await evaluate("location.hash")) === `#/b/${record}/edit`, await evaluate("location.hash"));
   check("idle: running the new code, not a shell the worker kept", (await shell()) === "/app.js?v=rev-b", await shell());
   // Checks keep coming -- the reconnect, a look -- and none reloads again.
   await sleep(4000);
@@ -283,7 +283,7 @@ try {
         (await api(`/boxes/${record}`)).content_summary === words, (await api(`/boxes/${record}`)).content_summary);
   check("typing: and the reloaded page shows it, on the same record",
         (await evaluate(`${q("#summary-form [name=content_summary]")}.value`)) === words
-          && (await evaluate("location.hash")) === `#/b/${record}`);
+          && (await evaluate("location.hash")) === `#/b/${record}/edit`);
   check("typing: running rev-c", (await shell()) === "/app.js?v=rev-c", await shell());
 
   // --- 3. an open dialog, camera live, is not reloaded under ----------------
@@ -306,7 +306,7 @@ try {
   await until(() => loads > before, "the reload once the dialog was closed and the banner tapped");
   await waitFor(drawn(record), "the record after that");
   check("dialog: then one tap reloads it, on the same record",
-        loads === before + 1 && (await evaluate("location.hash")) === `#/b/${record}`, `${loads - before} reloads`);
+        loads === before + 1 && (await evaluate("location.hash")) === `#/b/${record}/edit`, `${loads - before} reloads`);
 
   // --- 4. leaving a record is a moment to reload ----------------------------
   const more = " and the teapot";

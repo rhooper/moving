@@ -288,6 +288,20 @@ def suggest_summary(
     return {"summary": summary, "source": source}
 
 
+@router.get("/boxes/{code}/contents")
+def list_contents(code: str, conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
+    """Every item in this record and in everything nested inside it, by record.
+
+    What the read-only view draws when its contents line is opened, and only
+    then: B-0015 is 59 items of its own plus twenty tubs' worth, and carrying
+    that on every record GET would slow opening any record down for a list most
+    people never open. Two queries whatever the depth (`store.subtree`), merged
+    and sorted per record by `summarise.grouped_items`.
+    """
+    _require_readable(conn, code)
+    return summarise.grouped_items(store.subtree(conn, code))
+
+
 @router.get("/boxes/{code}/events")
 def list_events(code: str, conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
     _require_readable(conn, code)

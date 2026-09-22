@@ -129,6 +129,50 @@ a { color: inherit; }
 
 .meta { color: var(--muted); font-size: 0.9375rem; margin: 0 0 0.25rem; }
 
+/* --- the record, to read: the pictures first, then four lines --- */
+.top { display: flex; align-items: center; gap: 0.75rem; }
+.top .code { flex: 1; min-width: 0; font-size: clamp(2.5rem, 13vw, 4rem); margin: 0.5rem 0; }
+.top .btn { flex: 0 0 auto; width: auto; min-height: var(--tap); padding-inline: 1rem; }
+.summary { margin: 0 0 0.75rem; }
+.summary.none { color: var(--muted); }
+
+/* One field, two kinds of picture: the record's own photographs and the covers
+   of the things inside it. They are the same size because they answer the same
+   question; only what is inside carries a code, because only that can be
+   opened. --tile is local: it is this sheet's measure, not the app's. */
+.sheet { --tile: 78px; border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 1rem; }
+.sheet .strip { display: flex; gap: 4px; padding: 6px; overflow-x: auto; scrollbar-width: thin; }
+.sheet .strip .tile { flex: 0 0 var(--tile); }
+.sheet .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--tile), 1fr)); gap: 4px; padding: 6px; border-top: 1px solid var(--line); }
+.sheet[data-photos="none"] .grid { border-top: 0; }
+.sheet .tile { display: block; width: 100%; min-height: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; text-decoration: none; cursor: pointer; }
+.sheet .pic { position: relative; display: grid; place-items: center; aspect-ratio: 1; background: var(--sunk); border-radius: var(--radius); overflow: hidden; }
+.sheet .pic img { position: relative; display: block; width: 100%; height: 100%; object-fit: cover; }
+.sheet .pic .tk { position: absolute; inset: 0; margin: auto; width: var(--kind-icon); height: var(--kind-icon); color: var(--muted); opacity: 0.45; }
+.sheet .cap { display: block; margin-top: 2px; font-size: 0.7rem; font-weight: 650; }
+.sheet .more { display: grid; place-items: center; aspect-ratio: 1; background: var(--sunk); border-radius: var(--radius); font-size: 0.8rem; font-weight: 650; }
+.sheet .count { display: flex; justify-content: space-between; align-items: baseline; margin: 0; padding: 0 0.5rem 0.45rem; font-size: 0.78rem; color: var(--muted); }
+.sheet .count b { color: var(--ink); font-weight: 650; }
+
+/* Label and value, no headings: eight sections of the editor become four
+   lines, by removing chrome rather than by shrinking anything. */
+.facts { margin: 0 0 1rem; border-top: 1px solid var(--line); }
+.fact { display: flex; gap: 0.75rem; align-items: baseline; padding: 0.45rem 0.1rem; border-bottom: 1px solid var(--line); }
+.fact dt { flex: 0 0 5.5rem; margin: 0; color: var(--muted); font-size: 0.8125rem; }
+.fact dd { flex: 1; min-width: 0; margin: 0; }
+.pill { display: inline-block; padding: 0 0.45rem; border: 1px solid var(--ink); border-radius: var(--radius); font-size: 0.8rem; font-weight: 650; }
+.fact .fold { border-top: 0; }
+.fact .fold > summary { align-items: baseline; min-height: 0; padding: 0.1rem 0; color: inherit; font-size: inherit; font-weight: 400; }
+.fact .groups { margin: 0.25rem 0 0.5rem; }
+.fact .groups h3 { margin: 0.6rem 0 0.15rem; color: var(--muted); font-size: 0.75rem; font-weight: 650; }
+.fact .groups h3:first-child { margin-top: 0; }
+.fact .groups ul { margin: 0; padding: 0; list-style: none; }
+.fact .groups li { display: flex; justify-content: space-between; gap: 0.5rem; padding: 0.1rem 0; }
+.fact .groups .qty { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.view-acts { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.view-acts .btn { width: auto; padding-inline: 1rem; }
+
 /* --- state that changes: separated from identity by a rule --- */
 .section { border-top: 1px solid var(--line); padding-top: 1rem; margin-top: 1.5rem; }
 .section h2 { font-size: 1rem; font-weight: 650; margin: 0 0 0.75rem; }

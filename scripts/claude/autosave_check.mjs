@@ -225,7 +225,7 @@ try {
   const api = `/api/boxes/${code}`;
   console.log(`# ${code} on ${base}`);
 
-  await send("Page.navigate", { url: `${base}/#/b/${code}` });
+  await send("Page.navigate", { url: `${base}/#/b/${code}/edit` });
   await waitFor(q("#summary-form"), "the record page");
   await sleep(300);
   const emptyLine = await lineOf("summary-form");
@@ -598,7 +598,7 @@ try {
   await waitFor(q(`#boxlist li[data-key="${code}"]`), "the list");
   check("the list row says large box", (await evaluate(`${q(`#boxlist li[data-key="${code}"] .k`)}.textContent`)) === "large box",
         await evaluate(`${q(`#boxlist li[data-key="${code}"] .w`)}.textContent`));
-  await evaluate(`location.hash = ${JSON.stringify(`#/b/${code}`)}`);
+  await evaluate(`location.hash = ${JSON.stringify(`#/b/${code}/edit`)}`);
   await waitFor(q('.seg[data-name="size"]'), "the record again");
   await sleep(300);
   check("a box's label count is its kind's", (await evaluate(`${q("#copies")}.value`)) === String(kinds.find((k) => k.kind === "box").copies));
@@ -654,7 +654,7 @@ try {
         `${show(sent)} after ${sent[0]?.at - awayAt} ms`);
   check("the server has it", (await server(api)).source_location === "under the stairs");
 
-  await evaluate(`location.hash = ${JSON.stringify(`#/b/${code}`)}`);
+  await evaluate(`location.hash = ${JSON.stringify(`#/b/${code}/edit`)}`);
   await waitFor(q("#summary-form"), "the record again");
   await sleep(300);
   check("coming back starts afresh: no Undo from the earlier visit",
@@ -708,7 +708,7 @@ try {
   });
   check("new form: a hidden size is not sent, nor a cleared room",
         made && made.kind === "furniture" && !("size" in made) && !("destination_room_id" in made), JSON.stringify(made));
-  check("new form: and the server made it", (await server(`/api/boxes/${(await evaluate("location.hash")).slice(4)}`)).kind === "furniture");
+  check("new form: and the server made it", (await server(`/api/boxes/${(await evaluate("location.hash")).split("/")[2]}`)).kind === "furniture");
 
   // === 12c. things inside things ======================================================
   const record = () => server(api);
@@ -718,7 +718,7 @@ try {
   const inList = async (which) => (await server("/api/boxes?limit=100")).some((b) => b.code === which);
 
   // A child arriving from elsewhere is drawn in place, under a field being typed in.
-  await evaluate(`location.hash = ${JSON.stringify(`#/b/${code}`)}`);
+  await evaluate(`location.hash = ${JSON.stringify(`#/b/${code}/edit`)}`);
   await waitFor(`${q("h1.code")}?.textContent === ${JSON.stringify(code)} && ${q("#inside")}`, "the record, a box");
   await sleep(300);
   await markPage();
@@ -759,14 +759,20 @@ try {
   await type("forks");
   await click("#create");
   await waitFor(`location.hash.startsWith("#/b/") && ${q("#trail")} && !${q("#trail")}.hidden`, "the new nested record, with its breadcrumb");
-  const forks = (await evaluate("location.hash")).slice(4);
+  // Creating lands on the editor: `#/b/CODE/edit`, so the code is the third piece.
+  const forks = (await evaluate("location.hash")).split("/")[2];
   const madeInside = patchOf(writesSince(mark).find((w) => w.method === "POST" && w.url === "/api/boxes"));
   check("it was created inside", madeInside?.parent_code === code && (await server(`/api/boxes/${forks}`)).parent?.code === code, JSON.stringify(madeInside));
   check("the breadcrumb leads back to the container", (await trailText()) === `${code} › this`
         && (await evaluate(`${q("#trail a")}.getAttribute("href")`)) === `#/b/${code}`, await trailText());
   await click("#trail a");
-  await waitFor(`${q("h1.code")}?.textContent === ${JSON.stringify(code)} && ${q(`#inside li[data-key="${forks}"]`)}`, "back on the container, with the new child listed");
-  check("following it lands on the container, which lists the new child", true);
+  // The breadcrumb leads to the container as it is *read*: a link to another
+  // record opens the sheet, and the child is one of its covers there.
+  await waitFor(`${q("h1.code")}?.textContent === ${JSON.stringify(code)} && ${q(`#view-inside [data-key="${forks}"]`)}`,
+                "back on the container, reading, with the new child among its covers");
+  check("following it lands on the container, which shows the new child", true);
+  await evaluate(`location.hash = ${JSON.stringify(`#/b/${code}/edit`)}`);
+  await waitFor(`${q("#summary-form")} && ${q(`#inside li[data-key="${forks}"]`)}`, "the container's editor");
   await markPage();   // a fresh draw: what follows must not redraw it again
 
   // Moving this record into a container, by typing its code and pressing Return.
@@ -862,7 +868,7 @@ try {
   // === 13. the server rewrites a pristine summary: not an edit to save back =========
   if (vision) {
     const quiet = await post("/api/boxes", { content_summary: "" });
-    await evaluate(`location.hash = ${JSON.stringify(`#/b/${quiet.code}`)}`);
+    await evaluate(`location.hash = ${JSON.stringify(`#/b/${quiet.code}/edit`)}`);
     await waitFor(`${q("h1.code")}?.textContent === ${JSON.stringify(quiet.code)}`, "the second record");
     await sleep(500);
     await evaluate(`${q("[name=content_summary]")}.__mark = "field"`);
@@ -894,7 +900,7 @@ try {
   }
 
   // === 14. closing the tab inside the pause ========================================
-  await evaluate(`location.hash = ${JSON.stringify(`#/b/${code}`)}`);
+  await evaluate(`location.hash = ${JSON.stringify(`#/b/${code}/edit`)}`);
   await waitFor(`${q("h1.code")}?.textContent === ${JSON.stringify(code)}`, "the first record again");
   await sleep(400);
   await into("[name=source_location]");

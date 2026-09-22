@@ -94,7 +94,7 @@ const IN_PAGE = async () => {
   // The kind, its size and the two rooms are rows of pushbuttons: real radio
   // groups, looked at and -- for the one row where a press changes nothing --
   // pressed. The optional rows are not pressed here: a press there saves.
-  const record = await fetch(`/api/boxes/${location.hash.split("/").pop()}`).then((r) => r.json());
+  const record = await fetch(`/api/boxes/${location.hash.split("/")[2]}`).then((r) => r.json());
   const kindsNow = await fetch("/api/settings/kinds").then((r) => r.json());
   const shapeNow = kindsNow.find((k) => k.kind === (record.box || record).kind);
   const rowFor = (name) => document.querySelector(`#destination .seg[data-name="${name}"]`);
@@ -181,7 +181,7 @@ const IN_PAGE = async () => {
   // Item names: tap to rename. Needs a box with at least one item.
   const names = Array.from(document.querySelectorAll("#items .name"));
   if (names.length) {
-    const drawn = await fetch(`/api/boxes/${location.hash.split("/").pop()}/items`).then((r) => r.json());
+    const drawn = await fetch(`/api/boxes/${location.hash.split("/")[2]}/items`).then((r) => r.json());
     check("the list draws every item the server has", names.length === drawn.length,
           `${names.length} drawn, ${drawn.length} on the server`);
     check("every item name is a focusable control",
@@ -228,7 +228,7 @@ const IN_PAGE = async () => {
   // Photos: each figure says what the vision model made of it.
   const figures = Array.from(document.querySelectorAll("#shots figure"));
   if (figures.length) {
-    const onServer = await fetch(`/api/boxes/${location.hash.split("/").pop()}/photos`).then((r) => r.json());
+    const onServer = await fetch(`/api/boxes/${location.hash.split("/")[2]}/photos`).then((r) => r.json());
     check("the strip draws every photo the server has, once each",
           figures.length === onServer.length
             && new Set(figures.map((f) => f.dataset.key)).size === figures.length
@@ -282,11 +282,11 @@ const IN_PAGE = async () => {
     check("Cancel holds the focus, not the destructive button",
           document.activeElement?.value === "no", document.activeElement?.textContent);
     check("the confirmation names the record",
-          $("dialog.ask h2").textContent.includes(here.split("/").pop()), $("dialog.ask h2").textContent);
+          $("dialog.ask h2").textContent.includes(here.split("/")[2]), $("dialog.ask h2").textContent);
     $("dialog.ask [value=no]").click();
     await wait(() => !$("dialog.ask"), "the confirmation to close");
     check("cancelling leaves you on the record", location.hash === here && Boolean($("#summary-form")));
-    const still = await fetch(`/api/boxes/${here.split("/").pop()}`).then((r) => r.json());
+    const still = await fetch(`/api/boxes/${here.split("/")[2]}`).then((r) => r.json());
     check("cancelling deleted nothing", !(still.box || still).deleted_at);
   }
 
@@ -314,7 +314,7 @@ const IN_PAGE = async () => {
         $("#inside-of")?.textContent);
   check("nothing offers to put it anywhere until a code has been looked up", $("#container-acts").hidden && $("#container-found").hidden);
   // Looking up its own code: refused here, before any server is asked.
-  $("#container-code").value = location.hash.split("/").pop();
+  $("#container-code").value = location.hash.split("/")[2];
   $("#container").requestSubmit();
   await wait(() => !$("#container-found").hidden, "the look-up of itself");
   check("it cannot be put inside itself, and says so", /itself/.test($("#container-found").textContent) && $("#container-acts").hidden,
@@ -354,6 +354,96 @@ const IN_PAGE = async () => {
   check("the whole visit wrote nothing", writes.length === 0, writes.join("; "));
   window.fetch = realFetch;
 
+  return results;
+};
+
+// The record as it is read: `#/b/CODE`, where nothing saves. The pictures of
+// the box and of what is inside it are one field near the top, the rest is
+// four label-and-value lines, and there is no control to brush.
+const IN_VIEW = async () => {
+  const wait = async (test, what) => {
+    for (let i = 0; i < 100; i++) {
+      if (test()) return;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    throw new Error(`timed out waiting for ${what}`);
+  };
+  const $ = (s) => document.querySelector(s);
+  const results = [];
+  const check = (name, passed, detail = "") => results.push([name, Boolean(passed), String(detail)]);
+  const open = async (hash, ready) => {
+    location.hash = hash;
+    await wait(() => $(ready) && !$(ready).hidden, `${hash} to draw`);
+    await new Promise((r) => setTimeout(r, 200));
+  };
+
+  const rows = await fetch("/api/boxes?limit=100").then((r) => r.json());
+  const record = rows.find((b) => b.cover_photo_id) || rows[0];
+  const full = await fetch(`/api/boxes/${record.code}`).then((r) => r.json());
+  const items = await fetch(`/api/boxes/${record.code}/items`).then((r) => r.json());
+
+  // Everything from here is counted; none of it may write.
+  const writes = [];
+  const realFetch = window.fetch;
+  window.fetch = (url, options = {}) => {
+    if ((options.method || "GET") !== "GET") writes.push(`${options.method} ${url}`);
+    return realFetch(url, options);
+  };
+
+  await open(`#/b/${record.code}`, "#edit");
+  check("a record opens as a sheet to read, headed by its code",
+        $("h1.code")?.textContent === record.code, $("h1.code")?.textContent);
+  check("with an Edit button, which is the way to the page that saves",
+        $("#edit")?.getAttribute("href") === `#/b/${record.code}/edit`, $("#edit")?.getAttribute("href"));
+  check("and nothing on it to brush: no field, no picker, no tick box",
+        document.querySelectorAll("#app input, #app textarea, #app select").length === 0,
+        [...document.querySelectorAll("#app input, #app textarea, #app select")].map((f) => f.name || f.type).join(","));
+
+  const sheet = $("#sheet");
+  const facts = $("#facts");
+  if (full.children?.length || (await fetch(`/api/boxes/${record.code}/photos`).then((r) => r.json())).length) {
+    check("the pictures are one field, above the facts",
+          sheet && !sheet.hidden && sheet.getBoundingClientRect().bottom <= facts.getBoundingClientRect().top + 1,
+          `${Math.round(sheet?.getBoundingClientRect().bottom)} vs ${Math.round(facts.getBoundingClientRect().top)}`);
+    check("the photos and the covers are in the same field, nothing between them",
+          Boolean(sheet?.querySelector("#view-photos")) && Boolean(sheet?.querySelector("#view-inside")));
+  }
+  const strip = [...document.querySelectorAll("#view-photos .tile")];
+  if (strip.length) {
+    const square = strip[0].querySelector(".pic").getBoundingClientRect();
+    check("a photo is a square tile, and the sheet scrolls rather than wrapping",
+          Math.abs(square.width - square.height) <= 1 && getComputedStyle($("#view-photos")).overflowX === "auto",
+          `${Math.round(square.width)}x${Math.round(square.height)}`);
+  }
+
+  const facts_ = [...document.querySelectorAll("#facts .fact")].map((f) => f.querySelector("dt").textContent);
+  check("the facts are label and value, in order, with no headings between them",
+        facts_[0] === "Status" && facts_.includes("What") && facts_.length <= 5, facts_.join(" | "));
+  check("the status is set as a word", $("#facts .pill")?.textContent.length > 0, $("#facts .pill")?.textContent);
+  const contents = [...document.querySelectorAll("#facts .fact")]
+    .find((f) => f.querySelector("dt").textContent === "Contents");
+  if (contents && items.length) {
+    check("the contents line counts what is listed, then names a few",
+          contents.textContent.includes(`${items.length} item`), contents.textContent.trim());
+  }
+
+  // A tap on a photo opens the viewer, which is the same one the editor uses.
+  if (strip.length) {
+    strip[0].click();
+    await wait(() => $("dialog.viewer"), "the viewer");
+    check("a photo opens the viewer, over the sheet", Boolean($("dialog.viewer[open]")));
+    $("dialog.viewer").close();
+    await wait(() => !$("dialog.viewer"), "the viewer to close");
+  }
+
+  // Every mark drawn here must resolve: a <use> at a missing symbol draws
+  // nothing at all, in silence.
+  const marks = [...document.querySelectorAll("#app svg.i use")].map((u) => u.getAttribute("href"));
+  check("every mark on the sheet resolves to a symbol that exists",
+        marks.length === 0 || marks.every((href) => document.querySelector(href)), marks.join(" "));
+
+  check("reading a record wrote nothing", writes.length === 0, writes.join("; "));
+  window.fetch = realFetch;
   return results;
 };
 
@@ -398,7 +488,7 @@ const IN_NESTED = async () => {
   const listThumb = Math.round($("#boxlist li .t").getBoundingClientRect().width);
 
   const full = await fetch(`/api/boxes/${holder.code}`).then((r) => r.json());
-  await open(`#/b/${holder.code}`, "#inside");
+  await open(`#/b/${holder.code}/edit`, "#inside");
   check("on the container, each thing inside is a row, and a row that itself holds things says so",
         full.children.every((k) => {
           const row = $(`#inside li[data-key="${k.code}"]`);
@@ -421,7 +511,7 @@ const IN_NESTED = async () => {
   check("and cannot take the focus", (() => { const r = $('.seg[data-name="kind"] input:disabled'); r.focus(); return document.activeElement !== r; })());
 
   const child = full.children[0];
-  await open(`#/b/${child.code}`, "#trail");
+  await open(`#/b/${child.code}/edit`, "#trail");
   check("a nested record shows the way out above its code, each step a link",
         $("#trail a")?.getAttribute("href") === `#/b/${holder.code}` && $("#trail").textContent.trim().endsWith("this")
           && $("#trail").compareDocumentPosition($("h1.code")) & Node.DOCUMENT_POSITION_FOLLOWING,
@@ -431,7 +521,7 @@ const IN_NESTED = async () => {
   const deep = full.children.find((k) => k.child_count > 0);
   if (deep) {
     const grand = (await fetch(`/api/boxes/${deep.code}`).then((r) => r.json())).children[0];
-    await open(`#/b/${grand.code}`, "#trail");
+    await open(`#/b/${grand.code}/edit`, "#trail");
     check("two levels down the breadcrumb has both steps, outermost first",
           Array.from(document.querySelectorAll("#trail a")).map((a) => a.textContent).join(" › ") === `${holder.code} › ${deep.code}`,
           $("#trail")?.innerText);
@@ -439,7 +529,7 @@ const IN_NESTED = async () => {
 
   const single = full.children.find((k) => k.kind === "item" || k.kind === "furniture");
   if (single) {
-    await open(`#/b/${single.code}`, "#summary-form");
+    await open(`#/b/${single.code}/edit`, "#summary-form");
     check("a single thing has no 'Inside this' section at all", !$("#inside-section"));
     check("but can still be put inside something", Boolean($("#container-code")));
   }
@@ -698,7 +788,7 @@ try {
   await send("Emulation.setFocusEmulationEnabled", { enabled: true });
 
   await send("Page.enable");
-  await send("Page.navigate", { url: `${base}/#/b/${encodeURIComponent(code)}` });
+  await send("Page.navigate", { url: `${base}/#/b/${encodeURIComponent(code)}/edit` });
   await sleep(500);
   const reply = await send("Runtime.evaluate", {
     expression: `(${IN_PAGE.toString()})()`, awaitPromise: true, returnByValue: true,
@@ -734,6 +824,16 @@ try {
     throw new Error(fourth.result.exceptionDetails.exception?.description || "settings script failed");
   }
   results.push(...fourth.result.result.value);
+
+  await send("Page.navigate", { url: `${base}/#/b/${encodeURIComponent(code)}` });
+  await sleep(500);
+  const fifth = await send("Runtime.evaluate", {
+    expression: `(${IN_VIEW.toString()})()`, awaitPromise: true, returnByValue: true,
+  });
+  if (fifth.result?.exceptionDetails) {
+    throw new Error(fifth.result.exceptionDetails.exception?.description || "view script failed");
+  }
+  results.push(...fifth.result.result.value);
 
   // The browse list at a phone's width. A narrow --window-size does not narrow
   // the layout, so only an emulated viewport can say whether anything
