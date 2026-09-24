@@ -657,8 +657,9 @@ const PHOTO_QUALITY = 0.82;
 //
 // `id` prefixes the ids inside it (it is a constant at each call site, never a
 // value from anywhere). `release()` stops the tracks: a dialog hangs that on
-// its `close` event, a page on `holdOnPage`.
-function photoField({ id, hint, fileName }) {
+// its `close` event, a page on `holdOnPage`. `made` is a record that already
+// exists, for the line to say so.
+function photoField({ id, hint, fileName, made = false }) {
   const root = document.createElement("div");
   root.className = "photo-field";
   root.innerHTML = `
@@ -707,7 +708,7 @@ function photoField({ id, hint, fileName }) {
     retake.hidden = !parts.retake;
     opener.hidden = !parts.start;
     say(photoLine({
-      state, hint, name,
+      state, hint, name, made,
       quality: state === "live" ? streamQuality(cam.videoWidth, cam.videoHeight) : null,
     }));
   }
