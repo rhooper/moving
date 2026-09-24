@@ -657,9 +657,13 @@ const PHOTO_QUALITY = 0.82;
 //
 // `id` prefixes the ids inside it (it is a constant at each call site, never a
 // value from anywhere). `release()` stops the tracks: a dialog hangs that on
-// its `close` event, a page on `holdOnPage`. `made` is a record that already
-// exists, for the line to say so.
-function photoField({ id, hint, fileName, made = false }) {
+// its `close` event, a page on `holdOnPage`.
+//
+// `onTaken(photo)`, where there is a record already, adds each photo the
+// moment it is taken or chosen: it resolves once the photo is on the record
+// and throws if it is not, and the camera goes live again for the next one. A
+// photo that did not go is kept for `resend()`.
+function photoField({ id, hint, fileName, onTaken = null }) {
   const root = document.createElement("div");
   root.className = "photo-field";
   root.innerHTML = `
@@ -694,6 +698,8 @@ function photoField({ id, hint, fileName, made = false }) {
   let stream = null;
   let captured = null;   // { blob, name } from the viewfinder
   let preview = null;    // the object URL behind the still, to be revoked
+  let unsent = null;     // with onTaken: the photo that did not go, for resend()
+  let added = 0;
 
   const say = (text) => setText(line, text);
 
@@ -708,7 +714,7 @@ function photoField({ id, hint, fileName, made = false }) {
     retake.hidden = !parts.retake;
     opener.hidden = !parts.start;
     say(photoLine({
-      state, hint, name, made,
+      state, hint, name,
       quality: state === "live" ? streamQuality(cam.videoWidth, cam.videoHeight) : null,
     }));
   }
@@ -741,6 +747,28 @@ function photoField({ id, hint, fileName, made = false }) {
 
   opener.addEventListener("click", () => start());
 
+  // With onTaken: the photo on screen goes straight to the record. On success
+  // the still is put away and the viewfinder is back for the next one.
+  async function hand(photo) {
+    unsent = photo;
+    say(photoLine({ state: "adding" }));
+    try {
+      await onTaken(photo);
+    } catch (error) {
+      if (unsent === photo) say(photoLine({ state: "unsent", reason: error.message }));
+      return false;
+    }
+    if (unsent !== photo) return true;   // put aside with Take another meanwhile
+    unsent = null;
+    captured = null;
+    shot.value = "";
+    added += 1;
+    if (preview) { URL.revokeObjectURL(preview); preview = null; }
+    paint(stream ? "live" : "none");
+    say(photoLine({ state: "added", count: added, live: Boolean(stream) }));
+    return true;
+  }
+
   shutter.addEventListener("click", async () => {
     const size = frameSize(cam.videoWidth, cam.videoHeight);
     if (!size) { say("The camera has not quite started. Give it a moment."); return; }
@@ -756,10 +784,12 @@ function photoField({ id, hint, fileName, made = false }) {
     shot.value = "";   // this photo wins over an earlier choice
     still.src = preview;
     paint("shot");
+    if (onTaken) hand(captured);
   });
 
   retake.addEventListener("click", () => {
     captured = null;
+    unsent = null;
     paint("live");
   });
 
@@ -771,6 +801,7 @@ function photoField({ id, hint, fileName, made = false }) {
     preview = URL.createObjectURL(file);
     still.src = preview;
     paint("chosen", { name: file.name });
+    if (onTaken) hand({ blob: file, name: file.name || fileName });
   });
 
   paint("none");
@@ -786,6 +817,8 @@ function photoField({ id, hint, fileName, made = false }) {
       const file = shot.files[0];
       return file ? { blob: file, name: file.name || fileName } : null;
     },
+    // The photo that did not go, sent again; true when there is none left.
+    resend: () => (unsent ? hand(unsent) : Promise.resolve(true)),
     say,
   };
 }
@@ -930,13 +963,15 @@ function addInside({ parent, kinds, rooms, shape }) {
   field.start();
 }
 
-// --- a photograph of a record that already exists ---------------------------
+// --- photographs of a record that already exists ---------------------------
 //
-// The sheet's camera: the field above in a dialog of its own, with nothing to
-// make first -- the upload is the whole job. It is opened from a page that
-// only reads, and keeps nothing from the draw it was opened on: a live refresh
-// may redraw the sheet underneath it, so the refetch on the way out asks for
-// whatever draw is current, and the focus goes back to the button by id.
+// The sheet's camera: the field above in a dialog of its own, where each photo
+// is added the moment it is taken ("automatically add it on take. i can delete
+// them after") and the viewfinder comes straight back for the next. Done
+// closes it. It is opened from a page that only reads, and keeps nothing from
+// the draw it was opened on: a live refresh may redraw the sheet underneath
+// it, so each refetch asks for whatever draw is current, and the focus goes
+// back to the button by id.
 function takePhoto({ code, shape }) {
   const opened = here();
   const dialog = document.createElement("dialog");
@@ -944,50 +979,42 @@ function takePhoto({ code, shape }) {
   dialog.innerHTML = `
     <h2>Photograph <span class="nb">${escape(code)}</span></h2>
     <div data-photo></div>
-    <p class="meta warn" id="taker-said" hidden></p>
     <form method="dialog" class="row taker-acts">
-      <button class="btn quiet" value="no" autofocus>Cancel</button>
-      <button class="btn" value="add" id="taker-add">Add the photo</button>
+      <button class="btn quiet" type="button" id="taker-again" hidden>Try again</button>
+      <button class="btn" value="done" id="taker-done" autofocus>Done</button>
     </form>`;
+  const again = dialog.querySelector("#taker-again");
   const field = photoField({
     id: "taker",
     hint: shape.contents
-      ? "Take the photo, or choose one. It is read in the background and names what is inside."
-      : "Take the photo, or choose one.",
+      ? "Each photo is added as it is taken, and read in the background for what is inside."
+      : "Each photo is added as it is taken.",
     fileName: `${code}.jpg`,
-    made: true,
+    async onTaken(photo) {
+      const body = new FormData();
+      body.append("file", photo.blob, photo.name);
+      try {
+        await api(`/boxes/${encodeURIComponent(code)}/photos`, { method: "POST", body });
+      } catch (error) {
+        again.hidden = false;
+        throw error;
+      }
+      again.hidden = true;
+      // The socket drops this page's own write as an echo, so ask for the
+      // refetch -- of the draw that is current now, not the one this opened on.
+      if (here() === opened) requestPart("photos");
+    },
   });
   dialog.querySelector("[data-photo]").replaceWith(field.root);
   const release = () => field.release();
 
-  const said = dialog.querySelector("#taker-said");
-  dialog.querySelector(".taker-acts").addEventListener("submit", async (event) => {
-    if ((event.submitter?.value || "no") === "no") return;   // the form closes the dialog by itself
-    event.preventDefault();
-    const photo = field.photo();
-    if (!photo) {
-      field.say("Nothing to add yet: take the photo, or choose one, then press Add.");
-      return;
-    }
-    const body = new FormData();
-    body.append("file", photo.blob, photo.name);
-    try {
-      await busy(event.submitter, "Uploading…", () =>
-        api(`/boxes/${encodeURIComponent(code)}/photos`, { method: "POST", body }));
-    } catch (error) {
-      // The still is kept and Add tries again. The server keeps one copy of
-      // the same bytes, so a retry after an upload that did land adds nothing.
-      setText(said, `The photo did not upload: ${error.message}. Try again, or Cancel.`);
-      said.hidden = false;
-      return;
-    }
-    dialog.close("added");
-    // The socket drops this page's own write as an echo, so ask for the
-    // refetch -- of the draw that is current now, not the one this opened on.
-    if (here() === opened) requestPart("photos");
+  // The server keeps one copy of the same bytes, so a retry after an upload
+  // that did land adds nothing.
+  again.addEventListener("click", async () => {
+    if (await busy(again, "Uploading…", () => field.resend())) again.hidden = true;
   });
 
-  dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close("no"); });
+  dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close("done"); });
   // The tab going away is the one exit that does not fire `close`.
   addEventListener("pagehide", release);
   dialog.addEventListener("close", () => {
@@ -998,7 +1025,7 @@ function takePhoto({ code, shape }) {
     if (here() === opened) document.getElementById("take-photo")?.focus();
   });
   document.body.append(dialog);
-  closesOnEscape(dialog, () => dialog.close("no"));
+  closesOnEscape(dialog, () => dialog.close("done"));
   dialog.showModal();
   // Pressing a camera button is asking for a camera, so no permission is
   // looked up first, unlike a page that merely opened.

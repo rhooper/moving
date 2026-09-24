@@ -9,9 +9,10 @@
 //          nothing; and the camera is let go when the page is left, by
 //          whatever means, which a page has no `close` event to do for it.
 //          Then the record sheet's camera, beside Edit: the same field in a
-//          dialog -- it opens live, the shutter keeps a still, Add sends
-//          exactly one photo and the sheet shows it in place, Cancel and
-//          Escape send nothing, and a refused camera says so there too.
+//          dialog -- it opens live, each press of the shutter adds a photo at
+//          once and brings the viewfinder back, the sheet shows them in place,
+//          Done and Escape with nothing taken send nothing, and a refused
+//          camera says so there too.
 // Date:    2026-09-22
 // Usage:   node scripts/claude/newbox_check.mjs <base-url>
 //          WRITES: creates records. Refuses the live service.
@@ -205,7 +206,8 @@ try {
   // --- the sheet's camera: the same field, in a dialog, on a record that exists ---
   //
   // That record, with no photo and the camera still granted. The sheet draws
-  // no input of its own; the dialog is appended to <body>, outside #app.
+  // no input of its own; the dialog is appended to <body>, outside #app. Each
+  // photo is added the moment it is taken, and the viewfinder comes back.
   const noInput = () => evaluate(`document.querySelectorAll("#app input, #app textarea, #app select").length === 0`);
   const tiles = () => evaluate(`document.querySelectorAll("#view-photos .tile").length`);
   const openSheet = async () => {
@@ -213,6 +215,8 @@ try {
     await waitFor(`Boolean(${q("#take-photo")})`, "the sheet, with its camera");
     await sleep(200);
   };
+  const liveAgain = () => waitFor(`(() => { const c = ${q("#taker-cam")}; return Boolean(c) && !c.hidden
+    && /Added/.test(${q("#taker-line")}?.textContent || ""); })()`, "the viewfinder back, and the photo added", 150);
   await openSheet();
   check("the sheet has a camera button beside Edit, named without a word",
         await evaluate(`(() => { const b = ${q("#take-photo")}; return Boolean(b) && b.type === "button"
@@ -230,55 +234,79 @@ try {
         JSON.stringify(seen));
   check("the dialog is outside the sheet, which still draws no input",
         (await evaluate(`!document.querySelector("#app dialog.taker")`)) && await noInput());
+  check("and there is no Add button: taking is adding",
+        await evaluate(`!document.querySelector("#taker-add") && Boolean(document.querySelector("#taker-done"))`));
   await click("#taker-shutter");
-  await waitFor(`!${q("#taker-still")}.hidden`, "the frame just taken in the dialog");
-  seen = await field("taker");
-  check("the shutter keeps a still and offers another go, in the dialog too",
-        seen.still && !seen.live && seen.retake && !seen.shutter, JSON.stringify(seen));
-  check("and says the photo will be read, not that a record is awaited",
-        /read/.test(seen.said) && !/record exists/.test(seen.said), seen.said);
-  await evaluate(`window.__track = ${q("#taker-cam")}.srcObject.getVideoTracks()[0]`);
-  await click("#taker-add");
-  await waitFor(`!document.querySelector("dialog.taker")`, "Add to close the dialog", 150);
+  await liveAgain();
   await waitFor(`document.querySelectorAll("#view-photos .tile").length === 1`, "the new tile on the sheet", 100);
-  const added = await writes();
-  check("Add sends the photo, and nothing else",
+  let added = await writes();
+  check("the shutter alone sends the photo, and nothing else",
         added.length === 1 && added[0] === `POST /api/boxes/${bare}/photos`, added.join(" | "));
   check("and it is on the record", (await api(`/boxes/${bare}/photos`)).length === 1);
-  check("the sheet shows it in place, without being redrawn",
+  seen = await field("taker");
+  check("the viewfinder is straight back for the next one, and the line says it was added",
+        seen.live && seen.shutter && !seen.still && seen.track === "live" && /Added/.test(seen.said), JSON.stringify(seen));
+  check("the sheet behind shows it in place, without being redrawn",
         await evaluate(`${q("#sheet")} === window.__sheet && ${q("#facts")} === window.__facts
           && !${q("#sheet")}.hidden && ${q("#photo-count b")}?.textContent === "1"`),
         await evaluate(`${q("#photo-count b")}?.textContent`));
-  check("closing the dialog stops the camera",
+  // A second, straight after: the whole point is a quick run of them. The fake
+  // webcam's frames differ over time, so wait for a new one before the shutter.
+  await sleep(600);
+  await click("#taker-shutter");
+  await waitFor(`/2 so far/.test(${q("#taker-line")}?.textContent || "")`, "the second photo added", 150);
+  added = await writes();
+  check("a second press adds a second photo, and counts them",
+        added.length === 2 && (await api(`/boxes/${bare}/photos`)).length === 2,
+        `${added.join(" | ")}; ${(await api(`/boxes/${bare}/photos`)).length} on the record`);
+  await evaluate(`window.__track = ${q("#taker-cam")}.srcObject.getVideoTracks()[0]`);
+  await click("#taker-done");
+  await waitFor(`!document.querySelector("dialog.taker")`, "Done to close the dialog");
+  await waitFor(`document.querySelectorAll("#view-photos .tile").length === 2`, "both tiles on the sheet", 100);
+  check("Done closes it and stops the camera",
         (await evaluate(`window.__track.readyState`)) === "ended", await evaluate(`window.__track.readyState`));
   check("and puts the focus back on the button",
         (await evaluate(`document.activeElement?.id`)) === "take-photo", await evaluate(`document.activeElement?.id`));
+  check("the sheet still draws no input", await noInput());
 
-  // --- Cancel, Escape, and Add with nothing taken: none of them sends anything ---
+  // --- opening it and leaving sends nothing: Done, or Escape ---
   await watchWrites();
   await click("#take-photo");
   await waitFor(`${q("#taker-cam")}?.videoWidth > 0`, "the camera again, in the dialog", 200);
-  await click("#taker-shutter");
-  await waitFor(`!${q("#taker-still")}.hidden`, "a frame to throw away");
   await evaluate(`window.__track = ${q("#taker-cam")}.srcObject.getVideoTracks()[0]`);
-  await click("dialog.taker [value=no]");
-  await waitFor(`!document.querySelector("dialog.taker")`, "Cancel to close the dialog");
-  check("Cancel throws the frame away: nothing sent, the camera stopped, one photo still",
-        (await writes()).length === 0 && (await evaluate(`window.__track.readyState`)) === "ended"
-          && (await api(`/boxes/${bare}/photos`)).length === 1,
-        `${(await writes()).join(" | ")} track ${await evaluate(`window.__track.readyState`)}`);
+  await click("#taker-done");
+  await waitFor(`!document.querySelector("dialog.taker")`, "Done, with nothing taken");
+  check("Done with nothing taken sends nothing and stops the camera",
+        (await writes()).length === 0 && (await evaluate(`window.__track.readyState`)) === "ended",
+        (await writes()).join(" | "));
   await click("#take-photo");
   await waitFor(`${q("#taker-cam")}?.videoWidth > 0`, "the camera once more", 200);
-  await sleep(200);
-  await click("#taker-add");
-  await sleep(200);
-  check("Add with nothing taken stays open and says so",
-        (await evaluate(`Boolean(document.querySelector("dialog.taker[open]"))`))
-          && /Nothing to add yet/.test(await evaluate(`${q("#taker-line")}?.textContent || ""`)),
-        await evaluate(`${q("#taker-line")}?.textContent`));
   await press("Escape", "Escape", 27);
   await waitFor(`!document.querySelector("dialog.taker")`, "Escape to close the dialog");
   check("Escape closes it, and nothing was sent", (await writes()).length === 0, (await writes()).join(" | "));
+  check("and the record has the two photos it was given", (await api(`/boxes/${bare}/photos`)).length === 2);
+
+  // --- an upload that fails keeps the photo, says why, and goes again ---
+  // The next photo POST is refused in the page, as a dropped connection would be.
+  await click("#take-photo");
+  await waitFor(`${q("#taker-cam")}?.videoWidth > 0`, "the camera, to fail an upload", 200);
+  await evaluate(`(() => { const real = window.__real || window.fetch; let once = true;
+    window.fetch = (u, o = {}) => (once && (o.method || "GET") === "POST" && String(u).endsWith("/photos")
+      ? (once = false, Promise.reject(new TypeError("Network down"))) : real(u, o)); })()`);
+  await sleep(600);
+  await click("#taker-shutter");
+  await waitFor(`/did not upload/.test(${q("#taker-line")}?.textContent || "")`, "the failure to be said", 100);
+  seen = await field("taker");
+  check("a failed upload keeps the photo on screen, says why, and offers Try again",
+        seen.still && /Network down/.test(seen.said)
+          && await evaluate(`!${q("#taker-again")}.hidden`), JSON.stringify(seen));
+  await click("#taker-again");
+  await liveAgain();
+  check("Try again sends it, and the viewfinder comes back",
+        (await api(`/boxes/${bare}/photos`)).length === 3 && await evaluate(`${q("#taker-again")}.hidden`),
+        String((await api(`/boxes/${bare}/photos`)).length));
+  await click("#taker-done");
+  await waitFor(`!document.querySelector("dialog.taker")`, "Done, after a retry");
 
   // --- Enter still reaches the plain Create, and spends no tape ---
   await goNew();
@@ -331,9 +359,9 @@ try {
   check("the sheet's dialog says the camera was refused, and the picker is still there",
         !seen.box && !seen.live && seen.track === null && seen.picker && /[Cc]hoose a photo/.test(seen.said),
         JSON.stringify(seen));
-  await click("dialog.taker [value=no]");
-  await waitFor(`!document.querySelector("dialog.taker")`, "Cancel, after a refusal");
-  check("and Cancel leaves nothing behind", (await writes()).length === 0, (await writes()).join(" | "));
+  await click("#taker-done");
+  await waitFor(`!document.querySelector("dialog.taker")`, "Done, after a refusal");
+  check("and Done leaves nothing behind", (await writes()).length === 0, (await writes()).join(" | "));
   await camera(true);
 
   check("nothing threw in the page", thrown.length === 0, thrown.join(" | "));
