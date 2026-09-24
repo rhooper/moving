@@ -205,17 +205,24 @@ test("a chosen file with no name still reads as a sentence", () => {
   assert.doesNotMatch(photoLine({ state: "chosen" }), /undefined|null/);
 });
 
-test("a photo of a record that already exists does not wait on one being made", () => {
-  // The sheet's camera photographs a record that is already there: "once the
-  // record exists" would be a promise about the past.
-  const shot = photoLine({ state: "shot", made: true });
-  assert.match(shot, /This is the photo/);
-  assert.doesNotMatch(shot, /record exists/);
-  assert.match(shot, /read/);
-  const chosen = photoLine({ state: "chosen", name: "IMG_4021.HEIC", made: true });
-  assert.match(chosen, /IMG_4021\.HEIC/);
-  assert.doesNotMatch(chosen, /record exists/);
-  assert.match(chosen, /read/);
+test("a photo added the moment it is taken says it is on its way, then that it landed", () => {
+  // The sheet's camera adds each photo as it is taken: no Add button, so the
+  // line is the only thing that says what happened to it.
+  assert.match(photoLine({ state: "adding" }), /Adding/);
+  const first = photoLine({ state: "added", count: 1, live: true });
+  assert.match(first, /Added/);
+  assert.match(first, /[Tt]ake another/);
+  assert.doesNotMatch(first, /\d+ so far/);
+  assert.match(photoLine({ state: "added", count: 3, live: true }), /3 so far/);
+  // A chosen file with no camera running: there is nothing to take another with.
+  assert.match(photoLine({ state: "added", count: 1, live: false }), /[Cc]hoose another/);
+});
+
+test("a photo that did not upload says why, and that it can go again", () => {
+  const said = photoLine({ state: "unsent", reason: "Network down" });
+  assert.match(said, /did not upload/);
+  assert.match(said, /Network down/);
+  assert.match(said, /Try again/);
 });
 
 test("an unknown state says nothing rather than something wrong", () => {

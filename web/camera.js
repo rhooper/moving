@@ -81,12 +81,13 @@ export function viewfinderState({ live = false, shown = false } = {}) {
 // --- what the line under it says --------------------------------------------
 //
 // `hint` is what this place calls a photo when there is not one yet -- the
-// only words that differ between the dialog and the form. `made` is a record
-// that already exists (the sheet's camera): a photo of one is not waiting on
-// anything.
+// only words that differ between the dialog and the form. "adding", "added"
+// and "unsent" are the sheet's camera, which adds each photo as it is taken.
 const POINT = "Point it at what is going in, then take the photo.";
 
-export function photoLine({ state, hint = "", quality = null, name = "", made = false } = {}) {
+export function photoLine({
+  state, hint = "", quality = null, name = "", count = 0, live = false, reason = "",
+} = {}) {
   switch (state) {
     case "starting":
       return "Starting the camera\u2026";
@@ -96,12 +97,16 @@ export function photoLine({ state, hint = "", quality = null, name = "", made = 
       return `${POINT} This camera only gives ${quality.size}, so small labels may not be `
         + "readable. For detail, tap Choose a photo and use the phone's own camera.";
     case "shot":
-      return made
-        ? "This is the photo. Add it, and it is read in the background."
-        : "This is the photo. It is read in the background once the record exists.";
+      return "This is the photo. It is read in the background once the record exists.";
     case "chosen":
-      return `Photo: ${name || "chosen"}. `
-        + (made ? "Add it, and it is read in the background." : "It will be read once the record exists.");
+      return `Photo: ${name || "chosen"}. It will be read once the record exists.`;
+    case "adding":
+      return "Adding the photo\u2026";
+    case "added":
+      return `Added${count > 1 ? ` (${count} so far)` : ""}. `
+        + (live ? "Take another, or press Done." : "Choose another, or press Done.");
+    case "unsent":
+      return `That photo did not upload: ${reason || "no answer"}. Try again, or take another.`;
     default:
       return hint;
   }
