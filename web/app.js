@@ -657,8 +657,9 @@ const PHOTO_QUALITY = 0.82;
 //
 // `id` prefixes the ids inside it (it is a constant at each call site, never a
 // value from anywhere). `release()` stops the tracks: a dialog hangs that on
-// its `close` event, a page on `holdOnPage`.
-function photoField({ id, hint, fileName }) {
+// its `close` event, a page on `holdOnPage`. `made` is a record that already
+// exists, for the line to say so.
+function photoField({ id, hint, fileName, made = false }) {
   const root = document.createElement("div");
   root.className = "photo-field";
   root.innerHTML = `
@@ -707,7 +708,7 @@ function photoField({ id, hint, fileName }) {
     retake.hidden = !parts.retake;
     opener.hidden = !parts.start;
     say(photoLine({
-      state, hint, name,
+      state, hint, name, made,
       quality: state === "live" ? streamQuality(cam.videoWidth, cam.videoHeight) : null,
     }));
   }
@@ -926,6 +927,81 @@ function addInside({ parent, kinds, rooms, shape }) {
   document.body.append(dialog);
   closesOnEscape(dialog, () => dialog.close("no"));
   dialog.showModal();
+  field.start();
+}
+
+// --- a photograph of a record that already exists ---------------------------
+//
+// The sheet's camera: the field above in a dialog of its own, with nothing to
+// make first -- the upload is the whole job. It is opened from a page that
+// only reads, and keeps nothing from the draw it was opened on: a live refresh
+// may redraw the sheet underneath it, so the refetch on the way out asks for
+// whatever draw is current, and the focus goes back to the button by id.
+function takePhoto({ code, shape }) {
+  const opened = here();
+  const dialog = document.createElement("dialog");
+  dialog.className = "ask taker";
+  dialog.innerHTML = `
+    <h2>Photograph <span class="nb">${escape(code)}</span></h2>
+    <div data-photo></div>
+    <p class="meta warn" id="taker-said" hidden></p>
+    <form method="dialog" class="row taker-acts">
+      <button class="btn quiet" value="no" autofocus>Cancel</button>
+      <button class="btn" value="add" id="taker-add">Add the photo</button>
+    </form>`;
+  const field = photoField({
+    id: "taker",
+    hint: shape.contents
+      ? "Take the photo, or choose one. It is read in the background and names what is inside."
+      : "Take the photo, or choose one.",
+    fileName: `${code}.jpg`,
+    made: true,
+  });
+  dialog.querySelector("[data-photo]").replaceWith(field.root);
+  const release = () => field.release();
+
+  const said = dialog.querySelector("#taker-said");
+  dialog.querySelector(".taker-acts").addEventListener("submit", async (event) => {
+    if ((event.submitter?.value || "no") === "no") return;   // the form closes the dialog by itself
+    event.preventDefault();
+    const photo = field.photo();
+    if (!photo) {
+      field.say("Nothing to add yet: take the photo, or choose one, then press Add.");
+      return;
+    }
+    const body = new FormData();
+    body.append("file", photo.blob, photo.name);
+    try {
+      await busy(event.submitter, "Uploading…", () =>
+        api(`/boxes/${encodeURIComponent(code)}/photos`, { method: "POST", body }));
+    } catch (error) {
+      // The still is kept and Add tries again. The server keeps one copy of
+      // the same bytes, so a retry after an upload that did land adds nothing.
+      setText(said, `The photo did not upload: ${error.message}. Try again, or Cancel.`);
+      said.hidden = false;
+      return;
+    }
+    dialog.close("added");
+    // The socket drops this page's own write as an echo, so ask for the
+    // refetch -- of the draw that is current now, not the one this opened on.
+    if (here() === opened) requestPart("photos");
+  });
+
+  dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close("no"); });
+  // The tab going away is the one exit that does not fire `close`.
+  addEventListener("pagehide", release);
+  dialog.addEventListener("close", () => {
+    release();
+    removeEventListener("pagehide", release);
+    dialog.remove();
+    // Back to the button, found afresh: the sheet may have been redrawn.
+    if (here() === opened) document.getElementById("take-photo")?.focus();
+  });
+  document.body.append(dialog);
+  closesOnEscape(dialog, () => dialog.close("no"));
+  dialog.showModal();
+  // Pressing a camera button is asking for a camera, so no permission is
+  // looked up first, unlike a page that merely opened.
   field.start();
 }
 
@@ -1972,6 +2048,8 @@ async function drawRecord(code, { at = null } = {}) {
     <nav class="trail" id="trail" aria-label="Inside" hidden></nav>
     <div class="top">
       <h1 class="code">${escape(box.code)}</h1>
+      ${box.deleted_at ? "" : `<button class="btn quiet mark" type="button" id="take-photo"
+          aria-label="Take a photo of ${escape(box.code)}" title="Take a photo">${iconMarkup("i-camera")}</button>`}
       <a class="btn" id="edit" href="#/b/${escape(encodeURIComponent(box.code))}/edit">Edit</a>
     </div>
     <div class="band" id="room-band" hidden></div>
@@ -2302,6 +2380,12 @@ async function drawRecord(code, { at = null } = {}) {
 
   document.getElementById("add-inside")?.addEventListener("click", () => {
     addInside({ parent: box, kinds: allKinds, rooms, shape });
+  });
+
+  // None on a binned record: the server does not see the bin when it takes
+  // a photo (404), and Restore is the honest press there.
+  document.getElementById("take-photo")?.addEventListener("click", () => {
+    takePhoto({ code, shape });
   });
 
   const printButton = document.getElementById("print");

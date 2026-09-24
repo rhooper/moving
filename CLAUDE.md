@@ -278,7 +278,8 @@ purpose headers, the browser checks (`*_check.mjs`), `hooks/`, `lib/launchd.sh`.
 - **Run `make browser-check` after touching `web/`.** A throwaway server (own
   database, fake printer, stub vision, `MOVING_REVISION` set) runs `ui_check`
   and `wedge_check` (read-only, assert they wrote nothing), `autosave_check`,
-  `copies_check`, `viewer_check`, `nesting_check`, `newbox_check` (these write,
+  `copies_check`, `viewer_check`, `nesting_check`, `newbox_check` (which also
+  covers the sheet's camera, since it already has the fake webcam; these write,
   and **refuse port 8787 and any non-loopback host**), then `strip_cache_check`
   and `reload_check` on servers of their own.
 - **Never `pkill` Chrome by pattern** -- agents run in parallel and kill each
@@ -496,7 +497,8 @@ Each is a choice; changing one is a decision, not the fixing of a gap.
   -- the record's own photographs in a scrolling row and the covers of what is
   inside it as tiles captioned with their codes, because both answer "what is
   this?" and only what is inside can be opened -- then four label-and-value
-  lines, then Print label and Add something inside. The rules are `record.js`,
+  lines, then Print label and Add something inside. The code's row carries the
+  camera beside Edit. The rules are `record.js`,
   tested: `coverTiles` (eight cells, the last the way in to the rest, because
   B-0015 holds twenty tubs), `contentsLine`, `facts`, `expandedGroups`.
 - **Nothing on it edits.** No `editSession`, so no field holds a live refresh
@@ -504,6 +506,21 @@ Each is a choice; changing one is a decision, not the fixing of a gap.
   all -- `ui_check` asserts that, and that a whole visit writes nothing. Print,
   Add something inside and Restore are deliberate presses that ask first;
   Restore is there because a scanned binned label lands here.
+- **The camera beside Edit is the one press on it that writes** (`#take-photo`
+  -> `takePhoto`, asked for as "a camera icon in a button next to edit ... a
+  popup with the live camera feature"): somebody standing over a box should not
+  have to reach the editor to photograph it. It is the shared camera field in a
+  `<dialog>` appended to `<body>`, so the page still draws no input, and it
+  starts the camera on open -- pressing a camera button *is* asking for one.
+  **Not drawn on a binned record**: `save_photo` does not see the bin (404, a
+  test pins it), and Restore is the honest press there. A failed upload keeps
+  the still and says so inline, and Add tries again; the server keeps one copy
+  of the same bytes, so a retry after an upload that did land adds nothing.
+- **The dialog keeps nothing from the draw it was opened on.** A live refresh
+  redraws the sheet underneath it (`editableFields()` reads `#app` only, so a
+  dialog in `<body>` holds nothing back), so it asks `requestPart("photos")`,
+  which reaches whatever draw is current, and returns the focus to the button
+  by id rather than to a node it kept.
 - **A scan lands on the sheet**: `openEntered`, `scan.js` and the server's
   `/b/{code}` all use the bare hash, so none of them changed. Every link to
   *another* record opens the sheet; the three paths that **make** a record
@@ -545,9 +562,13 @@ Each is a choice; changing one is a decision, not the fixing of a gap.
 
 ### Taking a photograph before there is a record
 
-- **One camera, for the two places that take one**: the "Add something inside"
-  dialog and the new-record page (asked for as "add a live camera to the new
-  box page - optional image"). `photoField` in `app.js` builds the field --
+- **One camera, for the three places that take one**: the "Add something
+  inside" dialog, the new-record page (asked for as "add a live camera to the
+  new box page - optional image") and the record sheet's camera dialog. Only
+  the last photographs a record that already exists, so the upload is the whole
+  job and `photoLine({made: true})` says "Add it, and it is read in the
+  background" rather than "once the record exists".
+  `photoField` in `app.js` builds the field --
   viewfinder, shutter, the frame just taken with Take another, the file picker
   underneath, the line -- and `web/camera.js` holds the decisions:
   `CAMERA_REQUEST` (asking for a size, or the browser gives 640x480),
@@ -575,8 +596,9 @@ Each is a choice; changing one is a decision, not the fixing of a gap.
   that name for and so answers "no"); otherwise **"Use the camera"** sits beside
   "Choose a photo" and one press brings the viewfinder up. Opening New is not
   asking for a camera, and a phone that declined once must not be asked again
-  on every visit. The dialog still starts one when it opens -- taking a photo
-  is its point -- but never at page load.
+  on every visit. **A dialog still starts one when it opens** -- taking a photo
+  is its point, and the sheet's dialog was opened by pressing a camera -- but
+  never at page load.
 - **A declined camera cost a later save, measured.** With the page asking and
   being denied, `autosave_check` lost the `pagehide` + `keepalive` save of the
   last edit before leaving the site: 4 runs failed with the camera started and
@@ -610,10 +632,19 @@ Each is a choice; changing one is a decision, not the fixing of a gap.
   departure is **`--radius: 4px`**, only through the token (a test checks).
 - **The home mark** is the QR finder pattern with a house inside, on a 16-unit
   grid: 16, 24 or 32 px, never 28. The PWA icon is still a white bar.
-- **Icons ship in three places only**: the nav bar (always with its word), an
-  empty list thumbnail (the kind) and the three handling flags. The status
-  track, nesting buttons, breadcrumb, headings, Delete, "Look closer" and the
-  size row were tried and turned down (`docs/design/icons/NOTES.md`).
+- **Icons ship in four places only**: the nav bar (always with its word), an
+  empty list thumbnail (the kind), the three handling flags, and the record
+  sheet's camera button. The status track, nesting buttons, breadcrumb,
+  headings, Delete, "Look closer" and the size row were tried and turned down
+  (`docs/design/icons/NOTES.md`).
+- **The camera button is the one mark that ships without a word**, so it
+  carries its name as `aria-label` and `title` (a test checks), at 24 px in a
+  44 px quiet square beside a filled Edit. It is the exception to "no icons on
+  buttons", not a precedent: four of the six turned-down cases were buttons.
+- **`docs/design/icons/work/icons.py` is the one source** of `set/*.svg` and
+  `sprite.svg`; `web/index.html` inlines the sprite verbatim. Add a mark there
+  and run it -- `parts` was added to the sprite by hand and the next run
+  dropped it.
 - Icon traps, all silent: `fill` goes on the referencing `<svg>`, not the
   sprite; a `<use>` of a missing id draws nothing (`tests/test_web_icons.py`);
   `createElement("svg")` draws nothing (use `createElementNS`).

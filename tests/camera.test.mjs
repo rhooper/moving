@@ -205,6 +205,19 @@ test("a chosen file with no name still reads as a sentence", () => {
   assert.doesNotMatch(photoLine({ state: "chosen" }), /undefined|null/);
 });
 
+test("a photo of a record that already exists does not wait on one being made", () => {
+  // The sheet's camera photographs a record that is already there: "once the
+  // record exists" would be a promise about the past.
+  const shot = photoLine({ state: "shot", made: true });
+  assert.match(shot, /This is the photo/);
+  assert.doesNotMatch(shot, /record exists/);
+  assert.match(shot, /read/);
+  const chosen = photoLine({ state: "chosen", name: "IMG_4021.HEIC", made: true });
+  assert.match(chosen, /IMG_4021\.HEIC/);
+  assert.doesNotMatch(chosen, /record exists/);
+  assert.match(chosen, /read/);
+});
+
 test("an unknown state says nothing rather than something wrong", () => {
   assert.equal(photoLine({ state: "sideways", hint: "nothing yet" }), "nothing yet");
   assert.equal(photoLine({}), "");

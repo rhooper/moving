@@ -81,10 +81,12 @@ export function viewfinderState({ live = false, shown = false } = {}) {
 // --- what the line under it says --------------------------------------------
 //
 // `hint` is what this place calls a photo when there is not one yet -- the
-// only words that differ between the dialog and the form.
+// only words that differ between the dialog and the form. `made` is a record
+// that already exists (the sheet's camera): a photo of one is not waiting on
+// anything.
 const POINT = "Point it at what is going in, then take the photo.";
 
-export function photoLine({ state, hint = "", quality = null, name = "" } = {}) {
+export function photoLine({ state, hint = "", quality = null, name = "", made = false } = {}) {
   switch (state) {
     case "starting":
       return "Starting the camera\u2026";
@@ -94,9 +96,12 @@ export function photoLine({ state, hint = "", quality = null, name = "" } = {}) 
       return `${POINT} This camera only gives ${quality.size}, so small labels may not be `
         + "readable. For detail, tap Choose a photo and use the phone's own camera.";
     case "shot":
-      return "This is the photo. It is read in the background once the record exists.";
+      return made
+        ? "This is the photo. Add it, and it is read in the background."
+        : "This is the photo. It is read in the background once the record exists.";
     case "chosen":
-      return `Photo: ${name || "chosen"}. It will be read once the record exists.`;
+      return `Photo: ${name || "chosen"}. `
+        + (made ? "Add it, and it is read in the background." : "It will be read once the record exists.");
     default:
       return hint;
   }

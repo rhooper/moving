@@ -22,6 +22,8 @@ ICONS = {
     # --- kinds ---
     "box":       ("A cardboard box with its flaps up.",
                   "M2 8h12v8H2zM2 8L0 2h2l2 6zM14 8l2-6h-2l-2 6z"),
+    "parts":     ("Three small bins over two wide ones -- irregular, since a regular grid reads as a window.",
+                  "M0 3h16v12H0zM2 5h3v3H2zM7 5h2v3H7zM11 5h3v3h-3zM2 10h5v3H2zM9 10h5v3H9z"),
     "tub":       ("A plastic tub: wide, low, tapered, lid off and hovering. Wider than tall, or it is a bin.",
                   "M0 4h16v2H0zM1 8h14l-1 8H2z"),
     "crate":     ("A slatted crate: posts and three boards.",
@@ -39,6 +41,9 @@ ICONS = {
                    "M5 1h6v6H5zM7 3v3h2V3zM5 6h6l3 9H2z"),
     "open-first": ("A 1: open this one first.",
                    "M10 0v16H6V5L2 7V3l4-3z"),
+    # --- actions: the sheet's camera, the one control that is a mark alone ---
+    "camera":     ("A camera: a body with a lens ring and the viewfinder hump over it. Even coordinates only, so it is crisp at 16, 24 and 32.",
+                   "M6 2h4v2H6zM0 4h16v12H0zM4 6h8v8H4zM6 8h4v4H6z"),
 }
 
 # Variants: genuinely close calls, offered beside the primary.
