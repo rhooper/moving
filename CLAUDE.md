@@ -512,10 +512,15 @@ Each is a choice; changing one is a decision, not the fixing of a gap.
   have to reach the editor to photograph it. It is the shared camera field in a
   `<dialog>` appended to `<body>`, so the page still draws no input, and it
   starts the camera on open -- pressing a camera button *is* asking for one.
+  **Taking is adding** ("automatically add it on take. i can delete them
+  after"): there is no Add button; the shutter, or a chosen file, uploads at
+  once and the viewfinder comes straight back for the next, and Done closes it.
+  A wrong shot is deleted from the editor, which is the trade asked for.
   **Not drawn on a binned record**: `save_photo` does not see the bin (404, a
   test pins it), and Restore is the honest press there. A failed upload keeps
-  the still and says so inline, and Add tries again; the server keeps one copy
-  of the same bytes, so a retry after an upload that did land adds nothing.
+  the still, says why, and shows Try again (`field.resend()`); the server keeps
+  one copy of the same bytes, so a retry after an upload that did land adds
+  nothing.
 - **The dialog keeps nothing from the draw it was opened on.** A live refresh
   redraws the sheet underneath it (`editableFields()` reads `#app` only, so a
   dialog in `<body>` holds nothing back), so it asks `requestPart("photos")`,
@@ -565,9 +570,10 @@ Each is a choice; changing one is a decision, not the fixing of a gap.
 - **One camera, for the three places that take one**: the "Add something
   inside" dialog, the new-record page (asked for as "add a live camera to the
   new box page - optional image") and the record sheet's camera dialog. Only
-  the last photographs a record that already exists, so the upload is the whole
-  job and `photoLine({made: true})` says "Add it, and it is read in the
-  background" rather than "once the record exists".
+  the last photographs a record that already exists, so it passes
+  `photoField({onTaken})`: each photo is sent the moment it is taken, and
+  `photoLine` says "adding", "added (N so far)" or "unsent" instead of "once
+  the record exists".
   `photoField` in `app.js` builds the field --
   viewfinder, shutter, the frame just taken with Take another, the file picker
   underneath, the line -- and `web/camera.js` holds the decisions:
