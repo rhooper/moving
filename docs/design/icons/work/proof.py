@@ -42,7 +42,7 @@ def group(title, names, variants=()):
 
 # ---------- context mocks (the app's own rules, copied from index.html) ----------
 NAV = [("items", "Items"), ("scan", "Scan"), ("new", "New"), ("settings", "Settings")]
-KINDS = [("box", "Box"), ("tub", "Tub"), ("crate", "Crate"), ("bag", "Bag"), ("item", "Loose item"), ("furniture", "Furniture")]
+KINDS = [("box", "Box"), ("parts", "Parts"), ("tub", "Tub"), ("crate", "Crate"), ("bag", "Bag"), ("item", "Loose item"), ("furniture", "Furniture")]
 FLAGS = [("fragile", "Fragile"), ("heavy", "Heavy"), ("open-first", "Open first")]
 
 def bar(theme, style, px=24, current="items"):
@@ -227,7 +227,7 @@ input, button {{ font: inherit; color: var(--ink); background: var(--paper); bor
 .kills {{ display: grid; grid-template-columns: repeat(9, 1fr); gap: 18px 20px; padding: 18px 20px; background: var(--paper); color: var(--ink); }}
 .kills figure {{ margin: 0; }} .kills .sm {{ display: flex; gap: 8px; align-items: flex-end; margin-top: 6px; }}
 </style></head><body>
-<h1>Icons &mdash; one set, sixteen marks</h1>
+<h1>Icons &mdash; one set, eighteen marks</h1>
 <p>Everything is one evenodd path on the home mark&rsquo;s 16-unit grid: 2-unit strokes, solid masses, holes only where they mean something (a handle, a slot, a crack). Shown at 64, 32, 24 and 16&nbsp;px on paper and on ink from the same <code>currentColor</code> file; the dashed squares are the real 16 and 24&nbsp;px rasters blown up without smoothing. Then each group where it would live, drawn with the app&rsquo;s own rules and Inter.</p>
 
 <section><h2>The family <small>the home mark, then the set, at 32 px</small></h2><div class="family">{family}</div></section>
@@ -237,7 +237,7 @@ input, button {{ font: inherit; color: var(--ink); background: var(--paper); bor
 <div style="display:flex;flex-direction:column;gap:14px">{desktop("light")}{desktop("dark")}</div>
 </div></section>
 
-{group("2 &nbsp;Kinds", ["box", "tub", "crate", "bag", "item", "furniture"], ["crate-lid"])}
+{group("2 &nbsp;Kinds", ["box", "parts", "tub", "crate", "bag", "item", "furniture"], ["crate-lid"])}
 <section><h2>Kinds, in the pushbutton row at 320 px, and as the list row&rsquo;s empty-thumbnail <small>the row wraps as the real one does</small></h2><div class="ctx">
 <div style="display:flex;flex-direction:column;gap:14px">{seg("light", "words")}{seg("light", "both")}{seg("light", "icons")}</div>
 <div style="display:flex;flex-direction:column;gap:14px">{seg("dark", "words")}{seg("dark", "both")}{seg("dark", "icons")}</div>
@@ -250,7 +250,9 @@ input, button {{ font: inherit; color: var(--ink); background: var(--paper); bor
 {label_chips()}
 <div class="ctx">{chips("light")}{chips("dark")}</div></section>
 
-<section><h2>4 &nbsp;Status track &mdash; tried, and it does not work <small>five marks in the real track at 400 px</small></h2><div class="ctx">{track("light")}{track("dark")}
+{group("4 &nbsp;Actions", ["camera"])}
+
+<section><h2>5 &nbsp;Status track &mdash; tried, and it does not work <small>five marks in the real track at 400 px</small></h2><div class="ctx">{track("light")}{track("dark")}
 <p style="max-width:60ch;margin:0">Open and unpacked are the same open box; delivered is the home mark; loaded is a blob at the track&rsquo;s size. The track already draws progress &mdash; done, now, next &mdash; and the words are 12 px tall in a cell 70 px wide. Icons here would add a second thing to read without adding meaning.</p></div></section>
 
 {killed()}
