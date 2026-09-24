@@ -405,6 +405,20 @@ const IN_VIEW = async () => {
   check("and nothing on it to brush: no field, no picker, no tick box",
         document.querySelectorAll("#app input, #app textarea, #app select").length === 0,
         [...document.querySelectorAll("#app input, #app textarea, #app select")].map((f) => f.name || f.type).join(","));
+  // The camera beside Edit: the one control that is a mark alone, so it has
+  // to say its name itself. Not pressed here -- a press asks for a camera,
+  // and this runs against real servers; newbox_check presses it.
+  const camera = $("#take-photo");
+  const cameraBox = camera?.getBoundingClientRect();
+  check("a camera button sits beside Edit, and says its name without a word",
+        camera?.tagName === "BUTTON" && camera.type === "button"
+          && /photo/i.test(camera.getAttribute("aria-label") || "")
+          && camera.nextElementSibling === $("#edit")
+          && camera.querySelector("svg.i use")?.getAttribute("href") === "#i-camera",
+        camera ? `${camera.tagName} ${camera.type} "${camera.getAttribute("aria-label")}"` : "no #take-photo");
+  check("and it is a full tap, square",
+        Boolean(cameraBox) && cameraBox.width >= 44 && Math.abs(cameraBox.width - cameraBox.height) <= 1,
+        cameraBox ? `${Math.round(cameraBox.width)}x${Math.round(cameraBox.height)}` : "");
 
   const sheet = $("#sheet");
   const facts = $("#facts");
@@ -887,6 +901,28 @@ try {
     results.push([`the list at ${width}px: rows alternate backgrounds, with no rule`,
       got.rows < 3 || (got.bg[0] !== got.bg[1] && got.bg[0] === got.bg[2] && got.rule === "0px"),
       `${got.bg.join(" | ")} rule ${got.rule}`]);
+
+    // The sheet at the same width: the code is the hero on one line, and the
+    // camera and Edit now share its row.
+    await send("Page.navigate", { url: `${base}/#/b/${encodeURIComponent(code)}` });
+    await sleep(700);
+    const sheetAt = await send("Runtime.evaluate", { returnByValue: true, expression: `(() => {
+      const doc = document.documentElement;
+      const h1 = document.querySelector("h1.code");
+      const camera = document.querySelector("#take-photo")?.getBoundingClientRect();
+      const edit = document.querySelector("#edit")?.getBoundingClientRect();
+      return {
+        overflow: doc.scrollWidth - doc.clientWidth,
+        fits: Boolean(h1) && h1.scrollWidth <= h1.clientWidth + 1,
+        oneLine: Boolean(h1) && h1.getBoundingClientRect().height <= parseFloat(getComputedStyle(h1).fontSize) * 1.5,
+        camera: camera ? Math.round(camera.left) : null,
+        edit: edit ? Math.round(edit.right) : null,
+      };
+    })()` });
+    const sheet = sheetAt.result.result.value;
+    results.push([`the sheet at ${width}px: the code, the camera and Edit share one row, nothing off the edge`,
+      sheet.overflow <= 0 && sheet.fits && sheet.oneLine && sheet.camera !== null && sheet.edit !== null && sheet.edit <= width,
+      JSON.stringify(sheet)]);
   }
   await send("Emulation.clearDeviceMetricsOverride");
 
