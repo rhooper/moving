@@ -101,6 +101,17 @@ class TestUpload:
 
         assert response.status_code == 404
 
+    def test_a_binned_record_takes_no_photo(self, client, code):
+        """A binned record is gone as far as an upload is concerned, which is
+        why the sheet draws no camera on one: Restore is the honest press."""
+        client.delete(f"/api/boxes/{code}")
+
+        response = client.post(
+            f"/api/boxes/{code}/photos", files={"file": ("a.jpg", a_jpeg(), "image/jpeg")}
+        )
+
+        assert response.status_code == 404
+
     def test_a_photo_can_be_deleted(self, client, code):
         photo = client.post(
             f"/api/boxes/{code}/photos", files={"file": ("a.jpg", a_jpeg(), "image/jpeg")}

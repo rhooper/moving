@@ -133,6 +133,9 @@ a { color: inherit; }
 .top { display: flex; align-items: center; gap: 0.75rem; }
 .top .code { flex: 1; min-width: 0; font-size: clamp(2.5rem, 13vw, 4rem); margin: 0.5rem 0; }
 .top .btn { flex: 0 0 auto; width: auto; min-height: var(--tap); padding-inline: 1rem; }
+/* The one wordless button, the camera: a full tap, square, its mark at 24 px. */
+.top .mark { width: var(--tap); padding: 0; display: inline-grid; place-items: center; }
+.top .mark .i { width: 24px; height: 24px; }
 .summary { margin: 0 0 0.75rem; }
 .summary.none { color: var(--muted); }
 
@@ -587,7 +590,10 @@ dialog.adder .seg { margin-top: 0.5rem; }
 dialog.adder .dlabel { margin-top: 0.75rem; }
 dialog.adder .adder-acts { margin-top: 1rem; flex-wrap: wrap; }
 dialog.adder .adder-acts > * { flex: 1 1 8rem; }
-dialog.adder .meta.warn { color: var(--ink); border-left: 3px solid var(--signal); padding-left: 0.5rem; }
+dialog.adder .meta.warn, dialog.taker .meta.warn { color: var(--ink); border-left: 3px solid var(--signal); padding-left: 0.5rem; }
+dialog.taker { width: min(30rem, calc(100vw - 2rem)); }
+dialog.taker .nb { white-space: nowrap; }
+dialog.taker .taker-acts { margin-top: 1rem; }
 #inside-said.warn { color: var(--ink); border-left: 3px solid var(--signal); padding-left: 0.5rem; }
 .btn.danger { background: var(--signal); border-color: var(--signal); color: #fff; }
 

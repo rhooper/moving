@@ -27,11 +27,14 @@ COVERS = ROOT / "web" / "covers.js"
 APP = ROOT / "web" / "app.js"
 SPRITE = ROOT / "docs" / "design" / "icons" / "sprite.svg"
 
-#: The three approved homes for a mark. The status track, the nesting buttons,
+#: The four approved homes for a mark. The status track, the nesting buttons,
 #: the section headings, Delete, "Look closer" and the size row were each tried
 #: and turned down.
 NAV = ["i-items", "i-scan", "i-new", "i-settings"]
 FLAGS = {"fragile": "i-fragile", "heavy": "i-heavy", "open_first": "i-open-first"}
+#: The fourth: the record sheet's camera, beside Edit -- the one control that
+#: is a mark alone, so it has to carry its name some other way.
+CAMERA = "i-camera"
 
 
 def markup() -> dict[str, str]:
@@ -134,6 +137,25 @@ def test_every_kind_of_record_has_a_mark_for_its_empty_thumbnail():
         assert f'"i-{kind}"' in source, f"covers.js maps no icon for {kind}"
 
 
+def test_the_one_wordless_button_says_its_name():
+    """The sheet's camera button has no word beside its mark: the header is
+    the code as hero with Edit at its end. A screen reader needs the name
+    from somewhere, so the button carries it itself."""
+    app = APP.read_text()
+    button = re.search(r'<button[^>]*\bid="take-photo"[^>]*>(.*?)</button>', app, re.S)
+    assert button, "the sheet draws no #take-photo button"
+    opening = button.group(0)[: button.group(0).index(">") + 1]
+    assert re.search(r'aria-label="[^"]*[Pp]hoto', opening), opening
+    assert 'title="' in opening, "the same words on hover"
+    assert f'"{CAMERA}"' in button.group(1), "its mark is the camera"
+
+
+def test_the_camera_mark_has_one_home():
+    # One button, one place: not a picker, not a heading, not a tile.
+    assert APP.read_text().count(f'"{CAMERA}"') == 1
+    assert CAMERA not in COVERS.read_text()
+
+
 def test_the_three_handling_flags_carry_the_label_s_own_glyphs():
     page = symbols(INDEX.read_text())
     source = COVERS.read_text()
@@ -216,6 +238,11 @@ def test_the_sizes_the_marks_are_drawn_at_are_the_ones_that_were_approved():
     css = stylesheet()
     assert "width: 16px" in rule(".i"), "the base mark is 16px (a chip's text size)"
     assert "width: 24px" in rule(".bar a .i"), "24px stacked over the word on a phone"
+    # The camera button: a full tap square, its mark at 24 (16 vanishes on a
+    # 44px square, 32 crowds it, 28 is the unkind size).
+    assert "width: 24px" in rule(".top .mark .i")
+    assert "width: var(--tap)" in rule(".top .mark")
+    assert "min-height: var(--tap)" in rule(".top .btn"), "Edit's own rule stands"
     # 20px beside the word in the desktop bar, inside the wide-screen block.
     wide = css[css.index("@media (min-width: 46rem)") :]
     assert re.search(r"\.bar a \.i\s*\{[^}]*width:\s*20px", wide)
