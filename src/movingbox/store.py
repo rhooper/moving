@@ -297,11 +297,14 @@ def set_location(
 
 #: The photo a list row is drawn with, in the same statement as the rows. The
 #: predicate matches the partial index idx_photos_one_cover, so it is one index
-#: seek per returned row.
+#: seek per returned row. The key is `renditions.key`, which the URL must carry.
 _COVER = """(
     SELECT id FROM photos
      WHERE photos.box_id = boxes.id AND photos.is_primary = 1
-) AS cover_photo_id"""
+) AS cover_photo_id, (
+    SELECT substr(sha256, 1, 12) FROM photos
+     WHERE photos.box_id = boxes.id AND photos.is_primary = 1
+) AS cover_photo_key"""
 
 #: How many things are directly inside, not counting anything in the bin. An
 #: index seek per row (idx_boxes_parent), bounded by the page size.

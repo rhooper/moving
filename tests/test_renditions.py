@@ -197,25 +197,37 @@ class TestWritingOne:
 
 class TestTheSrcset:
     def photo(self, **overrides):
-        return {"id": 7, "width": 1536, "height": 2048, **overrides}
+        return {"id": 7, "width": 1536, "height": 2048, "sha256": "ab12" * 16, **overrides}
 
     def test_it_offers_the_thumbnail_and_the_strip_with_their_real_widths(self):
         srcset = renditions.srcset(self.photo())
 
-        assert srcset == (f"/photos/7/thumb 300w, /photos/7/strip?v={renditions.VERSION} 600w")
+        assert srcset == (
+            "/photos/7/thumb?k=ab12ab12ab12 300w, "
+            f"/photos/7/strip?v={renditions.VERSION}&k=ab12ab12ab12 600w"
+        )
 
     def test_a_landscape_photo_is_described_by_its_own_widths(self):
         srcset = renditions.srcset(self.photo(width=2048, height=1536))
 
-        assert "/photos/7/thumb 400w" in srcset
-        assert f"/photos/7/strip?v={renditions.VERSION} 800w" in srcset
+        assert "/photos/7/thumb?k=ab12ab12ab12 400w" in srcset
+        assert f"/photos/7/strip?v={renditions.VERSION}&k=ab12ab12ab12 800w" in srcset
 
     def test_a_photo_too_small_for_a_larger_version_offers_only_one(self):
         # Two candidates of the same width is not a choice, and a duplicate
         # width descriptor is invalid srcset.
         srcset = renditions.srcset(self.photo(width=300, height=200))
 
-        assert srcset == "/photos/7/thumb 300w"
+        assert srcset == "/photos/7/thumb?k=ab12ab12ab12 300w"
+
+    def test_every_url_names_the_bytes_not_just_the_id(self):
+        # Ids were reused before migration 0011, and browsers keep a photo's
+        # bytes for a year under its URL: the key is what tells them apart.
+        a = renditions.srcset(self.photo(sha256="a" * 64))
+        b = renditions.srcset(self.photo(sha256="b" * 64))
+
+        assert a != b
+        assert all("k=" in candidate for candidate in a.split(", "))
 
     def test_a_photo_with_no_recorded_size_offers_nothing(self):
         # Rather than a width descriptor that is a guess.

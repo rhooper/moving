@@ -146,6 +146,7 @@ def with_analysis(conn: sqlite3.Connection, photo: dict[str, Any]) -> dict[str, 
     from . import analysis  # local: analysis imports store, which storage also does
 
     photo["analysis"] = analysis.state_of(conn, photo["id"])
+    photo["key"] = renditions.key(photo)
     photo["srcset"] = renditions.srcset(photo)
     return photo
 

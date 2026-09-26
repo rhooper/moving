@@ -134,6 +134,16 @@ def write_strip(photo_dir: Path, filename: str) -> bool:
     return True
 
 
+def key(photo: dict[str, Any]) -> str:
+    """What a photo URL carries as `k`, so that it names these bytes and no others.
+
+    An id is not enough: before migration 0011 a deleted photo's id went to the
+    next one taken, and browsers still hold the old bytes under that id's URLs
+    for a year. The start of the upload's sha256, as in the file name.
+    """
+    return photo["sha256"][:12]
+
+
 def srcset(photo: dict[str, Any]) -> str:
     """The thumbnail and the strip, each with its real width, for an `<img srcset>`.
 
@@ -142,14 +152,14 @@ def srcset(photo: dict[str, Any]) -> str:
     width, height = photo.get("width"), photo.get("height")
     if not width or not height:
         return ""
-    photo_id = photo["id"]
+    photo_id, k = photo["id"], key(photo)
     thumb_width, _ = fitted(width, height, THUMB_MAX)
     strip_width, _ = fitted(width, height, STRIP_MAX)
-    thumb = f"/photos/{photo_id}/thumb {thumb_width}w"
+    thumb = f"/photos/{photo_id}/thumb?k={k} {thumb_width}w"
     if strip_width <= thumb_width:
         # Too small for a larger version; a duplicate width descriptor is invalid.
         return thumb
-    return f"{thumb}, /photos/{photo_id}/strip?v={VERSION} {strip_width}w"
+    return f"{thumb}, /photos/{photo_id}/strip?v={VERSION}&k={k} {strip_width}w"
 
 
 def backfill(
