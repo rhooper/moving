@@ -127,6 +127,7 @@ def save_photo(
     )
     search.reindex_box(conn, box["id"])
     row = conn.execute("SELECT * FROM photos WHERE id = ?", (cursor.lastrowid,)).fetchone()
+    store.record_event(conn, box["id"], "photo-add", ref=f"photo:{row['id']}", to_value=full_name)
     return dict(row)
 
 
@@ -162,6 +163,16 @@ def set_caption(conn: sqlite3.Connection, photo_id: int, caption: str | None) ->
         raise LookupError(photo_id)
     conn.execute("UPDATE photos SET caption = ? WHERE id = ?", (caption, photo_id))
     search.reindex_box(conn, photo["box_id"])
+    if caption != photo["caption"]:
+        store.record_event(
+            conn,
+            photo["box_id"],
+            "photo-edit",
+            field="caption",
+            ref=f"photo:{photo_id}",
+            from_value=photo["caption"],
+            to_value=caption,
+        )
     return get_photo(conn, photo_id)
 
 
@@ -175,12 +186,24 @@ def set_cover(conn: sqlite3.Connection, photo_id: int) -> dict[str, Any]:
     if photo is None:
         raise LookupError(photo_id)
 
+    was = _cover_ref(conn, photo["box_id"])
     conn.execute(
         "UPDATE photos SET is_primary = 0 WHERE box_id = ? AND id != ?",
         (photo["box_id"], photo_id),
     )
     conn.execute("UPDATE photos SET is_primary = 1 WHERE id = ?", (photo_id,))
+    if was != f"photo:{photo_id}":
+        store.record_event(
+            conn, photo["box_id"], "cover", from_value=was, to_value=f"photo:{photo_id}"
+        )
     return get_photo(conn, photo_id)
+
+
+def _cover_ref(conn: sqlite3.Connection, box_id: int) -> str | None:
+    row = conn.execute(
+        "SELECT id FROM photos WHERE box_id = ? AND is_primary = 1", (box_id,)
+    ).fetchone()
+    return f"photo:{row['id']}" if row else None
 
 
 def delete_photo(conn: sqlite3.Connection, config: Config, photo_id: int) -> bool:
@@ -202,6 +225,7 @@ def delete_photo(conn: sqlite3.Connection, config: Config, photo_id: int) -> boo
     conn.execute("DELETE FROM ai_jobs WHERE photo_id = ?", (photo_id,))
     # Only when the cover went: otherwise the chosen cover would change, and
     # the one-cover index would refuse a second.
+    remaining = None
     if photo["is_primary"]:
         remaining = conn.execute(
             "SELECT id FROM photos WHERE box_id = ? ORDER BY id LIMIT 1", (photo["box_id"],)
@@ -209,4 +233,12 @@ def delete_photo(conn: sqlite3.Connection, config: Config, photo_id: int) -> boo
         if remaining is not None:
             conn.execute("UPDATE photos SET is_primary = 1 WHERE id = ?", (remaining["id"],))
     search.reindex_box(conn, photo["box_id"])
+    store.record_event(
+        conn,
+        photo["box_id"],
+        "photo-remove",
+        ref=f"photo:{photo_id}",
+        from_value=photo["filename"],
+        note=f"cover passed to photo:{remaining['id']}" if remaining is not None else None,
+    )
     return True

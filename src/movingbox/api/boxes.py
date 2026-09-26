@@ -304,8 +304,11 @@ def list_contents(code: str, conn: sqlite3.Connection = Depends(get_conn)) -> li
 
 @router.get("/boxes/{code}/events")
 def list_events(code: str, conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
-    _require_readable(conn, code)
-    return store.events_for(conn, code)
+    # Not _require_readable: a purged record has no row, and still has a history.
+    try:
+        return store.events_for(conn, code)
+    except store.UnknownBox as missing:
+        raise HTTPException(status_code=404, detail=f"No box {code}") from missing
 
 
 @router.get("/search")
