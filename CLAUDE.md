@@ -699,6 +699,15 @@ Each is a choice; changing one is a decision, not the fixing of a gap.
   departure is **`--radius: 4px`**, only through the token (a test checks).
 - **The home mark** is the QR finder pattern with a house inside, on a 16-unit
   grid: 16, 24 or 32 px, never 28. The PWA icon is still a white bar.
+- **The favicon is the home mark** (asked for as "create a favicon from the
+  logo"): `web/favicon.svg` and `web/favicon.ico` (16, 32, 48), both made by
+  `scripts/claude/make_icons.py` from `docs/design/home-mark.svg`'s path --
+  change the mark, re-run it (`test_favicon.py` fails until then). Paper
+  inside the ring, as on tape: a transparent inside vanishes on a dark tab
+  bar. The ICO is sampled under the even-odd rule, not drawn with
+  `ImageDraw.polygon`, which fills both edges and greys every right and
+  bottom edge; grid edges come out pure, only the roof is antialiased.
+  `apple-touch-icon` is still the white bar.
 - **Icons ship in four places only**: the nav bar (always with its word), an
   empty list thumbnail (the kind), the three handling flags, and the record
   sheet's camera button. The status track, nesting buttons, breadcrumb,

@@ -35,7 +35,9 @@ def dev(config, monkeypatch):
 
 def asset_refs(text: str) -> list[str]:
     """Every quoted or url()-wrapped same-origin asset path in a file."""
-    return re.findall(r"""["'(](/[\w.-]+\.(?:js|ttf|png|webmanifest)(?:\?v=[\w.-]+)?)["')]""", text)
+    return re.findall(
+        r"""["'(](/[\w.-]+\.(?:js|ttf|png|svg|ico|webmanifest)(?:\?v=[\w.-]+)?)["')]""", text
+    )
 
 
 class TestThePage:
