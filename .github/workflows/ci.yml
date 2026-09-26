@@ -41,6 +41,11 @@ jobs:
     # comes out a pixel row different. The app is developed and deployed on a
     # Mac, so that is the rendering the goldens pin.
     runs-on: macos-latest
+    env:
+      # Pillow dlopens libfribidi by bare name, and dyld reads its search path
+      # at process start (conftest.py setting it is too late for that). The
+      # launchd plist sets the same for the live service.
+      DYLD_FALLBACK_LIBRARY_PATH: /opt/homebrew/lib:/usr/local/lib:/usr/lib
     steps:
       - uses: actions/checkout@v7
       # zbar: the label tests decode their QR codes. fribidi: without it Pillow

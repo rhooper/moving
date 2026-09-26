@@ -67,7 +67,9 @@ def test_text_is_shaped_as_the_goldens_were():
     # "B-0042" sits lower). Every golden then differs, and says only where.
     assert features.check("raqm"), (
         "Pillow cannot use raqm text layout, so labels lose Inter's kerning and "
-        "every golden differs. Install fribidi (`brew install fribidi`)."
+        "every golden differs. Install fribidi (`brew install fribidi`); if it "
+        "is installed, start pytest with DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib "
+        "(setting it after startup is too late for dyld)."
     )
 
 

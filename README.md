@@ -28,7 +28,7 @@ and runs on a single Mac; there are no user accounts.
 | **Python 3.13+** and **[uv](https://docs.astral.sh/uv/)** | everything | uv installs the Python dependencies from `uv.lock` |
 | **HTTPS to the server** | the phone camera and scanner | [Tailscale](https://tailscale.com/) `serve` is the tested route; see below |
 | Brother QL label printer + DK-2205 tape | printing labels | tested on the **QL-800** over USB; needs `libusb` (`brew install libusb`) |
-| fribidi (`brew install fribidi`) | label typography | without it Pillow falls back to basic text layout: labels still print, without Inter's kerning |
+| fribidi (`brew install fribidi`) | label typography | without it Pillow falls back to basic text layout: labels still print, without Inter's kerning. With Homebrew on Apple silicon, start the server with `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib` so it is found (the macOS installer does) |
 | [Ollama](https://ollama.com/) | reading photos offline, phrasing summaries | optional; ~14 GB of models |
 | Anthropic API key | reading photos with Claude | optional; about a cent a photo |
 | Node.js 22+ | development only: the JS/CSS linters and JS tests | |
