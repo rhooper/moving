@@ -67,6 +67,10 @@ def print_labels(
                 ),
             )
 
+    problem = config.unprintable()
+    if problem:
+        raise HTTPException(status_code=503, detail=problem)
+
     backend = printer.get_backend(config)
     printed = []
     for code, data in labels:

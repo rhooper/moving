@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from . import backup, codes, db, export, search, store
-from .config import from_env
+from .config import DEFAULT_BASE_URL, from_env
 from .labels import layout, printer
 
 # The rooms this move uses. The pickers filter on `kind`.
@@ -35,6 +35,8 @@ def cmd_serve(args) -> int:
     config = from_env()
     print(f"database   {config.db_path}")
     print(f"base url   {config.base_url}")
+    if config.base_url == DEFAULT_BASE_URL:
+        print("           (the placeholder: set [server] base_url in moving.toml)")
     print(f"printer    {config.printer_backend}")
     if config.api_key is None:
         print("auth       OPEN (set MOVING_API_KEY to require a key)")
@@ -81,6 +83,10 @@ def cmd_print(args) -> int:
     config = from_env()
     if args.backend:
         config = config.replace(printer_backend=args.backend)
+    problem = config.unprintable()
+    if problem:
+        print(problem, file=sys.stderr)
+        return 1
 
     conn = db.connect(config.db_path)
     try:

@@ -30,5 +30,7 @@ next="$major.$minor.$((patch + 1))"
 
 # Edit only the one line, and stage only the one file: the rest of the index
 # is the committer's, half-staged files included.
-sed -i '' "s/^__version__ = \"$current\"$/__version__ = \"$next\"/" "$FILE"
+# -i.bak, not -i '': the one spelling BSD and GNU sed both accept.
+sed -i.bak "s/^__version__ = \"$current\"$/__version__ = \"$next\"/" "$FILE"
+rm -f "$FILE.bak"
 git add "$FILE"

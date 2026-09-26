@@ -20,6 +20,8 @@ case "${1:-}" in
   *) echo "usage: $0 minor|major" >&2; exit 2 ;;
 esac
 
-sed -i '' "s/^__version__ = \"$current\"$/__version__ = \"$next\"/" "$FILE"
+# -i.bak, not -i '': the one spelling BSD and GNU sed both accept.
+sed -i.bak "s/^__version__ = \"$current\"$/__version__ = \"$next\"/" "$FILE"
+rm -f "$FILE.bak"
 git add "$FILE"
 echo "$current -> $next (staged; commit to keep it)"

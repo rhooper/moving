@@ -11,7 +11,7 @@ Regenerate deliberately, and *look at the result* before committing it:
 from pathlib import Path
 
 import pytest
-from PIL import Image, ImageChops
+from PIL import Image, ImageChops, features
 
 from movingbox.labels import layout
 
@@ -59,6 +59,18 @@ CASES = {
         footer="box 11 of 14 - 18.2 kg",
     ),
 }
+
+
+def test_text_is_shaped_as_the_goldens_were():
+    # Without libfribidi, Pillow silently falls back from raqm to its basic
+    # layout: no kerning and none of Inter's contextual forms (the hyphen in
+    # "B-0042" sits lower). Every golden then differs, and says only where.
+    assert features.check("raqm"), (
+        "Pillow cannot use raqm text layout, so labels lose Inter's kerning and "
+        "every golden differs. Install fribidi (`brew install fribidi`); if it "
+        "is installed, start pytest with DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib "
+        "(setting it after startup is too late for dyld)."
+    )
 
 
 @pytest.mark.parametrize("name", sorted(CASES))

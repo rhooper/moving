@@ -15,6 +15,8 @@ os.environ.pop("ANTHROPIC_API_KEY", None)
 # A path that cannot exist, so the real .env is never read. Parser tests pass
 # their own fixture path.
 os.environ["MOVING_ENV_FILE"] = "/nonexistent/moving-tests-never-read-a-real-env"
+# Likewise moving.toml, which names the real database and the real printer.
+os.environ["MOVING_CONFIG"] = "/nonexistent/moving-tests-never-read-a-real-config"
 
 # pyzbar finds libzbar through ctypes.util.find_library, which does not search
 # Homebrew's prefix on macOS. ctypes reads this at call time (dyld caches

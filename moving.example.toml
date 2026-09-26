@@ -1,0 +1,61 @@
+# Moving Box Tracker settings. Copy to `moving.toml` in this directory and
+# edit. Git ignores `moving.toml`. Every key is optional: anything left out
+# keeps the default shown here, commented out.
+#
+# Each key also has a MOVING_* environment variable (named beside it), and a
+# variable wins over this file. `MOVING_CONFIG=/path/to/other.toml` reads a
+# different file. A misspelt key or section is an error at startup, not
+# silently ignored.
+#
+# The Anthropic API key does NOT go here: put ANTHROPIC_API_KEY in `.env`
+# (see .env.example) or the environment, so this file can be shared safely.
+
+[server]
+# The HTTPS address phones reach the app on. It is printed into every label's
+# QR code, so changing it later means reprinting. A real printer refuses to
+# print until this is set. With Tailscale: https://<machine>.<tailnet>.ts.net
+# base_url = "https://moving.example"                    # MOVING_BASE_URL
+#
+# Require this key in X-API-Key on every API request. Unset = open, which is
+# fine on a private tailnet.
+# api_key = ""                                           # MOVING_API_KEY
+
+[storage]
+# Relative paths are relative to this file.
+# db_path = "var/moving.db"                              # MOVING_DB_PATH
+# photo_dir = "var/photos"                               # MOVING_PHOTO_DIR
+# label_preview_dir = "var/labels/preview"               # MOVING_LABEL_PREVIEW_DIR
+# backup_dir = "var/backups"                             # MOVING_BACKUP_DIR
+
+[printer]
+# "fake" writes a PNG preview instead of printing; "brother_ql" prints over
+# USB; "cups_raw" sends to a CUPS queue (needs `queue`).
+# backend = "fake"                                       # MOVING_PRINTER_BACKEND
+# model = "QL-800"                                       # MOVING_PRINTER_MODEL
+# queue = ""                                             # MOVING_PRINTER_QUEUE
+# label = "62"          # brother_ql label id: 62 mm endless (DK-2205)  MOVING_LABEL_ID
+# orientation = "landscape"   # or "portrait"            # MOVING_LABEL_ORIENTATION
+
+[vision]
+# Who reads uploaded photos:
+#   "claude" -- Claude first, the local Ollama model whenever Claude cannot
+#               (no key, offline, rate limited, over budget). Works with no key.
+#   "ollama" -- local only; nothing leaves the machine.
+#   "stub"   -- a canned answer after a delay, for UI work.
+# provider = "claude"                                    # MOVING_VISION_PROVIDER
+# auto_analyse = true   # read each photo as it is uploaded  MOVING_AUTO_ANALYSE
+# budget_usd = 30.0     # lifetime cloud spend cap        # MOVING_VISION_BUDGET_USD
+# cloud_model = "claude-sonnet-5"                        # MOVING_VISION_CLOUD_MODEL
+# cloud_detail_model = "claude-opus-5"   # "Look closer"  MOVING_VISION_CLOUD_DETAIL_MODEL
+# local_model = "qwen3-vl:4b-instruct"                   # MOVING_VISION_MODEL
+# local_detail_model = "qwen3-vl:8b-instruct"            # MOVING_VISION_DETAIL_MODEL
+# stub_seconds = 3.0                                     # MOVING_VISION_STUB_SECONDS
+
+[summary]
+# Whether "From contents" asks a local model to phrase the summary line.
+# Off (or Ollama unreachable), it assembles the line itself.
+# phrase = true                                          # MOVING_PHRASE_SUMMARIES
+# model = "qwen2.5:7b"                                   # MOVING_SUMMARY_MODEL
+
+[ollama]
+# url = "http://localhost:11434"                         # MOVING_OLLAMA_URL
