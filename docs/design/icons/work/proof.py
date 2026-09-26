@@ -5,7 +5,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from icons import ICONS, VARIANTS, ROOT
 
 W = os.path.dirname(os.path.abspath(__file__))
-FONT = "file:///path/to/moving/src/movingbox/labels/fonts/Inter.ttf"
+FONT = "../../../src/movingbox/labels/fonts/Inter.ttf"
 HOME = 'M0 0h16v16H0zM2 2v12h12V2zM8 4l4 4v4H4V8z'
 THEMES = {"light": ("#fafaf8", "#000000"), "dark": ("#0a0a0a", "#ffffff")}
 

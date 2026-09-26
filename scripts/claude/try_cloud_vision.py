@@ -27,6 +27,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -70,7 +71,12 @@ def sample_photos(count: int) -> list[Path]:
     if not store.is_dir():
         # A worktree has its own empty var/. The main checkout is where the
         # photos are, and this script only ever reads them.
-        store = Path("/path/to/moving/var/photos")
+        common = subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        store = Path(common).parent / "var" / "photos"
     if not store.is_dir():
         raise SystemExit(f"no photo store at {store}; pass image paths instead")
     # *-thumb.jpg are the list thumbnails, not what gets read.
