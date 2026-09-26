@@ -57,13 +57,71 @@ def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return dict(row) if row is not None else None
 
 
-def _record(conn, box_id, kind, *, from_value=None, to_value=None, actor=None, note=None):
+#: Kinds whose repeats merge (see `record_event`): the saves of one edit.
+MERGED = ("edit", "item-edit", "photo-edit")
+
+#: How close together two saves of the same field count as one edit.
+MERGE_SECONDS = 120
+
+
+def _text(value: Any) -> str | None:
+    """A value as the log keeps it: text, with booleans as 0/1 like the columns."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return str(int(value))
+    return str(value)
+
+
+def record_event(
+    conn: sqlite3.Connection,
+    box_id: int,
+    kind: str,
+    *,
+    field: str | None = None,
+    ref: str | None = None,
+    from_value: Any = None,
+    to_value: Any = None,
+    actor: str | None = None,
+    note: str | None = None,
+) -> None:
+    """Add a line to the record's history. Every change to a record comes here.
+
+    The record's code is written on the row, so its history outlives a purge
+    (migration 0012). An edit to the field an edit just changed, by the same
+    actor within MERGE_SECONDS and with nothing logged in between, extends that
+    line instead of adding one: text saves itself every pause in typing, and a
+    summary typed in bursts is one change from the old to the new. An edit
+    that ends where it started removes its line.
+    """
+    from_value, to_value = _text(from_value), _text(to_value)
+    if kind in MERGED:
+        last = conn.execute(
+            "SELECT * FROM events WHERE box_id = ? ORDER BY id DESC LIMIT 1", (box_id,)
+        ).fetchone()
+        if (
+            last is not None
+            and (last["kind"], last["field"], last["ref"], last["actor"])
+            == (kind, field, ref, actor)
+            and conn.execute(
+                "SELECT ? >= datetime('now', ?)", (last["created_at"], f"-{MERGE_SECONDS} seconds")
+            ).fetchone()[0]
+        ):
+            if last["from_value"] == to_value:
+                conn.execute("DELETE FROM events WHERE id = ?", (last["id"],))
+            else:
+                conn.execute(
+                    "UPDATE events SET to_value = ?, created_at = datetime('now') WHERE id = ?",
+                    (to_value, last["id"]),
+                )
+            return
     conn.execute(
         """
-        INSERT INTO events (box_id, kind, from_value, to_value, actor, note)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO events
+            (box_id, box_code, kind, field, ref, from_value, to_value, actor, note)
+        VALUES (?, (SELECT code FROM boxes WHERE id = ?), ?, ?, ?, ?, ?, ?, ?)
         """,
-        (box_id, kind, from_value, to_value, actor, note),
+        (box_id, box_id, kind, field, ref, from_value, to_value, actor, note),
     )
 
 
@@ -123,7 +181,15 @@ def create_box(
         (code, *fields.values()),
     )
     box_id = cursor.lastrowid
-    _record(conn, box_id, "create", to_value=code, actor=actor)
+    parent = code_of(conn, parent_id) if parent_id is not None else None
+    record_event(
+        conn,
+        box_id,
+        "create",
+        to_value=code,
+        actor=actor,
+        note=f"inside {parent}" if parent else None,
+    )
     search.reindex_box(conn, box_id)
     return get_box(conn, code)
 
@@ -136,7 +202,9 @@ def get_box(
     return _row(conn.execute(f"SELECT * FROM boxes WHERE code = ?{clause}", (code,)).fetchone())
 
 
-def update_box(conn: sqlite3.Connection, code: str, **fields) -> dict[str, Any]:
+def update_box(
+    conn: sqlite3.Connection, code: str, *, actor: str | None = None, **fields
+) -> dict[str, Any]:
     box = _require(conn, code)
     unknown = set(fields) - set(EDITABLE)
     if unknown:
@@ -164,7 +232,25 @@ def update_box(conn: sqlite3.Connection, code: str, **fields) -> dict[str, Any]:
             (*fields.values(), box["id"]),
         )
         search.reindex_box(conn, box["id"])
+        for name, value in fields.items():
+            if value != box[name]:
+                record_event(
+                    conn,
+                    box["id"],
+                    "edit",
+                    field=name,
+                    from_value=_shown(conn, name, box[name]),
+                    to_value=_shown(conn, name, value),
+                    actor=actor,
+                )
     return get_box(conn, code)
+
+
+def _shown(conn: sqlite3.Connection, field: str, value: Any) -> Any:
+    """A column's value as the history shows it: a room by its name, not its id."""
+    if field.endswith("_room_id") and value is not None:
+        return room_name(conn, value) or value
+    return value
 
 
 def delete_box(
@@ -191,7 +277,7 @@ def delete_box(
     )
     # reindex_box sees the row as deleted and drops it from search.
     search.reindex_box(conn, box["id"])
-    _record(conn, box["id"], "delete", to_value=code, actor=actor)
+    record_event(conn, box["id"], "delete", to_value=code, actor=actor)
     return True
 
 
@@ -208,7 +294,7 @@ def restore_box(
             (box["id"],),
         )
         search.reindex_box(conn, box["id"])
-        _record(conn, box["id"], "restore", to_value=code, actor=actor)
+        record_event(conn, box["id"], "restore", to_value=code, actor=actor)
     return get_box(conn, code)
 
 
@@ -223,7 +309,7 @@ def deleted_boxes(conn: sqlite3.Connection, limit: int = 200) -> list[dict[str, 
 
 
 def purge_box(conn: sqlite3.Connection, config: Config, code: str) -> bool:
-    """Destroy a record for good, with its contents, events and photo files.
+    """Destroy a record for good, with its contents and photo files; not its history.
 
     Only for something already binned. The photo rows cascade; the files on
     disk are removed here, since nothing would point at them afterwards.
@@ -239,6 +325,9 @@ def purge_box(conn: sqlite3.Connection, config: Config, code: str) -> bool:
         "SELECT filename, thumb_filename FROM photos WHERE box_id = ?", (box["id"],)
     ).fetchall()
 
+    # Logged first, while the row exists to name: the history outlives it
+    # (box_id goes NULL, box_code stays; migration 0012).
+    record_event(conn, box["id"], "purge", to_value=code)
     conn.execute("DELETE FROM boxes WHERE id = ?", (box["id"],))
     search.reindex_box(conn, box["id"])  # clears the now-orphaned index row
 
@@ -268,7 +357,7 @@ def set_status(
     )
     if status == "packed" and box["sealed_at"] is None:
         conn.execute("UPDATE boxes SET sealed_at = datetime('now') WHERE id = ?", (box["id"],))
-    _record(conn, box["id"], "status", from_value=box["status"], to_value=status, actor=actor)
+    record_event(conn, box["id"], "status", from_value=box["status"], to_value=status, actor=actor)
     return get_box(conn, code)
 
 
@@ -283,7 +372,7 @@ def set_location(
         "UPDATE boxes SET current_location = ?, updated_at = datetime('now') WHERE id = ?",
         (location, box["id"]),
     )
-    _record(
+    record_event(
         conn,
         box["id"],
         "location",
@@ -387,7 +476,7 @@ def record_print(
         """,
         (copies, box["id"]),
     )
-    _record(conn, box["id"], "print", to_value=code, actor=actor)
+    record_event(conn, box["id"], "print", to_value=code, actor=actor)
     return get_box(conn, code)
 
 
@@ -471,7 +560,9 @@ def _parent_for(conn: sqlite3.Connection, code: str | None, parent_code: str | N
     return parent["id"]
 
 
-def set_parent(conn: sqlite3.Connection, code: str, parent_code: str | None) -> dict[str, Any]:
+def set_parent(
+    conn: sqlite3.Connection, code: str, parent_code: str | None, *, actor: str | None = None
+) -> dict[str, Any]:
     """Put a record inside a container, or (with None) take it out."""
     box = _require(conn, code)
     parent_id = _parent_for(conn, code, parent_code)
@@ -479,6 +570,9 @@ def set_parent(conn: sqlite3.Connection, code: str, parent_code: str | None) -> 
         "UPDATE boxes SET parent_id = ?, updated_at = datetime('now') WHERE id = ?",
         (parent_id, box["id"]),
     )
+    if parent_id != box["parent_id"]:
+        was = code_of(conn, box["parent_id"]) if box["parent_id"] is not None else None
+        record_event(conn, box["id"], "nest", from_value=was, to_value=parent_code, actor=actor)
     return get_box(conn, code)
 
 
@@ -648,7 +742,17 @@ def add_item(conn: sqlite3.Connection, code: str, *, name: str, **fields) -> dic
         (box["id"], name, *fields.values()),
     )
     search.reindex_box(conn, box["id"])
-    return _row(conn.execute("SELECT * FROM items WHERE id = ?", (cursor.lastrowid,)).fetchone())
+    item = _row(conn.execute("SELECT * FROM items WHERE id = ?", (cursor.lastrowid,)).fetchone())
+    record_event(
+        conn,
+        box["id"],
+        "item-add",
+        ref=f"item:{item['id']}",
+        to_value=item["name"],
+        note=f"qty {item['qty']}" if (item["qty"] or 1) != 1 else None,
+        actor="ai" if item["source"] == "ai" else None,
+    )
+    return item
 
 
 def list_items(conn: sqlite3.Connection, code: str) -> list[dict[str, Any]]:
@@ -701,15 +805,29 @@ def update_item(
         assignments = ", ".join(f"{column} = ?" for column in changes)
         conn.execute(f"UPDATE items SET {assignments} WHERE id = ?", (*changes.values(), item_id))
         search.reindex_box(conn, row["box_id"])
+        for column in ("name", "qty"):
+            if column in changes and changes[column] != row[column]:
+                record_event(
+                    conn,
+                    row["box_id"],
+                    "item-edit",
+                    field=column,
+                    ref=f"item:{item_id}",
+                    from_value=row[column],
+                    to_value=changes[column],
+                    # keep_source is the photo reader raising its own count.
+                    actor="ai" if keep_source else None,
+                )
     return _row(conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone())
 
 
 def delete_item(conn: sqlite3.Connection, item_id: int) -> bool:
-    row = conn.execute("SELECT box_id FROM items WHERE id = ?", (item_id,)).fetchone()
+    row = conn.execute("SELECT box_id, name FROM items WHERE id = ?", (item_id,)).fetchone()
     if row is None:
         return False
     conn.execute("DELETE FROM items WHERE id = ?", (item_id,))
     search.reindex_box(conn, row["box_id"])
+    record_event(conn, row["box_id"], "item-remove", ref=f"item:{item_id}", from_value=row["name"])
     return True
 
 
@@ -717,11 +835,12 @@ def delete_item(conn: sqlite3.Connection, item_id: int) -> bool:
 
 
 def events_for(conn: sqlite3.Connection, code: str) -> list[dict[str, Any]]:
-    # Readable in the bin: the timeline records the deletion itself.
-    box = get_box(conn, code, include_deleted=True)
-    if box is None:
+    """A record's history, oldest first: in the bin, and after it is purged.
+
+    By code, which is never reused, so a purged record still has its history.
+    UnknownBox only for a code that never had any.
+    """
+    rows = conn.execute("SELECT * FROM events WHERE box_code = ? ORDER BY id", (code,)).fetchall()
+    if not rows and get_box(conn, code, include_deleted=True) is None:
         raise UnknownBox(code)
-    rows = conn.execute(
-        "SELECT * FROM events WHERE box_id = ? ORDER BY id", (box["id"],)
-    ).fetchall()
     return [dict(r) for r in rows]

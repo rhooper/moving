@@ -64,7 +64,15 @@ def test_json_export_includes_the_event_timeline(config):
     conn.close()
 
     first = next(b for b in data["boxes"] if b["code"] == "B-0001")
-    assert [e["kind"] for e in first["events"]] == ["create", "status", "location"]
+    # Items are part of the history too (migration 0012), the photo reader's
+    # marked as its own.
+    assert [(e["kind"], e["actor"]) for e in first["events"]] == [
+        ("create", None),
+        ("item-add", None),
+        ("item-add", "ai"),
+        ("status", None),
+        ("location", None),
+    ]
 
 
 def test_json_export_records_when_it_was_taken(config):

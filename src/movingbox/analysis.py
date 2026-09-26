@@ -273,6 +273,16 @@ def refresh_summary(conn: sqlite3.Connection, code: str, *, described: str | Non
         (summary, box["id"]),
     )
     search.reindex_box(conn, box["id"])
+    if summary != box["content_summary"]:
+        store.record_event(
+            conn,
+            box["id"],
+            "edit",
+            field="content_summary",
+            from_value=box["content_summary"],
+            to_value=summary,
+            actor="ai",
+        )
     return True
 
 

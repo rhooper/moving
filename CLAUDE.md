@@ -177,6 +177,14 @@ purpose headers, the browser checks (`*_check.mjs`), `hooks/`, `lib/launchd.sh`.
   migration file on its next request.
 - A brand-new database can 500 once (parallel first requests both migrate).
   Pre-migrate with `moving seed-rooms` before pointing a browser at it.
+- **Every change to a record goes through `store.record_event`** (asked for as
+  "tracking dates/times of everything ... as well as keeping a log"): field
+  edits with before and after (rooms by name), nesting, items, photos, cover,
+  the reader's summary and items (actor `"ai"`), purge. **A new write path must
+  log too**; `test_history.py` covers each kind. Saves of one field by one
+  actor within `MERGE_SECONDS`, nothing logged between, extend one line.
+  Since migration 0012 the log is read **by `box_code`** and outlives a purge
+  (`box_id` goes NULL). Rooms, settings and code formats are not logged.
 - Status and location are not in `store.EDITABLE`: their own calls log every
   transition. `schemas.Strict` makes a PATCH with an unknown field a 422.
 - `ai_jobs.photo_id` has no foreign key (migration tests roll back by dropping

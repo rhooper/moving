@@ -12,6 +12,13 @@ import sqlite3
 #: How to undo each migration, newest first. Keyed by the version the step
 #: removes: running UNDO[5] takes a database from version 5 to version 4.
 UNDO: dict[int, list[str]] = {
+    # Back to the old columns; the FK stays SET NULL, which 0012 rebuilds anyway.
+    12: [
+        "DROP INDEX IF EXISTS idx_events_code",
+        "ALTER TABLE events DROP COLUMN box_code",
+        "ALTER TABLE events DROP COLUMN field",
+        "ALTER TABLE events DROP COLUMN ref",
+    ],
     # Nothing to undo: 0011 rebuilds photos with the same columns, so running
     # it again over its own result is harmless.
     11: [],
