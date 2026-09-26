@@ -23,6 +23,8 @@ const SHELL = [
   "/Inter.ttf",
   "/manifest.webmanifest",
   "/icon-192.png",
+  "/favicon.svg",
+  "/favicon.ico",
 ];
 
 self.addEventListener("install", (event) => {

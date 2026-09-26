@@ -24,7 +24,7 @@ REVALIDATE = "no-cache"
 #: sw.js: a worker is identified by its script URL, so versioning it would
 #: register a new worker per deploy instead of updating the one there is.
 _ASSET = re.compile(
-    r"""(?P<open>["'(])(?P<path>/(?!sw\.js)[\w.-]+\.(?:js|ttf|png|webmanifest))(?P<close>["')])"""
+    r"""(?P<open>["'(])(?P<path>/(?!sw\.js)[\w.-]+\.(?:js|ttf|png|svg|ico|webmanifest))(?P<close>["')])"""
 )
 
 #: What may be rewritten: text that *refers* to other assets.
