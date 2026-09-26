@@ -53,3 +53,15 @@ jobs:
           node-version: 22
       - run: uv sync --locked
       - run: uv run pytest -q
+      # A golden mismatch says only where the label changed; the rendering
+      # itself is what has to be looked at.
+      - name: Render the golden cases for inspection
+        if: failure()
+        run: |
+          uv run python -c "from PIL import features; features.pilinfo(supported_formats=False)"
+          uv run python scripts/claude/render_samples.py rendered --golden
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: rendered-labels
+          path: rendered/
