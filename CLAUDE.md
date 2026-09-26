@@ -13,6 +13,7 @@ in `git log`.
 make setup                       # uv sync + npm ci (linters only) + git hooks
 make run                         # dev server with reload on :8788 (the live service owns :8787)
 make check                       # lint + test; `make test`, `make lint`, `make fmt` (black) alone
+cp moving.example.toml moving.toml  # settings: LLM engine, printer, base_url (env vars win)
 make browser-check               # EVERY browser check, writing ones too, on a throwaway server (~2 min)
 make run & make ui-check         # the read-only browser checks, against a server you started
 make proof                       # label proof sheet at 1:1 in iTerm; CODES="B-0003 ..." adds real ones
@@ -76,7 +77,7 @@ destructive.
 
 | `src/movingbox/` | for |
 |---|---|
-| `cli.py`, `config.py` | the `moving` command; `Config`/`from_env`, home of every `MOVING_*` variable |
+| `cli.py`, `config.py` | the `moving` command; `Config`/`from_env`, home of every `MOVING_*` variable and its `moving.toml` key (`FILE_KEYS`) |
 | `secrets.py` | `ANTHROPIC_API_KEY`: the environment, then this checkout's `.env`, then none |
 | `db.py`, `migrations/` | connect and migrate (on every connect); numbered SQL |
 | `store.py` | records, items, rooms, status, location, nesting; shared with the CLI |
@@ -105,8 +106,10 @@ purpose headers, the browser checks (`*_check.mjs`), `hooks/`, `lib/launchd.sh`.
 
 - **HTTPS is not optional.** `getUserMedia` and `BarcodeDetector` are
   secure-context only and fail *silently* on a LAN IP (`localhost` is exempt).
-  `tailscale serve` certifies `moving.example.ts.net`, which is also
-  the base URL in every printed QR: changing it means reprinting.
+  `tailscale serve` certifies this Mac's `<machine>.<tailnet>.ts.net`, which is
+  also the base URL in every printed QR: changing it means reprinting. The real
+  address lives only in the main checkout's `moving.toml` (`[server] base_url`),
+  never in tracked files: the repository is meant to be public.
 - **The `/b/{code}` redirect must stay relative.** Tailscale proxies plain
   HTTP, so an absolute redirect built from the request says `http://` and drops
   the phone out of the secure context. Two tests guard it. uvicorn trusts
@@ -117,7 +120,7 @@ purpose headers, the browser checks (`*_check.mjs`), `hooks/`, `lib/launchd.sh`.
   http URL. No `BarcodeDetector` there, so `scan.js` falls back to jsQR,
   vendored so scanning works offline; typing a code always works.
 - MagicDNS does not resolve from the sandboxed tool shell:
-  `curl --resolve moving.example.ts.net:443:$(tailscale ip -4) ...`.
+  `curl --resolve <host>:443:$(tailscale ip -4) ...`, the host from `moving.toml`.
 - The websocket key rides in the query string (`/api/events?key=`), because a
   browser `WebSocket` cannot send `X-API-Key`, so it reaches uvicorn's access
   log. Acceptable only on a tailnet, usually with no `MOVING_API_KEY` set.
@@ -185,6 +188,8 @@ purpose headers, the browser checks (`*_check.mjs`), `hooks/`, `lib/launchd.sh`.
   `phrase_summaries` are off and `vision_provider` is `"ollama"` in the `Config`
   dataclass (`from_env` turns them on), and `from_env({...})` reads no `.env`
   unless `MOVING_ENV_FILE` names one. Tests build `Config` directly.
+  `conftest.py` also points `MOVING_CONFIG` at nothing, since the real
+  `moving.toml` names the real database and printer.
 
 ### Photos and caches
 
@@ -348,6 +353,42 @@ purpose headers, the browser checks (`*_check.mjs`), `hooks/`, `lib/launchd.sh`.
 ## Decisions
 
 Each is a choice; changing one is a decision, not the fixing of a gap.
+
+### Settings and the public release
+
+- **`moving.toml` is the settings file** (asked for as "make it easy to
+  configure the llm engine from a config file"; TOML over INI for typed values
+  and stdlib `tomllib`). `moving.example.toml` documents every key and is
+  tested against `FILE_KEYS` and the real defaults. **A `MOVING_*` variable
+  wins over the file**, so throwaway servers and the plist still override one
+  setting. `read_config_file` turns the file into those variables, so there is
+  one parser. **Strict**: an unknown section or key, or a wrong type, is a
+  `ConfigError` at startup. `MOVING_CONFIG` names another file; relative paths
+  are relative to the file.
+- **The Anthropic key has no key in `moving.toml`**: it stays in `.env`, so the
+  settings file can be shared.
+- **`DEFAULT_BASE_URL` is a placeholder** (`https://moving.example`), and
+  `Config.unprintable()` makes any backend but `fake` refuse it (503 from the
+  API, exit 1 from the CLI): a QR pointing nowhere cannot be taken back. The
+  live install's real address is in the main checkout's `moving.toml`.
+- **MIT**, chosen by the owner. `THIRD_PARTY_NOTICES.md` covers Inter (OFL),
+  jsQR (Apache 2.0) and `brother_ql` (GPLv3+, installed, not bundled).
+- **CI** (`.github/workflows/ci.yml`): lint on Ubuntu, tests on **macOS**,
+  because the label goldens compare bytes and Linux FreeType renders Inter a
+  pixel row differently. The browser checks are not in CI.
+  `astral-sh/setup-uv` has no floating major tag: pin the exact version. On
+  failure the job uploads the goldens as rendered there (`rendered-labels`).
+- **The goldens need raqm, which needs libfribidi at run time.** Without it
+  Pillow silently uses its basic layout -- no kerning, and Inter's hyphen in
+  "B-0042" sits lower -- and every golden differs all over.
+  `test_text_is_shaped_as_the_goldens_were` says so first. Pillow dlopens it
+  by bare name, and dyld reads `DYLD_FALLBACK_LIBRARY_PATH` at process start,
+  so `conftest.py` setting it is too late: CI and the launchd plist set it
+  outside the process (`/opt/homebrew/lib`).
+- **Portable shell**: `sed -i.bak` + `rm`, never `sed -i ''` (BSD-only; the
+  version hook failed on Linux).
+- The git history still contains the tailnet hostname and absolute home paths
+  from before the scrub; rewriting it was not done.
 
 ### Labels (committed: a change means reprinting what is stuck to boxes)
 
