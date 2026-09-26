@@ -37,14 +37,16 @@ jobs:
       - run: make lint
 
   test:
-    # macOS, not Ubuntu: the label goldens compare bytes, and FreeType on
-    # Linux rasterises Inter a pixel row differently. The app is developed and
-    # deployed on a Mac, so that is the rendering the goldens pin.
+    # macOS, not Ubuntu: the label goldens compare bytes, and on Linux Inter
+    # comes out a pixel row different. The app is developed and deployed on a
+    # Mac, so that is the rendering the goldens pin.
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Install zbar (QR decoding in the label tests)
-        run: brew install zbar
+      # zbar: the label tests decode their QR codes. fribidi: without it Pillow
+      # drops from raqm to its basic text layout, and every golden differs.
+      - name: Install zbar and fribidi
+        run: brew install zbar fribidi
       - uses: astral-sh/setup-uv@v10.2.0  # no floating major tag
         with:
           enable-cache: true
