@@ -1,4 +1,5 @@
-# Lint and test on every push to any branch, and on pull requests (from forks).
+# Lint (Ubuntu) and test (macOS) on every push to any branch, and on pull
+# requests (from forks).
 #
 # The suite needs no printer, no model and no network: the printer is forced
 # to `fake` and vision to `stub` in tests/conftest.py, and no test may make a
@@ -23,11 +24,11 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
         with:
           enable-cache: true
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -36,15 +37,18 @@ jobs:
       - run: make lint
 
   test:
-    runs-on: ubuntu-latest
+    # macOS, not Ubuntu: the label goldens compare bytes, and FreeType on
+    # Linux rasterises Inter a pixel row differently. The app is developed and
+    # deployed on a Mac, so that is the rendering the goldens pin.
+    runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install zbar (QR decoding in the label tests)
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libzbar0
-      - uses: astral-sh/setup-uv@v6
+        run: brew install zbar
+      - uses: astral-sh/setup-uv@v10
         with:
           enable-cache: true
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - run: uv sync --locked
