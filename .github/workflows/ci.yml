@@ -1,0 +1,51 @@
+# Lint and test on every push to any branch, and on pull requests (from forks).
+#
+# The suite needs no printer, no model and no network: the printer is forced
+# to `fake` and vision to `stub` in tests/conftest.py, and no test may make a
+# network call. zbar is installed so the label tests decode real QR codes
+# rather than skipping, and node runs tests/*.test.mjs (through pytest) and the
+# JS/CSS linters. The headless-Chrome browser checks are not run here.
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: uv sync --locked
+      - run: npm ci --no-audit --no-fund
+      - run: make lint
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install zbar (QR decoding in the label tests)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libzbar0
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: uv sync --locked
+      - run: uv run pytest -q
