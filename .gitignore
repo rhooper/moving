@@ -21,6 +21,7 @@ __pycache__/
 # macOS
 .DS_Store
 
-# Local secrets
+# Local secrets, and local settings (see moving.example.toml)
 .env
+moving.toml
 node_modules/

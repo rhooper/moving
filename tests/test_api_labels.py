@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from movingbox.api.app import create_app
+from movingbox.config import DEFAULT_BASE_URL
 
 pyzbar = pytest.importorskip("pyzbar.pyzbar", reason="needs `brew install zbar`")
 
@@ -54,6 +55,19 @@ def test_the_preview_shows_the_destination_room(client):
 
 def test_previewing_an_unknown_box_is_404(client):
     assert client.get("/api/labels/preview/B-9999.png").status_code == 404
+
+
+def test_a_real_printer_refuses_the_placeholder_address(config):
+    # Tape with a QR pointing at nowhere cannot be taken back. cups_raw, not
+    # brother_ql: the app's startup would open the real printer over USB.
+    unconfigured = config.replace(base_url=DEFAULT_BASE_URL, printer_backend="cups_raw")
+    with TestClient(create_app(unconfigured)) as c:
+        code = c.post("/api/boxes", json={"content_summary": "pots and pans"}).json()["code"]
+
+        response = c.post("/api/labels/print", json={"codes": [code]})
+
+    assert response.status_code == 503
+    assert "base_url" in response.json()["detail"]
 
 
 def test_printing_writes_through_the_fake_backend(client, config):
