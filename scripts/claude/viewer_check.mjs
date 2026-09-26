@@ -88,7 +88,7 @@ try {
         await evaluate(`document.querySelector("dialog.viewer .note").textContent`));
   check("and lists nothing yet", await evaluate(`document.querySelector("dialog.viewer ul.items").hidden`));
   check("the full picture is what it shows",
-        /\/photos\/\d+\/full$/.test(await evaluate(`document.querySelector("dialog.viewer img").getAttribute("src")`)));
+        /\/photos\/\d+\/full\?k=[0-9a-f]{12}$/.test(await evaluate(`document.querySelector("dialog.viewer img").getAttribute("src")`)));
   await shot("viewer-busy.png");
 
   // --- and it fills in by itself when the model finishes ---
@@ -186,7 +186,7 @@ try {
 
   // --- the rest of the strip still works ---
   check("the link is still a link, for a long press or middle click",
-        /\/photos\/\d+\/full$/.test(await evaluate(`document.querySelector(".shots figure .pic a").getAttribute("href")`)));
+        /\/photos\/\d+\/full\?k=[0-9a-f]{12}$/.test(await evaluate(`document.querySelector(".shots figure .pic a").getAttribute("href")`)));
   // --- a single thing: its photos are not read, and the viewer does not offer to ---
   const bike = (await (await fetch(`${base}/api/boxes`, { method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ kind: "item", content_summary: "bicycle" }) })).json()).code;

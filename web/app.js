@@ -2,8 +2,8 @@
 
 import { Autosaver, lineFor, policyFor, retryAfter } from "/autosave.js";
 import {
-  analysisView, coverUrl, flagIcon, kindIcon, money, readingWith, rowStatus, seenIn, STRIP_SIZES,
-  stripFor,
+  analysisView, coverUrl, flagIcon, kindIcon, money, photoUrl, readingWith, rowStatus, seenIn,
+  STRIP_SIZES, stripFor,
 } from "/covers.js";
 import {
   LiveChannel,
@@ -1383,7 +1383,7 @@ const showing = { id: null, render: null };
 function viewPhoto(photo, { readable = true, readOnly = false } = {}) {
   const dialog = document.createElement("dialog");
   dialog.className = "viewer";
-  const full = `/photos/${encodeURIComponent(photo.id)}/full`;
+  const full = photoUrl(photo.id, "full", photo.key);
   dialog.innerHTML = `
     <img src="${escape(full)}" alt="${escape(photo.caption || "Box contents")}">
     <div class="seen">
@@ -1737,7 +1737,7 @@ function photosPart(strip, { path, contents, changed, stale, ask, finished }) {
     // `hidden`, so an update never creates a control that needs a listener.
     figure.innerHTML = `
       <div class="pic">
-        <a href="/photos/${escape(id)}/full" target="_blank" rel="noreferrer">
+        <a href="${escape(photoUrl(photo.id, "full", photo.key))}" target="_blank" rel="noreferrer">
           <img src="${escape(photo.thumb)}" srcset="${escape(photo.srcset || "")}"
                sizes="${STRIP_SIZES}" alt="${escape(photo.caption || "Box contents")}"
                width="${escape(photo.width)}" height="${escape(photo.height)}" loading="lazy">

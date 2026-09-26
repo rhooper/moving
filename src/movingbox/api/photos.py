@@ -66,6 +66,7 @@ def serve(
     photo_id: int,
     size: str,
     v: str | None = None,
+    k: str | None = None,
     conn: sqlite3.Connection = Depends(get_conn),
     config: Config = Depends(get_config),
 ) -> FileResponse:
@@ -75,6 +76,12 @@ def serve(
     photo = storage.get_photo(conn, photo_id)
     if photo is None:
         raise HTTPException(status_code=404, detail=f"No photo {photo_id}")
+    # A URL keyed to other bytes is a photo that no longer exists, even if its
+    # id was given to a new one: answering with the new one's bytes would cache
+    # them under the old URL for a year. No key is served, for a page loaded
+    # before keys existed; it reloads itself after the deploy.
+    if k is not None and k != renditions.key(photo):
+        raise HTTPException(status_code=404, detail=f"No photo {photo_id} with key {k}")
 
     if size == "strip":
         return _strip(photo, v, config)
@@ -83,8 +90,9 @@ def serve(
     path = config.photo_dir / (name or photo["filename"])
     if not path.is_file():
         raise HTTPException(status_code=404, detail="the photo file is missing from disk")
-    # Cached for a year under an id-keyed URL, so these files must never be
-    # rewritten in place. Anything regenerable goes through a versioned URL.
+    # Cached for a year under a URL keyed by id and `k`, so these files must
+    # never be rewritten in place. Anything regenerable goes through a
+    # versioned URL.
     return FileResponse(
         path, media_type="image/jpeg", headers={"cache-control": "public, max-age=31536000"}
     )

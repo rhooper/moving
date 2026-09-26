@@ -3,15 +3,24 @@
 // cover id from the server and the box page works it out from its photos; both
 // go through here so they cannot drift apart.
 
+// A photo's URL at one size. `key` (the server's `key`, `cover_photo_key`)
+// names the bytes: before ids stopped being reused, a deleted photo's id went
+// to the next one taken, and its URLs are cached for a year, so an id alone
+// showed the deleted picture. The server 404s a key that is not the photo's.
+export function photoUrl(photoId, size, key) {
+  const k = key ? `?k=${encodeURIComponent(key)}` : "";
+  return `/photos/${encodeURIComponent(photoId)}/${size}${k}`;
+}
+
 // The ~400px thumb, never /full. "" when there is no photo: an empty src
 // re-requests the page itself.
-export function thumbUrl(photoId) {
+export function thumbUrl(photoId, key) {
   if (photoId === null || photoId === undefined || photoId === "") return "";
-  return `/photos/${encodeURIComponent(photoId)}/thumb`;
+  return photoUrl(photoId, "thumb", key);
 }
 
 export function coverUrl(box) {
-  return thumbUrl(box && box.cover_photo_id);
+  return thumbUrl(box && box.cover_photo_id, box && box.cover_photo_key);
 }
 
 // The schema keeps exactly one photo flagged; the first-photo fallback only
@@ -30,7 +39,7 @@ export function stripFor(photos) {
   const cover = coverOf(photos);
   return (photos || []).map((photo) => ({
     ...photo,
-    thumb: thumbUrl(photo.id),
+    thumb: thumbUrl(photo.id, photo.key),
     cover: cover !== null && photo.id === cover.id,
   }));
 }

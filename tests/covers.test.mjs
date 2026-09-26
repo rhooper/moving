@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  analysisView, coverOf, coverUrl, flagIcon, kindIcon, STRIP_SIZES, stripFor, thumbUrl,
+  analysisView, coverOf, coverUrl, flagIcon, kindIcon, photoUrl, STRIP_SIZES, stripFor, thumbUrl,
 } from "../web/covers.js";
 
 test("a thumbnail url points at the thumb, never the full image", () => {
@@ -32,6 +32,19 @@ test("a box list row uses the cover the server sent with it", () => {
   assert.equal(coverUrl({ code: "B-0002", cover_photo_id: null }), "");
   assert.equal(coverUrl({ code: "B-0003" }), "");
   assert.equal(coverUrl(null), "");
+});
+
+test("a url names the photo's bytes, not only its id", () => {
+  // A deleted photo's id went to the next one taken, and a phone showed the
+  // deleted picture from its year-long cache. The key tells the two apart.
+  assert.equal(thumbUrl(102, "f46b16c1ac8c"), "/photos/102/thumb?k=f46b16c1ac8c");
+  assert.equal(
+    coverUrl({ code: "B-0057", cover_photo_id: 102, cover_photo_key: "f46b16c1ac8c" }),
+    "/photos/102/thumb?k=f46b16c1ac8c",
+  );
+  assert.equal(photoUrl(102, "full", "f46b16c1ac8c"), "/photos/102/full?k=f46b16c1ac8c");
+  assert.equal(stripFor([{ id: 102, key: "f46b16c1ac8c", is_primary: 1 }])[0].thumb,
+    "/photos/102/thumb?k=f46b16c1ac8c");
 });
 
 test("the cover is the photo marked as one", () => {

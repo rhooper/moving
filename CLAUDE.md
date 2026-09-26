@@ -199,6 +199,18 @@ purpose headers, the browser checks (`*_check.mjs`), `hooks/`, `lib/launchd.sh`.
   serves the old bytes (the "reload it twice" shape; `strip_cache_check.mjs`
   proves it). `/photos/{id}/thumb` and `/full` are safe only because their
   bytes never change; regenerating either needs a versioned URL first.
+- **An id is not enough to name bytes: every photo URL carries `k`**
+  (`renditions.key`, the first 12 of the upload's sha256; `photo.key`,
+  `cover_photo_key`; `photoUrl`/`thumbUrl` in `covers.js`), and a key that is
+  not the photo's is a 404. Until migration 0011 (AUTOINCREMENT), deleting the
+  newest photo gave its id to the next one taken, and a phone showed B-0057's
+  new photo as the one deleted from B-0056 out of its year-long cache. Ids
+  are now never reused, but ids reused before then are covered only by `k`.
+  **Build photo URLs from id and key, never the id alone.** A URL with no key
+  is still served, for pages open across a deploy.
+- `boxes` and `items` still use a bare `INTEGER PRIMARY KEY`, so their ids can
+  be reused the same way. No URL is cached by them, but a stale request from
+  another device aimed at a deleted item's id could reach a new one.
 - The photo strip has its own 800 px sharpened image (the 400 px list
   thumbnail is untouched), at `/photos/{id}/strip?v=<renditions.VERSION>`, the
   version a hash of the recipe. **Any other version is a 404, never the current

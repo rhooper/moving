@@ -339,5 +339,6 @@ class TestTheStripImage:
 
         (photo,) = storage.list_photos(conn, code)
 
-        assert f"/photos/{photo['id']}/strip?v={renditions.VERSION} 600w" in photo["srcset"]
-        assert f"/photos/{photo['id']}/thumb 300w" in photo["srcset"]
+        k = photo["key"]
+        assert f"/photos/{photo['id']}/strip?v={renditions.VERSION}&k={k} 600w" in photo["srcset"]
+        assert f"/photos/{photo['id']}/thumb?k={k} 300w" in photo["srcset"]

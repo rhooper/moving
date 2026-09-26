@@ -411,9 +411,10 @@ class TestTheStripImage:
 
         (listed,) = client.get(f"/api/boxes/{code}/photos").json()
 
+        key = photo["key"]
         assert listed["srcset"] == (
-            f"/photos/{photo['id']}/thumb 300w, "
-            f"/photos/{photo['id']}/strip?v={renditions.VERSION} 600w"
+            f"/photos/{photo['id']}/thumb?k={key} 300w, "
+            f"/photos/{photo['id']}/strip?v={renditions.VERSION}&k={key} 600w"
         )
 
     def test_the_upload_response_offers_both_sizes_too(self, client, code):
@@ -421,3 +422,56 @@ class TestTheStripImage:
         photo = uploaded(client, code)
 
         assert f"strip?v={renditions.VERSION}" in photo["srcset"]
+
+
+class TestADeletedPhotoIsNeverShownAgain:
+    """B-0057's new photo showed as the one just deleted from B-0056.
+
+    The deleted photo was the newest, so the next one taken was given its id,
+    and with it URLs a phone had cached for a year.
+    """
+
+    def upload(self, client, code, colour):
+        return client.post(
+            f"/api/boxes/{code}/photos", files={"file": ("a.jpg", a_jpeg(colour), "image/jpeg")}
+        ).json()
+
+    def test_the_next_photo_does_not_get_the_deleted_one_s_id(self, client):
+        first, second = (client.post("/api/boxes", json={}).json()["code"] for _ in range(2))
+        deleted = self.upload(client, first, (1, 1, 1))
+        client.delete(f"/photos/{deleted['id']}")
+
+        taken = self.upload(client, second, (2, 2, 2))
+
+        assert taken["id"] > deleted["id"]
+
+    def test_a_url_keyed_to_other_bytes_is_not_found(self, client, code):
+        # As for a photo whose id was reused before ids stopped being reused:
+        # never answered with the new photo's bytes.
+        photo = self.upload(client, code, (3, 3, 3))
+
+        for size in ("thumb", "full"):
+            assert client.get(f"/photos/{photo['id']}/{size}?k=000000000000").status_code == 404
+        strip = f"/photos/{photo['id']}/strip?v={renditions.VERSION}&k=000000000000"
+        assert client.get(strip).status_code == 404
+
+    def test_its_own_key_is_served(self, client, code):
+        photo = self.upload(client, code, (4, 4, 4))
+
+        for size in ("thumb", "full"):
+            assert client.get(f"/photos/{photo['id']}/{size}?k={photo['key']}").status_code == 200
+        strip = f"/photos/{photo['id']}/strip?v={renditions.VERSION}&k={photo['key']}"
+        assert client.get(strip).status_code == 200
+
+    def test_no_key_is_still_served_for_a_page_from_before_the_deploy(self, client, code):
+        photo = self.upload(client, code, (5, 5, 5))
+
+        assert client.get(f"/photos/{photo['id']}/thumb").status_code == 200
+
+    def test_the_list_row_carries_the_cover_s_key(self, client, code):
+        photo = self.upload(client, code, (6, 6, 6))
+
+        row = next(b for b in client.get("/api/boxes").json() if b["code"] == code)
+
+        assert (row["cover_photo_id"], row["cover_photo_key"]) == (photo["id"], photo["key"])
+        assert photo["key"] == photo["sha256"][:12]
