@@ -99,7 +99,8 @@ destructive.
 | `src/movingbox/` | for |
 |---|---|
 | `cli.py`, `config.py` | the `moving` command; `Config`/`from_env`, home of every `MOVING_*` variable and its `moving.toml` key (`FILE_KEYS`) |
-| `secrets.py` | `ANTHROPIC_API_KEY`: the environment, then this checkout's `.env`, then none |
+| `secrets.py` | `ANTHROPIC_API_KEY`, and `lookup` for a plug-in's keys: the environment, then this checkout's `.env`, then none |
+| `providers.py` | which provider reads photos and phrases summaries: the built-ins, or a plug-in's `package.module:factory`; `check` at startup |
 | `db.py`, `migrations/` | connect and migrate (on every connect); numbered SQL |
 | `store.py` | records, items, rooms, status, location, nesting; shared with the CLI |
 | `storage.py`, `renditions.py` | photos on disk; the list thumbnail and the versioned strip image |
@@ -216,7 +217,8 @@ purpose headers, the browser checks (`*_check.mjs`), `hooks/`, `lib/launchd.sh`.
 - **Nothing in the suite can reach a model or the API**: `auto_analyse` and
   `phrase_summaries` are off and `vision_provider` is `"ollama"` in the `Config`
   dataclass (`from_env` turns them on), and `from_env({...})` reads no `.env`
-  unless `MOVING_ENV_FILE` names one. Tests build `Config` directly.
+  unless `MOVING_ENV_FILE` names one. Tests build `Config` directly, whose
+  `key_lookup` is `no_keys`, so a plug-in finds no key even in the shell.
   `conftest.py` also points `MOVING_CONFIG` at nothing, since the real
   `moving.toml` names the real database and printer.
 
@@ -511,6 +513,28 @@ Each is a choice; changing one is a decision, not the fixing of a gap.
   unquoted value ends at ` #`). It never leaves the process: `repr=False`,
   `claude.redact()` on every message, and `/api/settings/spend` says only
   `key: true|false`.
+
+### Other providers: a plug-in hook, not more built-ins
+
+- **Asked for as "Support Ollama, Codex, Gemini as well. Or at least add
+  hooks"; the maintainer chose hooks only** (2026-09-29): every built-in cloud
+  provider is code to keep current with an API nobody here can call, since no
+  test may reach the network and the assistant may not use a key itself. The
+  guide is `docs/providers.md`; `tests/fake_providers.py` is a whole plug-in.
+- **A vision plug-in is the cloud tier, in Claude's place** (`Hybrid`'s
+  `cloud`), so the local fallback, the cap and Settings' "stopped answering"
+  apply to it unchanged. `Config.cloud_tier` is the one test for "there is
+  one"; `spend.LOCAL` names the providers that are not. Only
+  `DraftUnreadable` falls back; any other exception fails the job.
+- **A factory is `factory(config, key)`**, returning None without a key (a
+  working setup, as Claude's is). Built per use, like the built-ins;
+  `providers.check` imports each once at startup, and a misspelt built-in
+  name is a `ConfigError` now (it used to read locally without a word).
+- **Plug-ins may live in `plugins/`** (git-ignored, searched first): `uv run`
+  manages the environment, and an install's own module stays out of the
+  repository.
+- **A plug-in phraser's spend is not capped**: the cap sums photo jobs. The
+  warmer pings Ollama only, so it is skipped for a plug-in's model.
 
 ### Photo analysis (`analysis.py`; the contract is in the spec)
 
