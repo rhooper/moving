@@ -3,7 +3,8 @@
 Tracks what went into which box during a house move: a FastAPI + SQLite
 service, a PWA with no build step (plain ES modules), QR labels printed on a
 Brother QL-800 and scanned with a phone. User docs: `README.md`. Photo-analysis
-API contract: `docs/superpowers/specs/2026-09-18-photo-analysis.md`. Icon
+API contract: `docs/superpowers/specs/2026-09-18-photo-analysis.md`. Every
+setting: `docs/configuration.md` (tested against `FILE_KEYS`). Icon
 design record: `docs/design/icons/NOTES.md`. How each decision was reached is
 in `git log`.
 
