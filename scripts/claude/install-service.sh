@@ -18,7 +18,7 @@ CDPATH=""
 # MOVING_SERVICE_LABEL / MOVING_SERVICE_PORT install a throwaway second instance
 # beside the real one, to test the deploy path. It must not touch `tailscale
 # serve`: there is a single :443 handler for the whole machine.
-DEFAULT_LABEL="ca.toybox.moving"
+DEFAULT_LABEL="local.movingbox"
 DEFAULT_PORT=8787
 LABEL="${MOVING_SERVICE_LABEL:-$DEFAULT_LABEL}"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"

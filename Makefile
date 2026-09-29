@@ -3,7 +3,7 @@
 # There is no build step: Python runs from source under uv, and the PWA is
 # plain ES modules. "Building" is `make setup`; everything else is running it.
 #
-# The live service (launchd agent ca.toybox.moving) owns port 8787, so the dev
+# The live service (launchd agent local.movingbox) owns port 8787, so the dev
 # server defaults to 8788 and the two never fight over the socket.
 
 PORT ?= 8788

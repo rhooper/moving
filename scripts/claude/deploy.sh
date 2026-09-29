@@ -27,7 +27,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 # shellcheck source=lib/launchd.sh
 source "$REPO/scripts/claude/lib/launchd.sh"
 
-LABEL="${MOVING_SERVICE_LABEL:-ca.toybox.moving}"
+LABEL="${MOVING_SERVICE_LABEL:-local.movingbox}"
 PORT="${MOVING_SERVICE_PORT:-8787}"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 HEALTH="http://127.0.0.1:$PORT/health"
