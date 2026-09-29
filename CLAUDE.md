@@ -7,11 +7,29 @@ API contract: `docs/superpowers/specs/2026-09-18-photo-analysis.md`. Icon
 design record: `docs/design/icons/NOTES.md`. How each decision was reached is
 in `git log`.
 
+It was built for one household's move and one install: macOS with Homebrew, a
+QL-800 on USB, a phone on a tailnet. Everything runs without the printer (the
+`fake` backend), the cloud key (the local model, or `stub`) and Tailscale
+(`localhost` is a secure context), but the tests run on macOS only (see CI
+below). The sections on deploying describe an install made with
+`install-service.sh`; a plain clone has no service and deploys nothing.
+
+## Contributing
+
+- `make setup`, then `make check` before every commit, and `make
+  browser-check` after touching `web/`. No test may reach the network.
+- Pull requests against `main`, one purpose each. The history is how the
+  reasoning is kept, so a commit message says *why*.
+- Branches conflict on `src/movingbox/version.py` (see "The version bumps
+  itself"): take the higher.
+- The "Decisions" below are choices, not gaps: changing one is a discussion
+  first. "Closed decisions" are not re-proposed.
+
 ## Commands
 
 ```bash
 make setup                       # uv sync + npm ci (linters only) + git hooks
-make run                         # dev server with reload on :8788 (the live service owns :8787)
+make run                         # dev server with reload on :8788 (an installed service owns :8787)
 make check                       # lint + test; `make test`, `make lint`, `make fmt` (black) alone
 cp moving.example.toml moving.toml  # settings: LLM engine, printer, base_url (env vars win)
 make browser-check               # EVERY browser check, writing ones too, on a throwaway server (~2 min)
@@ -38,7 +56,9 @@ tailscale serve --bg 8787        # HTTPS, required for the camera
 
 ## The API key is the app's, not the assistant's
 
-**Mandatory restriction, stated by the owner on 2026-09-20:** "you are not
+**Mandatory restriction, stated by the maintainer on 2026-09-20, and binding
+on every assistant working in this repository, whoever's key is present:**
+"you are not
 allowed to use this api key directly... you may not use this api key for
 anything but the specifically designed operations for classifying images and
 summarizing text to do with the user interactions in the UI."
@@ -62,15 +82,15 @@ person's use of the app would have cost.
 Being unable to *read* the key is not the restriction; the restriction is on
 *using* it, and it holds wherever a key is reachable. `.claude/settings.json`
 denies reading `.env`, `security find-generic-password` and `op read`, which
-says how the owner wants this handled. Build and prove everything against fakes
+says how this is meant to be handled. Build and prove everything against fakes
 and `MOVING_VISION_PROVIDER=stub`; no test may make a network call.
 
 ## Where the real database lives
 
 `var/moving.db` in the **main checkout**. `config.ROOT` follows the package, so
 the CLI or a dev server run from a worktree silently uses that worktree's own
-`var/`, which is deleted with it. B-0001 has a physical label in circulation;
-do not lose its row. Back up (`uv run moving backup`) before anything
+`var/`, which is deleted with it. On a real install every row is a label stuck
+to a box somewhere: a lost row leaves a QR that opens nothing. Back up (`uv run moving backup`) before anything
 destructive.
 
 ## Where things live
@@ -106,10 +126,10 @@ purpose headers, the browser checks (`*_check.mjs`), `hooks/`, `lib/launchd.sh`.
 
 - **HTTPS is not optional.** `getUserMedia` and `BarcodeDetector` are
   secure-context only and fail *silently* on a LAN IP (`localhost` is exempt).
-  `tailscale serve` certifies this Mac's `<machine>.<tailnet>.ts.net`, which is
-  also the base URL in every printed QR: changing it means reprinting. The real
-  address lives only in the main checkout's `moving.toml` (`[server] base_url`),
-  never in tracked files: the repository is meant to be public.
+  `tailscale serve` certifies the host's `<machine>.<tailnet>.ts.net`, which is
+  also the base URL in every printed QR: changing it means reprinting. An
+  install's real address lives only in its own `moving.toml` (`[server]
+  base_url`), never in tracked files: the repository is public.
 - **The `/b/{code}` redirect must stay relative.** Tailscale proxies plain
   HTTP, so an absolute redirect built from the request says `http://` and drops
   the phone out of the secure context. Two tests guard it. uvicorn trusts
@@ -254,7 +274,9 @@ purpose headers, the browser checks (`*_check.mjs`), `hooks/`, `lib/launchd.sh`.
 ### Deploying
 
 - **Merging to `main` in the main checkout redeploys** (`hooks/post-merge` runs
-  `deploy.sh --if-changed`; `MOVING_NO_DEPLOY=1` skips it).
+  `deploy.sh --if-changed`; `MOVING_NO_DEPLOY=1` skips it). With no agent's
+  plist in `~/Library/LaunchAgents` -- any contributor's clone -- the hook
+  does nothing.
 - **Never deploy from a worktree.** Hooks live in the common git dir and fire in
   every worktree; the hook and `deploy.sh` compare `--absolute-git-dir` with
   `--git-common-dir` and bail.
@@ -283,7 +305,7 @@ purpose headers, the browser checks (`*_check.mjs`), `hooks/`, `lib/launchd.sh`.
 
 ### Shell, launchd and git
 
-- **`CDPATH` is set in this user's shell**, so a relative `cd` prints its
+- **`CDPATH` may be set in the caller's shell** (it is in the maintainer's), so a relative `cd` prints its
   destination and `$(cd … && pwd)` returns two lines. Scripts in
   `scripts/claude/` clear it first; so must new ones.
 - **`launchctl print` exits non-zero for an unloaded label** (fatal under
@@ -389,9 +411,9 @@ Each is a choice; changing one is a decision, not the fixing of a gap.
   settings file can be shared.
 - **`DEFAULT_BASE_URL` is a placeholder** (`https://moving.example`), and
   `Config.unprintable()` makes any backend but `fake` refuse it (503 from the
-  API, exit 1 from the CLI): a QR pointing nowhere cannot be taken back. The
-  live install's real address is in the main checkout's `moving.toml`.
-- **MIT**, chosen by the owner. `THIRD_PARTY_NOTICES.md` covers Inter (OFL),
+  API, exit 1 from the CLI): a QR pointing nowhere cannot be taken back. A
+  real install's address is in its own `moving.toml`.
+- **MIT**, chosen by the maintainer. `THIRD_PARTY_NOTICES.md` covers Inter (OFL),
   jsQR (Apache 2.0) and `brother_ql` (GPLv3+, installed, not bundled).
 - **CI** (`.github/workflows/ci.yml`): lint on Ubuntu, tests on **macOS**,
   because the label goldens compare bytes and Linux FreeType renders Inter a
@@ -407,8 +429,11 @@ Each is a choice; changing one is a decision, not the fixing of a gap.
   outside the process (`/opt/homebrew/lib`).
 - **Portable shell**: `sed -i.bak` + `rm`, never `sed -i ''` (BSD-only; the
   version hook failed on Linux).
-- The git history still contains the tailnet hostname and absolute home paths
-  from before the scrub; rewriting it was not done.
+- **The history was rewritten on 2026-09-29** to take a tailnet hostname and
+  absolute home paths out of every commit before publishing, so commit hashes
+  quoted from before that date do not resolve. **The launchd label is
+  `local.movingbox`**, generic on purpose; a different one is
+  `MOVING_SERVICE_LABEL`.
 
 ### Labels (committed: a change means reprinting what is stuck to boxes)
 
@@ -745,4 +770,6 @@ Each is a choice; changing one is a decision, not the fixing of a gap.
   `LiveChannel`'s wiring to a browser `WebSocket`, and the tap-target behaviour
   it protects, have not been watched on a handset.
 
-Remote: **github.com/rhooper/moving** (private). Push after merging to main.
+Remote: **github.com/rhooper/moving**. Contributions arrive as pull requests;
+the maintainer merges to `main` in the main checkout (which redeploys the
+install there) and pushes after merging.
