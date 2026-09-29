@@ -131,9 +131,11 @@ provider = "claude"   # "claude", "ollama" or "stub"
 | `"claude"` (default) | Claude first; the local Ollama model whenever Claude cannot -- no key, offline, rate limited, refused, or over budget | Anthropic API |
 | `"ollama"` | the local model only | none leaves the machine |
 | `"stub"` | a canned answer after `stub_seconds`, for UI work | none |
+| `"package.module:factory"` | a plug-in you write -- OpenAI, Gemini, anything -- in Claude's place, with the local model still behind it. See [`docs/providers.md`](docs/providers.md) | yours |
 
 `"claude"` with no key is a supported setup: it simply reads everything
-locally. The other engine settings:
+locally. `[summary] provider` takes a plug-in the same way; the default is
+`"ollama"`. The other engine settings:
 
 ```toml
 [vision]
