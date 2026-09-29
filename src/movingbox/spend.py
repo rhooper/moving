@@ -9,7 +9,8 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-from .config import Config
+from . import providers
+from .config import Config, is_spec
 from .vision import base
 
 
@@ -45,7 +46,7 @@ def total_usd(conn: sqlite3.Connection) -> float:
 
 def over_cap(conn: sqlite3.Connection, config: Config) -> bool:
     """Whether the cloud tier is withdrawn. Always False without a cloud tier."""
-    if config.vision_provider != "claude":
+    if not config.cloud_tier:
         return False
     return total_usd(conn) >= config.vision_budget_usd
 
@@ -68,6 +69,9 @@ def by_model(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 #: How far back "recently" looks when asking whether the cloud tier is
 #: actually answering.
 RECENT = 10
+#: The providers that read on this machine. Anything else answering -- Claude
+#: or a plug-in -- is the cloud tier.
+LOCAL = ("ollama", "stub")
 
 
 def recent_reads(conn: sqlite3.Connection, config: Config) -> tuple[int, int]:
@@ -84,23 +88,28 @@ def recent_reads(conn: sqlite3.Connection, config: Config) -> tuple[int, int]:
         """,
         (RECENT,),
     ).fetchall()
-    return len(rows), sum(1 for row in rows if row["provider"] != "claude")
+    return len(rows), sum(1 for row in rows if row["provider"] in LOCAL)
 
 
 def status(conn: sqlite3.Connection, config: Config) -> dict[str, Any]:
     """Everything the Settings page says about the cloud tier.
 
-    `key` says whether there is one; nothing here is built from its value.
+    `key` says whether the cloud tier has one -- whether Claude has its key, or
+    a plug-in's factory built a provider; nothing here is built from a value.
     """
     spent = total_usd(conn)
     over = over_cap(conn, config)
-    has_key = bool(config.anthropic_api_key)
+    if is_spec(config.vision_provider):
+        has_key = providers.cloud(config) is not None
+    else:
+        has_key = bool(config.anthropic_api_key)
     counted = conn.execute(
         "SELECT COUNT(*) AS n FROM ai_jobs WHERE cost_usd IS NOT NULL AND cost_usd > 0"
     ).fetchone()
     reads, locally = recent_reads(conn, config)
     return {
         "provider": config.vision_provider,
+        "cloud": config.cloud_tier,
         "model": config.vision_cloud_model,
         "detail_model": config.vision_cloud_detail_model,
         "local_model": config.vision_model,
@@ -113,5 +122,5 @@ def status(conn: sqlite3.Connection, config: Config) -> dict[str, Any]:
         "by_model": by_model(conn),
         "recent_reads": reads,
         "recent_local": locally,
-        "reading_locally": config.vision_provider != "claude" or not has_key or over,
+        "reading_locally": not config.cloud_tier or not has_key or over,
     }

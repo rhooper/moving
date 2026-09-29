@@ -17,7 +17,7 @@ from starlette.websockets import WebSocketDisconnect
 
 import movingbox
 
-from .. import analysis, db, phrasing, store
+from .. import analysis, db, phrasing, providers, store
 from ..config import ROOT, Config, from_env
 from ..labels import printer as printing
 from ..labels.layout import FONT_PATH
@@ -73,32 +73,8 @@ def get_conn(config: Config = Depends(get_config)) -> Iterator[sqlite3.Connectio
 
 
 def build_vision_provider(config: Config):
-    """The configured vision provider, for routes and the worker.
-
-    Built per use so a provider that comes back up needs no restart. "claude"
-    is the cloud tier with the local model behind it; with no key it is still a
-    pair, with nothing to try first, so photos are read locally.
-    """
-    if config.vision_provider == "stub":
-        from ..vision.stub import StubProvider
-
-        return StubProvider(config.vision_stub_seconds, config.vision_detail_model)
-
-    from ..vision.ollama import OllamaProvider
-
-    local = OllamaProvider(config.ollama_url)
-    if config.vision_provider != "claude":
-        return local
-
-    from ..vision import claude, hybrid
-
-    return hybrid.Hybrid(
-        cloud=claude.provider_for(
-            config.anthropic_api_key, detail_model=config.vision_cloud_detail_model
-        ),
-        local=local,
-        fallbacks=config.vision_fallbacks(),
-    )
+    """The configured vision provider, for routes and the worker (see `providers`)."""
+    return providers.vision(config)
 
 
 def get_vision_provider(config: Config = Depends(get_config)):
@@ -107,21 +83,8 @@ def get_vision_provider(config: Config = Depends(get_config)):
 
 
 def build_phraser(config: Config):
-    """The "From contents" phraser, or None to assemble the line without a model.
-
-    A Config built directly (every test) gives None, so the suite never reaches
-    a model.
-    """
-    if not config.phrase_summaries:
-        return None
-    if config.vision_provider == "stub":
-        from ..phrasing import StubPhraser
-
-        return StubPhraser()
-
-    from ..phrasing import OllamaPhraser
-
-    return OllamaPhraser(config.ollama_url)
+    """The "From contents" phraser, or None to assemble the line (see `providers`)."""
+    return providers.phraser(config)
 
 
 def get_phraser(config: Config = Depends(get_config)):
@@ -164,6 +127,8 @@ async def _until_the_client_goes(socket: WebSocket) -> None:
 
 def create_app(config: Config | None = None) -> FastAPI:
     settings = config or from_env()
+    # A provider setting that names nothing usable stops startup here.
+    providers.check(settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):

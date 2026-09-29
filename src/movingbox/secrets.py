@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 import stat
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -68,6 +68,21 @@ def read(path: Path) -> dict[str, str]:
         log.warning("%s is readable by other users; run: chmod 600 %s", path, path)
 
     return parse(text)
+
+
+def lookup(env: Mapping[str, str], *, env_file: Path | None) -> Callable[[str], str | None]:
+    """A plug-in's key lookup: `env` first, then `env_file`, else None.
+
+    The file is read once, now, as the Anthropic key is. What comes back holds
+    the values, so it goes only where `repr=False` keeps it out of sight.
+    """
+    named = dict(env)
+    in_file = read(env_file) if env_file is not None else {}
+
+    def key(name: str) -> str | None:
+        return (named.get(name) or "").strip() or (in_file.get(name) or "").strip() or None
+
+    return key
 
 
 def anthropic_api_key(env: Mapping[str, str], *, env_file: Path | None) -> str | None:

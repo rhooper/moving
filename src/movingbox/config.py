@@ -10,7 +10,7 @@ from __future__ import annotations
 import dataclasses
 import os
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from . import secrets
@@ -27,6 +27,18 @@ DEFAULT_BASE_URL = "https://moving.example"
 
 class ConfigError(ValueError):
     """`moving.toml` says something the app cannot use."""
+
+
+def is_spec(name: str) -> bool:
+    """Whether a provider setting names a plug-in (`package.module:factory`)
+    rather than a built-in one. `providers.load` says whether it is a good one.
+    """
+    return ":" in name
+
+
+def no_keys(name: str) -> str | None:
+    """The key lookup of a Config built directly: every test's, so none finds a key."""
+    return None
 
 
 #: `moving.toml` keys, by section, and the variable each one stands for.
@@ -61,6 +73,7 @@ FILE_KEYS: dict[str, dict[str, tuple[str, type]]] = {
     },
     "summary": {
         "phrase": ("MOVING_PHRASE_SUMMARIES", bool),
+        "provider": ("MOVING_SUMMARY_PROVIDER", str),
         "model": ("MOVING_SUMMARY_MODEL", str),
     },
     "ollama": {
@@ -159,8 +172,9 @@ class Config:
     anthropic_api_key: str | None = dataclasses.field(default=None, repr=False)
     #: Dollars, cumulative over every cloud job. Past it, photos are read locally.
     vision_budget_usd: float = 30.0
-    #: "ollama", "claude" (cloud first, local behind it), or "stub" (a canned
-    #: draft after a delay, for checking the UI).
+    #: "ollama", "claude" (cloud first, local behind it), "stub" (a canned
+    #: draft after a delay, for checking the UI), or a plug-in's
+    #: `package.module:factory`, which takes Claude's place as the cloud tier.
     #:
     #: This default and the two flags below keep a Config built directly -- as
     #: every test builds one -- away from the API and from any model; from_env
@@ -172,6 +186,19 @@ class Config:
     #: Whether "From contents" asks a model to phrase the summary, and the app
     #: keeps that model warm. Off, the button assembles the line itself.
     phrase_summaries: bool = False
+    #: Who phrases it: "ollama", or a plug-in's `package.module:factory`.
+    summary_provider: str = "ollama"
+    #: A plug-in's way to its API key: a name in, the value or None out. From
+    #: the environment, then the `.env` file (see from_env); never shown, and
+    #: never compared, so two Configs differing only by it are equal.
+    key_lookup: Callable[[str], str | None] = dataclasses.field(
+        default=no_keys, repr=False, compare=False
+    )
+
+    @property
+    def cloud_tier(self) -> bool:
+        """Whether photos are offered to a cloud provider first: Claude or a plug-in."""
+        return self.vision_provider == "claude" or is_spec(self.vision_provider)
 
     def replace(self, **changes) -> Config:
         return dataclasses.replace(self, **changes)
@@ -192,10 +219,10 @@ class Config:
     def vision_model_for(self, *, detail: bool = False) -> str:
         """Which model a job names when it is queued: the one tried first.
 
-        Only "claude" names cloud models: the stub recognises a closer look by
-        `vision_detail_model`.
+        Only a cloud tier names cloud models: the stub recognises a closer look
+        by `vision_detail_model`.
         """
-        if self.vision_provider == "claude":
+        if self.cloud_tier:
             return self.vision_cloud_detail_model if detail else self.vision_cloud_model
         return self.vision_detail_model if detail else self.vision_model
 
@@ -259,4 +286,6 @@ def from_env(
         vision_stub_seconds=float(e.get("MOVING_VISION_STUB_SECONDS", "3")),
         auto_analyse=e.get("MOVING_AUTO_ANALYSE", "1") not in ("0", "false", "no", "off"),
         phrase_summaries=e.get("MOVING_PHRASE_SUMMARIES", "1") not in ("0", "false", "no", "off"),
+        summary_provider=e.get("MOVING_SUMMARY_PROVIDER", "ollama"),
+        key_lookup=secrets.lookup(e, env_file=env_file),
     )

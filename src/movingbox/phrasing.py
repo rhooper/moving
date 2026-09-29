@@ -108,6 +108,15 @@ def as_lines(contents: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def prompt(contents: list[dict[str, Any]]) -> tuple[str, str]:
+    """The system prompt and the user's message, for any provider to send.
+
+    A plug-in sends these with `SCHEMA` as the reply's shape, at temperature 0
+    (see `build_request`), and hands what comes back to `finish`.
+    """
+    return SYSTEM, INSTRUCTION.format(contents=as_lines(contents))
+
+
 def build_request(model: str, contents: list[dict[str, Any]]) -> dict:
     """The /api/chat payload. Text only -- there is nothing to look at."""
     return {
@@ -121,8 +130,8 @@ def build_request(model: str, contents: list[dict[str, Any]]) -> dict:
         # rewrite the label.
         "options": {"temperature": 0, "num_ctx": CONTEXT},
         "messages": [
-            {"role": "system", "content": SYSTEM},
-            {"role": "user", "content": INSTRUCTION.format(contents=as_lines(contents))},
+            {"role": role, "content": text}
+            for role, text in zip(("system", "user"), prompt(contents), strict=True)
         ],
     }
 
@@ -175,8 +184,16 @@ def read_response(payload: dict) -> str:
         text = (message.get("thinking") or "").strip()
     if not text:
         raise Unusable(f"unexpected reply from ollama: {str(payload)[:200]}")
+    return finish(text)
 
-    summary = _tidy(str(_find_json(text).get("summary") or ""))
+
+def finish(text: str) -> str:
+    """The label line in a model's reply text, tidied, or raise Unusable.
+
+    Forgiving of the reply (the JSON may be fenced or wrapped in prose), strict
+    about the outcome: an empty line is not an answer.
+    """
+    summary = _tidy(str(_find_json(text or "").get("summary") or ""))
     if not summary:
         raise Unusable("the reply had no summary in it")
     return summary
@@ -256,7 +273,12 @@ class Warmer(threading.Thread):
         self._stop.set()
 
     def run(self) -> None:
-        if not self.config.phrase_summaries or self.config.vision_provider == "stub":
+        if (
+            not self.config.phrase_summaries
+            or self.config.vision_provider == "stub"
+            # A plug-in's model is not Ollama's to load.
+            or self.config.summary_provider != "ollama"
+        ):
             return
         while not self._stop.is_set():
             warmed = False

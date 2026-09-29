@@ -42,6 +42,8 @@
 #               (no key, offline, rate limited, over budget). Works with no key.
 #   "ollama" -- local only; nothing leaves the machine.
 #   "stub"   -- a canned answer after a delay, for UI work.
+#   "package.module:factory" -- a plug-in (docs/providers.md), in Claude's
+#               place: the local model still reads whenever it cannot.
 # provider = "claude"                                    # MOVING_VISION_PROVIDER
 # auto_analyse = true   # read each photo as it is uploaded  MOVING_AUTO_ANALYSE
 # budget_usd = 30.0     # lifetime cloud spend cap        # MOVING_VISION_BUDGET_USD
@@ -55,6 +57,8 @@
 # Whether "From contents" asks a local model to phrase the summary line.
 # Off (or Ollama unreachable), it assembles the line itself.
 # phrase = true                                          # MOVING_PHRASE_SUMMARIES
+# Who phrases it: "ollama", or a plug-in's "package.module:factory".
+# provider = "ollama"                                    # MOVING_SUMMARY_PROVIDER
 # model = "qwen2.5:7b"                                   # MOVING_SUMMARY_MODEL
 
 [ollama]

@@ -25,3 +25,6 @@ __pycache__/
 .env
 moving.toml
 node_modules/
+
+# An install's own provider plug-ins (docs/providers.md).
+/plugins/

@@ -56,7 +56,7 @@ The defaults are under the checkout's own `var/`. A worktree has its own
 
 | Key | Variable | Default | Meaning |
 |---|---|---|---|
-| `provider` | `MOVING_VISION_PROVIDER` | `claude` | `claude`: Claude first, the local Ollama model whenever Claude cannot answer (no key, offline, rate limited, refused, over budget). `ollama`: local only, nothing leaves the machine. `stub`: a canned answer after `stub_seconds`, for UI work (it also stubs summary phrasing). |
+| `provider` | `MOVING_VISION_PROVIDER` | `claude` | `claude`: Claude first, the local Ollama model whenever Claude cannot answer (no key, offline, rate limited, refused, over budget). `ollama`: local only, nothing leaves the machine. `stub`: a canned answer after `stub_seconds`, for UI work (it also stubs summary phrasing). `package.module:factory`: a plug-in in Claude's place, with the local model still behind it ([providers.md](providers.md)). |
 | `auto_analyse` | `MOVING_AUTO_ANALYSE` | `true` | Read each photo in the background as it is uploaded. |
 | `budget_usd` | `MOVING_VISION_BUDGET_USD` | `30.0` | Lifetime cloud spend cap, summed from recorded jobs. Past it, photos are read locally. |
 | `cloud_model` | `MOVING_VISION_CLOUD_MODEL` | `claude-sonnet-5` | Reads every photo. |
@@ -68,14 +68,19 @@ The defaults are under the checkout's own `var/`. A worktree has its own
 Keep the `-instruct` tags on local models: the bare `qwen3-vl` tags are
 *thinking* checkpoints, several times slower and no more accurate. A Claude
 model the app has no price for is charged against the budget at the dearest
-known rate.
+known rate. A plug-in is asked for `cloud_model` and `cloud_detail_model`, so
+set both to its own model names.
+
+A misspelt provider, or a plug-in that cannot be imported, stops startup with
+its name rather than quietly reading everything locally.
 
 ### `[summary]`: "From contents"
 
 | Key | Variable | Default | Meaning |
 |---|---|---|---|
-| `phrase` | `MOVING_PHRASE_SUMMARIES` | `true` | Ask a local model to phrase the summary line. Off, or with Ollama unreachable, the line is assembled from the contents instead. |
-| `model` | `MOVING_SUMMARY_MODEL` | `qwen2.5:7b` | The Ollama model that phrases it. |
+| `phrase` | `MOVING_PHRASE_SUMMARIES` | `true` | Ask a model to phrase the summary line. Off, or with the model unreachable, the line is assembled from the contents instead. |
+| `provider` | `MOVING_SUMMARY_PROVIDER` | `ollama` | `ollama`, or a plug-in's `package.module:factory` ([providers.md](providers.md)). |
+| `model` | `MOVING_SUMMARY_MODEL` | `qwen2.5:7b` | The model that phrases it, by the provider's own name for it. |
 
 ### `[ollama]`
 
@@ -102,6 +107,10 @@ The app warns at startup if `.env` is readable by other users (`chmod 600
 `/api/settings/spend` reports only whether one is present. A refused key looks
 exactly like a working one from the outside, so Settings -> Reading photos says
 when the last ten reads were all local.
+
+A plug-in's own keys (`OPENAI_API_KEY`, `GEMINI_API_KEY`, whatever it asks
+for) are found the same way, the environment first and then `.env`, and never
+go in `moving.toml` either.
 
 ## Environment only
 
