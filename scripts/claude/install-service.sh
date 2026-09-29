@@ -11,7 +11,7 @@
 # Usage:   scripts/claude/install-service.sh [--uninstall]
 set -euo pipefail
 
-# CDPATH is set in this user's shell, and a relative `cd` through it prints its
+# CDPATH may be set in the caller's shell, and a relative `cd` through it prints its
 # target into the surrounding $( ), corrupting `$(cd ... && pwd)`.
 CDPATH=""
 

@@ -15,7 +15,7 @@
 # not narrow the layout (use Emulation.setDeviceMetricsOverride). A headless
 # page fires no blur without Emulation.setFocusEmulationEnabled.
 set -u
-unset CDPATH   # set in this user's shell, and it corrupts $(cd ... && pwd)
+unset CDPATH   # may be set in the caller's shell, and it corrupts $(cd ... && pwd)
 
 HERE=$(cd "$(dirname "$0")/../.." && pwd -P)
 cd "$HERE" || exit 1

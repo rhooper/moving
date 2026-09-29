@@ -18,7 +18,7 @@
 #   green; a failed deploy leaves the old build serving.
 set -euo pipefail
 
-# CDPATH is set in this user's shell, and a `cd` that resolves a relative path
+# CDPATH may be set in the caller's shell, and a `cd` that resolves a relative path
 # through it prints the destination: `$(cd ... && pwd -P)` then returns two
 # lines and every path comparison below silently fails.
 CDPATH=""

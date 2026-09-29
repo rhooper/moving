@@ -6,7 +6,7 @@
 # Installed as a shim by scripts/claude/install-hooks.sh; the shim runs this
 # copy from whichever checkout is committing, so a worktree bumps its own file.
 set -euo pipefail
-CDPATH=""   # set in this user's shell; a relative cd through it prints its target
+CDPATH=""   # may be set in the caller's shell; a relative cd through it prints its target
 
 FILE="src/movingbox/version.py"
 [ -f "$FILE" ] || exit 0

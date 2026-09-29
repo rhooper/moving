@@ -13,7 +13,7 @@
 #          Set MOVING_NO_DEPLOY=1 to skip (e.g. while bisecting).
 set -uo pipefail
 
-# CDPATH is set in this user's shell, and a relative `cd` through it prints
+# CDPATH may be set in the caller's shell, and a relative `cd` through it prints
 # where it went into the command substitutions below.
 CDPATH=""
 
@@ -43,6 +43,11 @@ common_dir="$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && 
 
 deploy="$repo/scripts/claude/deploy.sh"
 [[ -x "$deploy" ]] || exit 0
+
+# A clone with no service installed (a contributor's) has nothing to deploy.
+# The default label must match deploy.sh and install-service.sh.
+label="${MOVING_SERVICE_LABEL:-local.movingbox}"
+[[ -f "$HOME/Library/LaunchAgents/$label.plist" ]] || exit 0
 
 # deploy.sh refuses a dirty tree, loudly and with a non-zero exit. That is right
 # when a person ran it; after a merge it would just be noise, so say one line.

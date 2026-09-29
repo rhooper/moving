@@ -7,7 +7,7 @@
 # Date:    2026-09-20
 # Usage:   scripts/claude/bump.sh minor|major
 set -euo pipefail
-CDPATH=""   # set in this user's shell; a relative cd through it prints its target
+CDPATH=""   # may be set in the caller's shell; a relative cd through it prints its target
 
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 FILE="src/movingbox/version.py"

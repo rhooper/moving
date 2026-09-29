@@ -8,7 +8,7 @@
 # Usage:   scripts/claude/install-hooks.sh [--uninstall]
 set -euo pipefail
 
-# CDPATH is set in this user's shell, and a relative `cd` through it prints its
+# CDPATH may be set in the caller's shell, and a relative `cd` through it prints its
 # target into the $( ) below, giving a path with a newline in it.
 CDPATH=""
 
