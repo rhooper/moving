@@ -8,4 +8,4 @@ hook edits it with sed -- nothing else should be in reach.
 0.x on purpose: one person's mid-move tool, whose surface still changes daily.
 """
 
-__version__ = "0.2.108"
+__version__ = "0.2.109"

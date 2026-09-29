@@ -111,6 +111,10 @@ variable wins over the file**. `MOVING_CONFIG=/path/to/file.toml` reads a
 different file. A misspelt section or key stops startup with its name rather
 than being ignored.
 
+The full reference -- every key, its variable and default, the variables
+with no key, and how the installed service overrides the printer backend --
+is [`docs/configuration.md`](docs/configuration.md).
+
 The API key is the one thing that does not go in `moving.toml`: it goes in
 `.env` (or the environment as `ANTHROPIC_API_KEY`), so the settings file can be
 shared.

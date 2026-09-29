@@ -139,6 +139,56 @@ class TestTheExample:
         )
 
 
+def example_defaults() -> dict[tuple[str, str], str]:
+    """(section, key) -> the default `moving.example.toml` shows, unquoted."""
+    found, section = {}, None
+    for line in (ROOT / "moving.example.toml").read_text().splitlines():
+        if heading := re.match(r"^\[(\w+)\]", line):
+            section = heading[1]
+        elif setting := re.match(r'^# (\w+) = ("[^"]*"|\S+)', line):
+            found[(section, setting[1])] = setting[2].strip('"')
+    return found
+
+
+class TestTheReference:
+    """docs/configuration.md: every setting, with the same default as the example."""
+
+    text = (ROOT / "docs" / "configuration.md").read_text()
+
+    def rows(self) -> dict[tuple[str, str], tuple[str, str]]:
+        found, section = {}, None
+        for line in self.text.splitlines():
+            if heading := re.match(r"^### `\[(\w+)\]`", line):
+                section = heading[1]
+            elif line.startswith("## "):
+                section = None
+            elif section and (row := re.match(r"^\| `(\w+)` \| `(\w+)` \| ([^|]+) \|", line)):
+                found[(section, row[1])] = (row[2], row[3].strip())
+        return found
+
+    def test_every_setting_has_a_row_under_its_section(self):
+        expected = {
+            (section, key): variable
+            for section, keys in FILE_KEYS.items()
+            for key, (variable, _) in keys.items()
+        }
+        assert {where: variable for where, (variable, _) in self.rows().items()} == expected
+
+    def test_each_default_is_the_examples(self):
+        example = example_defaults()
+        for where, (_, default) in self.rows().items():
+            shown = "" if default == "unset" else default.strip("`")
+            assert shown == example[where], where
+
+    def test_every_variable_the_code_reads_is_documented(self):
+        used = set()
+        for path in [*(ROOT / "src").rglob("*.py"), *(ROOT / "scripts").rglob("*")]:
+            if path.is_file():
+                used |= set(re.findall(r"\bMOVING_[A-Z_]+[A-Z]\b", path.read_text(errors="ignore")))
+        assert used, "found no variables at all"
+        assert sorted(v for v in used if f"`{v}`" not in self.text) == []
+
+
 class TestThePlaceholderAddress:
     def blank(self, **changes) -> Config:
         return Config(db_path="/tmp/x", photo_dir="/tmp/x", label_preview_dir="/tmp/x").replace(
