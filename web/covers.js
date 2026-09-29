@@ -246,11 +246,13 @@ export function readingWith(spend) {
     fraction: cap > 0 ? Math.min(1, spent / cap) : 1,
   };
 
-  if (s.provider !== "claude") {
+  // `cloud` is Claude or a plug-in; a server from before plug-ins sent only `provider`.
+  const cloud = s.cloud ?? s.provider === "claude";
+  if (!cloud) {
     return {
       ...bar, state: "local",
       now: `Photos are read on this machine, by ${local}.`,
-      why: "Nothing is spent. Set MOVING_VISION_PROVIDER=claude to use the cloud tier.",
+      why: "Nothing is spent. Set [vision] provider to \"claude\" or a plug-in to use a cloud tier.",
     };
   }
   // `key` says only whether one is set: the value never reaches the browser.
@@ -258,7 +260,9 @@ export function readingWith(spend) {
     return {
       ...bar, state: "nokey",
       now: `Photos are read on this machine, by ${local}.`,
-      why: "There is no API key, so nothing is spent. Put ANTHROPIC_API_KEY in .env and restart.",
+      why: s.provider === "claude"
+        ? "There is no API key, so nothing is spent. Put ANTHROPIC_API_KEY in .env and restart."
+        : `${s.provider} found no API key, so nothing is spent. Put its key in .env and restart.`,
     };
   }
   if (s.over) {

@@ -674,3 +674,27 @@ test("one local read among several cloud ones is the fallback working, not a fau
 
   assert.equal(seen.state, "cloud");
 });
+
+test("a plug-in in the cloud tier reads as the cloud tier", async () => {
+  const { readingWith } = await import("../web/covers.js");
+
+  const seen = readingWith({
+    provider: "my_openai:vision", cloud: true, key: true, over: false, spent_usd: 0.5, cap_usd: 30,
+    model: "gpt-vision", detail_model: "gpt-vision-large", local_model: "qwen3-vl:4b-instruct",
+  });
+
+  assert.equal(seen.state, "cloud");
+  assert.match(seen.now, /gpt-vision/);
+});
+
+test("a plug-in with no key says so without naming Claude's key", async () => {
+  const { readingWith } = await import("../web/covers.js");
+
+  const seen = readingWith({
+    provider: "my_openai:vision", cloud: true, key: false, local_model: "qwen3-vl:4b-instruct",
+  });
+
+  assert.equal(seen.state, "nokey");
+  assert.match(seen.why, /my_openai:vision/);
+  assert.doesNotMatch(seen.why, /ANTHROPIC/);
+});
