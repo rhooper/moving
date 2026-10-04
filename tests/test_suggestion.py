@@ -190,6 +190,7 @@ class TestWhenAModelWritesIt:
         assert suggestion == {
             "summary": "Kitchen gear - a stock pot, a stand mixer and baking pans",
             "source": "model",
+            "breakable": [],
         }
 
     def test_the_model_is_shown_what_is_nested_inside_as_well(self, client, empty):
@@ -251,6 +252,7 @@ class TestWhenAModelWritesIt:
         assert suggestion == {
             "summary": "stock pot, stand mixer, baking pan",
             "source": "assembled",
+            "breakable": [],
         }
 
     def test_an_empty_box_is_never_sent_to_a_model(self, client, empty):
@@ -258,7 +260,7 @@ class TestWhenAModelWritesIt:
 
         suggestion = client.get(f"/api/boxes/{empty}/summary-suggestion").json()
 
-        assert suggestion == {"summary": "", "source": "assembled"}
+        assert suggestion == {"summary": "", "source": "assembled", "breakable": []}
         assert said.seen is None
 
 
