@@ -106,6 +106,7 @@ destructive.
 | `storage.py`, `renditions.py` | photos on disk; the list thumbnail and the versioned strip image |
 | `search.py` | the FTS5 index |
 | `kinds.py`, `prefs.py`, `codes.py` | kinds, sizes, label copies; settings in the database; code format |
+| `fragility.py` | what makes a record fragile (`breakable`), and marking it (`mark`) |
 | `summarise.py`, `phrasing.py` | the assembled summary line; the model that phrases it, and its `Warmer` |
 | `analysis.py`, `spend.py` | the background photo reader; cloud spend and the cap |
 | `vision/` | `base` (schema, `parse`, `Reading`), `claude`, `ollama`, `hybrid`, `stub` |
@@ -328,7 +329,7 @@ purpose headers, the browser checks (`*_check.mjs`), `hooks/`, `lib/launchd.sh`.
 - **Run `make browser-check` after touching `web/`.** A throwaway server (own
   database, fake printer, stub vision, `MOVING_REVISION` set) runs `ui_check`
   and `wedge_check` (read-only, assert they wrote nothing), `autosave_check`,
-  `copies_check`, `viewer_check`, `nesting_check`, `newbox_check` (which also
+  `copies_check`, `fragile_check`, `viewer_check`, `nesting_check`, `newbox_check` (which also
   covers the sheet's camera, since it already has the fake webcam; these write,
   and **refuse port 8787 and any non-loopback host**), then `strip_cache_check`
   and `reload_check` on servers of their own.
@@ -552,22 +553,40 @@ Each is a choice; changing one is a decision, not the fixing of a gap.
 ### Summaries
 
 - **"From contents" fills the summary and saves at once**, with Undo;
-  **`qwen2.5:7b`** (`MOVING_SUMMARY_MODEL`) phrases it, ~0.4 s.
-- **The line leads with the KINDS of things, examples in support** ("Music
-  tech: interfaces, pedals, sequencers, CDs, with an APC mini"), asked for as
-  "prefer a high level view of the kinds of things in the box, not the exact
-  items". Median 87 characters against 64 for the old list-of-items shape.
-  The stated length in the prompt steers it ("under 200" gave 64, "about 90"
-  gives 87) but is **not obeyed as a ceiling** -- one answer came back at 147
-  -- so `_tidy` enforces `MAX_LENGTH`.
+  **`qwen2.5:7b`** (`MOVING_SUMMARY_MODEL`) phrases it, ~0.7 s.
+- **One heading for the whole container, then examples, then "etc."**
+  ("Music equipment - MPK mini, sequencer, audio interface, pedal, etc."),
+  asked for as "prefer summary descriptions. Eg B-0062 could be Miscellaneous
+  Office - lights, vacuum, leather, mug, figurine, etc. based on the contents
+  and box information". It replaced "kinds first, examples in support"
+  ("prefer a high level view of the kinds of things in the box").
+- **The model answers in fields; `phrasing.compose` writes the line.** It
+  names the one kind most of the list is, says whether that kind honestly
+  covers more than half, and gives a few short examples. Code makes the
+  heading the kind or **"Miscellaneous <room>"**, fits examples to
+  `MAX_LENGTH` with room for ", etc." (dropping an example, never cutting
+  one), and adds "etc." only when something went unnamed. The prompt is told
+  the record's kind and the room its label prints (`context`), and the room
+  is there for the misc heading, not as contents.
+- **Measured, 2026-10-04, qwen2.5:7b, 17 real records x 3 runs: every run
+  identical**, B-0062 a jumble and the rest named for their kind, median
+  0.74 s. Asked for the line itself it copied its examples' headings ("Electronic
+  parts" for music gear); sorting lines into groups took 2-5 s and split
+  coherent boxes; marking each line as fitting lost count; the photo
+  reader's item categories are too noisy (B-0015, all electronics, is 17% in
+  its biggest). **The wording is fragile**: dropping the room, "Never the
+  room", or rewording `SYSTEM` each turned B-0062 into "Office supplies".
+  Re-measure with `try_summary.py --code ...` on a database copy after any
+  change.
 - **`temperature` is 0, and that is what buys consistency.** Over seven real
   records, three runs each, it takes identical answers from 5 of 7 records to
   7 of 7. *This corrects an earlier note here*: a previous attempt at a more
   categorical prompt was abandoned for "costing consistency", and the same
   prompt at temperature 0 is perfectly consistent. The variation was sampling,
-  not the wording. What is still true is that a **genuinely mixed container
-  gets a wrong category** -- three unrelated things came back as "Home decor"
-  -- which is why `ENOUGH` is where it is.
+  not the wording. A **genuinely mixed container can still get a wrong
+  category** -- three unrelated things came back as "Home decor", which is
+  why `ENOUGH` is where it is; with the misc heading, B-0062 is right, but
+  B-0036 (CDs, USB stick, pen, tumbler, award) is still "Office supplies".
 - **Only the button phrases**; the photo worker assembles
   (`test_the_background_summary_is_never_written_by_a_model`).
 - **The assembled line is the normal fallback**: under `phrasing.ENOUGH` (4)
@@ -671,6 +690,27 @@ Each is a choice; changing one is a decision, not the fixing of a gap.
   (`inheritedRoom()`, `store.going_to()`).
 - **Fragile climbs, never descends**: marking a nested thing fragile offers to
   mark its containers; clearing touches nothing else.
+
+### Fragile, marked for what is inside
+
+- **Something breakable going in marks the record fragile** (asked for as
+  "given it contains a mug or figurine, auto-add fragile"). **Words, not a
+  model** (`fragility.breakable`): `BREAKABLE` (mug, figurine, ceramic, vase,
+  mirror, bulb, monitor ...), `PHRASES` (picture frame), and `STURDY` words
+  that cancel (B-0062's "weight plate" and "wooden star light" are why plain
+  plate, cup, bowl and light are not on the list).
+- **Where it fires**: a typed item (`POST .../items`, actor `"auto"`, reply
+  `marked_fragile`); a photo reading (actor `"ai"`), for a breakable name or
+  the vision model's own `fragile`; and "From contents", whose GET stays
+  write-free and returns `breakable` for the page to PATCH. A rename does not
+  fire it. Logged with a note, "holds <the thing>" (`update_box(note=)`).
+- **Only ever adds, and a person's clear wins for good**: once anyone but
+  `"ai"`/`"auto"` has turned fragile off, nothing marks that record again
+  (`cleared_by_a_person`), or every new item would undo their decision.
+- **The chip turns on in place**: the page is not redrawn under the add
+  field, and fragile is in `live.js`'s in-place keys, since a photo of mugs
+  marks it in the same breath as it writes the summary -- a redraw took the
+  pristine summary field with it. `fragile_check` presses all of it.
 - **"Add something inside" is a dialog** (kind, photo, source room), and its
   camera is the shared one below.
 - **Tapping something inside opens its editor as a modal** (`editSubitem`);
