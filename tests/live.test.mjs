@@ -192,13 +192,20 @@ test("nothing changed at all is also fine to apply in place", () => {
   assert.equal(onlySummaryChanged(drawn, { ...drawn }), true);
 });
 
+test("fragile, marked for what a photo showed, is applied in place too", () => {
+  // The worker writes the summary and marks a box of mugs fragile in one go;
+  // redrawing the page for the chip would take the summary field with it.
+  const fresh = { ...drawn, content_summary: "kettle, 3 mugs", fragile: 1 };
+  assert.equal(onlySummaryChanged(drawn, fresh), true);
+});
+
 test("a change to anything else the page draws needs the whole page", () => {
-  assert.equal(onlySummaryChanged(drawn, { ...drawn, fragile: 1 }), false);
+  assert.equal(onlySummaryChanged(drawn, { ...drawn, heavy: 1 }), false);
   assert.equal(onlySummaryChanged(drawn, { ...drawn, status: "packed" }), false);
   // A key appearing or vanishing counts: the server grew a field this page
   // may be drawing.
   assert.equal(onlySummaryChanged(drawn, { ...drawn, deleted_at: "2026-09-18" }), false);
-  const { fragile: _gone, ...without } = drawn;
+  const { status: _gone, ...without } = drawn;
   assert.equal(onlySummaryChanged(drawn, without), false);
 });
 

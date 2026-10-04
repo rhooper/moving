@@ -101,10 +101,12 @@ export function partOf(event) {
   return (event && PARTS.get(event.kind)) || null;
 }
 
-// What `box.updated` may change that the page draws in place: the summary and
-// the nesting. `updated_at` moves on every write.
+// What `box.updated` may change that the page draws in place: the summary, the
+// nesting, and Fragile, which a photo of a mug now turns on behind the same
+// summary ("given it contains a mug or figurine, auto-add fragile").
+// `updated_at` moves on every write.
 const SUMMARY_KEYS = new Set([
-  "content_summary", "summary_source", "updated_at", "children", "path", "parent",
+  "content_summary", "summary_source", "updated_at", "children", "path", "parent", "fragile",
 ]);
 
 // `box.updated` also covers flags, rooms and kind; if any moved, the caller
