@@ -6,7 +6,7 @@ import sqlite3
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
-from .. import phrasing, store, summarise
+from .. import kinds, phrasing, store, summarise
 from ..config import Config
 from . import events
 from .app import get_config, get_conn, get_events, get_phraser
@@ -280,11 +280,19 @@ def suggest_summary(
     """A proposed summary of the box's items and whatever is nested in it, at any depth.
 
     Nothing is written. `source` is "model" when a model phrased the line and
-    "assembled" otherwise, which is a normal outcome (see phrasing.py).
+    "assembled" otherwise, which is a normal outcome (see phrasing.py). The
+    model is also told what the record is and the room its label prints, for
+    the "Miscellaneous Office" a jumble is called.
     """
-    _require_readable(conn, code)
+    box = _require_readable(conn, code)
     contents = summarise.contents(store.subtree(conn, code))
-    summary, source = phrasing.summary_for(contents, phraser, model=config.summary_model)
+    context = {
+        "kind": kinds.label_for(box["kind"]),
+        "room": store.label_rooms(conn, box)["room_name"],
+    }
+    summary, source = phrasing.summary_for(
+        contents, phraser, model=config.summary_model, context=context
+    )
     return {"summary": summary, "source": source}
 
 

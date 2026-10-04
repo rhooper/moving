@@ -45,9 +45,11 @@ def phrased(client, answer):
 
         def __init__(self):
             self.seen = None
+            self.context = None
 
-        def phrase(self, contents, *, model):
+        def phrase(self, contents, *, model, context=None):
             self.seen = contents
+            self.context = context
             if isinstance(answer, Exception):
                 raise answer
             return answer
@@ -206,6 +208,39 @@ class TestWhenAModelWritesIt:
         ]
         assert said.seen[-1]["qty"] == 3
 
+    def test_the_model_is_told_the_kind_and_the_room(self, client):
+        # For the "Miscellaneous Office" a jumble is called.
+        office = client.post("/api/rooms", json={"name": "Office"}).json()["id"]
+        tub = client.post("/api/boxes", json={"kind": "tub", "destination_room_id": office})
+        code = tub.json()["code"]
+        stock(client, code, "mug", "lamp", "leather", "vacuum")
+        said = phrased(client, "Miscellaneous Office - mug, lamp")
+
+        client.get(f"/api/boxes/{code}/summary-suggestion")
+
+        assert said.context == {"kind": "Tub", "room": "Office"}
+
+    def test_a_nested_record_is_going_where_its_container_goes(self, client):
+        office = client.post("/api/rooms", json={"name": "Office"}).json()["id"]
+        crate = client.post("/api/boxes", json={"kind": "crate", "destination_room_id": office})
+        bag = client.post(
+            "/api/boxes", json={"kind": "bag", "parent_code": crate.json()["code"]}
+        ).json()["code"]
+        stock(client, bag, "mug", "lamp", "leather", "vacuum")
+        said = phrased(client, "Miscellaneous Office - mug, lamp")
+
+        client.get(f"/api/boxes/{bag}/summary-suggestion")
+
+        assert said.context == {"kind": "Bag", "room": "Office"}
+
+    def test_a_record_going_nowhere_yet_has_no_room(self, client, empty):
+        stock(client, empty, "mug", "lamp", "leather", "vacuum")
+        said = phrased(client, "Miscellaneous - mug, lamp")
+
+        client.get(f"/api/boxes/{empty}/summary-suggestion")
+
+        assert said.context["room"] is None
+
     def test_a_model_that_does_not_answer_costs_nothing_but_the_phrasing(self, client, empty):
         # Offline, the button still works.
         stock(client, empty, "stock pot", "stand mixer", "baking pan")
@@ -246,4 +281,4 @@ class TestNoTestReachesAModel:
         phraser = app_module.build_phraser(stubbed)
 
         assert phraser.name == "stub"
-        assert phraser.phrase([{"name": "kettle", "qty": 1}], model="m").startswith("Assorted")
+        assert phraser.phrase([{"name": "kettle", "qty": 1}], model="m").startswith("Miscellaneous")

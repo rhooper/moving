@@ -187,7 +187,7 @@ class TestPhrasingSummaries:
 
         line = phraser.phrase([{"name": "kettle", "qty": 1}], model="small-model")
 
-        assert line == "Kitchen things, by small-model."
+        assert line == "Kitchen things - small-model"
         assert phraser.prompts == [phrasing.prompt([{"name": "kettle", "qty": 1}])]
 
     def test_no_key_assembles_the_line_instead(self):
