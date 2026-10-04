@@ -45,9 +45,10 @@ class Phraser:
     def __init__(self) -> None:
         self.prompts: list[tuple[str, str]] = []
 
-    def phrase(self, contents, *, model: str) -> str:
-        self.prompts.append(phrasing.prompt(contents))
-        return phrasing.finish(f'{{"summary": "Kitchen things, by {model}."}}')
+    def phrase(self, contents, *, model: str, context=None) -> str:
+        self.prompts.append(phrasing.prompt(contents, context))
+        reply = f'{{"kind": "Kitchen things", "most_of_the_list": true, "examples": ["{model}"]}}'
+        return phrasing.finish(reply, contents, context)
 
 
 def phraser(config, key):

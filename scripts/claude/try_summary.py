@@ -25,7 +25,7 @@ import argparse
 import statistics
 import time
 
-from movingbox import phrasing, summarise
+from movingbox import kinds, phrasing, summarise
 from movingbox.config import from_env
 
 
@@ -105,7 +105,7 @@ CASES: dict[str, list[dict]] = {
 }
 
 
-def real_subtrees(config, codes: list[str]) -> dict[str, list[dict]]:
+def real_subtrees(config, codes: list[str]) -> dict[str, tuple[list[dict], dict]]:
     """Whole subtrees read out of a database, by code."""
     from movingbox import db, store
 
@@ -118,7 +118,13 @@ def real_subtrees(config, codes: list[str]) -> dict[str, list[dict]]:
                 print(f"  (no record {code} in {config.db_path})")
                 continue
             deepest = max(n["depth"] for n in nodes)
-            found[f"{code} ({len(nodes)} records, {deepest} deep)"] = nodes
+            # The record's kind and the room its label prints, as the endpoint sends them.
+            box = store.get_box(conn, code)
+            context = {
+                "kind": kinds.label_for(box["kind"]),
+                "room": store.label_rooms(conn, box)["room_name"],
+            }
+            found[f"{code} ({len(nodes)} records, {deepest} deep)"] = (nodes, context)
     finally:
         conn.close()
     return found
@@ -152,7 +158,11 @@ def main() -> int:
 
     config = from_env()
     models = args.models or [config.summary_model]
-    cases = dict(CASES)
+    # The built-in cases have a kind but no room.
+    cases = {
+        label: (nodes, {"kind": kinds.label_for(nodes[0]["kind"])})
+        for label, nodes in CASES.items()
+    }
     if args.codes:
         print(f"database {config.db_path}")
         cases = real_subtrees(config, args.codes)
@@ -179,15 +189,17 @@ def main() -> int:
 
         times: list[float] = []
         fell_back = 0
-        for label, nodes in cases.items():
+        for label, (nodes, context) in cases.items():
             contents = summarise.contents(nodes)
             assembled = summarise.from_items(contents)
-            print(f"{label}")
+            print(f"{label}   {context}")
             print(f"  gathered   {len(contents)} distinct things from {len(nodes)} record(s)")
             print(f"  assembled  {assembled}")
             for _ in range(args.repeat):
                 started = time.monotonic()
-                summary, source = phrasing.summary_for(contents, phraser, model=model)
+                summary, source = phrasing.summary_for(
+                    contents, phraser, model=model, context=context
+                )
                 elapsed = time.monotonic() - started
                 if source == "model":
                     times.append(elapsed)

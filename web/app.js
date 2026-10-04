@@ -1174,7 +1174,12 @@ async function editSubitem(code, { kinds, rooms, onSaved }) {
         try {
           await busy(button, `Adding ${names.length}…`, async () => {
             for (const name of names) {
-              await api(`${path}/items`, { method: "POST", body: JSON.stringify({ name }) });
+              const added = await api(`${path}/items`, { method: "POST", body: JSON.stringify({ name }) });
+              // Something breakable: the server marked it fragile.
+              if (added.marked_fragile) {
+                child = { ...child, fragile: 1 };
+                drawFlags();
+              }
             }
           });
           typed.value = "";
@@ -2957,10 +2962,14 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
     if (!summaryField.isConnected) { stale("summary")(); return; }
     // A move at either end sends box.updated; these touch no field.
     children = fresh.children || [];
-    box = { ...box, children, path: fresh.path, parent: fresh.parent };
+    box = { ...box, children, path: fresh.path, parent: fresh.parent, fragile: fresh.fragile };
     drawChildren();
     showInside();
     recount();
+    // Fragile, as another phone or a photo of a mug left it: the chip only.
+    const chip = app.querySelector('[data-flag="fragile"]');
+    chip?.classList.toggle("on", Boolean(fresh.fragile));
+    chip?.setAttribute("aria-pressed", String(Boolean(fresh.fragile)));
     const incoming = fresh.content_summary || "";
     const moved = incoming !== (summaryField.dataset.initial ?? "");
     const inUse = auto.state("content_summary") !== "clean" || hasUnsavedEdits([{
@@ -2968,7 +2977,7 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
       initial: summaryField.dataset.initial ?? "",
       focused: document.activeElement === summaryField,
     }]);
-    // Flags, rooms or kind moved, or the summary moved under somebody's
+    // Other flags, rooms or kind moved, or the summary moved under somebody's
     // cursor: the whole-page refresh decides, and never clobbers typing.
     const needsPage = !onlySummaryChanged(box, fresh) || (moved && inUse);
     if (moved && !inUse) {
@@ -2992,22 +3001,37 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
     const names = splitItems(new FormData(event.target).get("name"));
     if (!names.length) return;
     const button = addForm.querySelector("button[type=submit]");
+    let breakable = null;
     try {
       await busy(button, `Adding ${names.length}…`, async () => {
         for (const name of names) {
-          await api(`${path}/items`, { method: "POST", body: JSON.stringify({ name }) });
+          const added = await api(`${path}/items`, { method: "POST", body: JSON.stringify({ name }) });
+          if (added.marked_fragile) breakable = added.name;
         }
       });
       // Only once every name is in, so a failure leaves the text to resend.
       addForm.reset();
     } catch (error) { failed(error.message); }
+    if (breakable) showMarkedFragile(breakable);
     // The list alone, and either way: a failure part-way still added some.
     try { await contents.refresh(); } catch (error) { failed(error.message); }
   });
+
+  // Marked fragile for something breakable in it ("given it contains a mug or
+  // figurine, auto-add fragile"). The chip turns on where it is: the page is
+  // not redrawn under the field still being typed in. The chip is the undo.
+  function showMarkedFragile(because) {
+    box.fragile = 1;
+    const chip = app.querySelector('[data-flag="fragile"]');
+    chip?.classList.add("on");
+    chip?.setAttribute("aria-pressed", "true");
+    announce(`Marked fragile: it holds ${because}.`);
+  }
+
   const suggest = document.getElementById("suggest");
   suggest?.addEventListener("click", async () => {
     try {
-      const { summary } = await busy(suggest, "Reading…", () =>
+      const { summary, breakable = [] } = await busy(suggest, "Reading…", () =>
         api(`${path}/summary-suggestion`));
       const field = summaryField;
       if (!summary) {
@@ -3019,6 +3043,16 @@ async function drawBox(code, { keepBanner = false, at = null } = {}) {
       auto.edit("content_summary", tidy(field), "change");
       session.undoAt = summaryForm.id;
       drawLines();
+      // The server only names what would make it fragile (a GET writes
+      // nothing); pressing the button is what marks it. Empty when it already
+      // is, or when a person cleared it.
+      if (breakable.length && !box.fragile) {
+        // After the summary's own save, so the two writes land in order.
+        await auto.idle();
+        const fresh = await api(path, { method: "PATCH", body: JSON.stringify({ fragile: true }) });
+        showMarkedFragile(breakable[0]);
+        if (fresh.parent) await offerFragileClimb(fresh);
+      }
     } catch (error) { failed(error.message); }
   });
 

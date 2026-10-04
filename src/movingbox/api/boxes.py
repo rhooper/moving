@@ -6,7 +6,7 @@ import sqlite3
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
-from .. import phrasing, store, summarise
+from .. import fragility, kinds, phrasing, store, summarise
 from ..config import Config
 from . import events
 from .app import get_config, get_conn, get_events, get_phraser
@@ -235,7 +235,15 @@ def add_item(
     _require(conn, code)
     item = store.add_item(conn, code, **body.model_dump())
     changes.publish(events.ITEMS_CHANGED, code)
-    return item
+    # A mug makes the box fragile. Other devices redraw on the event; this one
+    # is told in the reply, so the chip turns on without redrawing the page
+    # under the field that is still being typed in.
+    marked = fragility.breakable(item["name"]) and fragility.mark(
+        conn, code, because=item["name"], actor="auto"
+    )
+    if marked:
+        changes.publish(events.BOX_UPDATED, code)
+    return {**item, "marked_fragile": marked}
 
 
 @router.patch("/items/{item_id}")
@@ -280,12 +288,24 @@ def suggest_summary(
     """A proposed summary of the box's items and whatever is nested in it, at any depth.
 
     Nothing is written. `source` is "model" when a model phrased the line and
-    "assembled" otherwise, which is a normal outcome (see phrasing.py).
+    "assembled" otherwise, which is a normal outcome (see phrasing.py). The
+    model is also told what the record is and the room its label prints, for
+    the "Miscellaneous Office" a jumble is called.
     """
-    _require_readable(conn, code)
+    box = _require_readable(conn, code)
     contents = summarise.contents(store.subtree(conn, code))
-    summary, source = phrasing.summary_for(contents, phraser, model=config.summary_model)
-    return {"summary": summary, "source": source}
+    context = {
+        "kind": kinds.label_for(box["kind"]),
+        "room": store.label_rooms(conn, box)["room_name"],
+    }
+    summary, source = phrasing.summary_for(
+        contents, phraser, model=config.summary_model, context=context
+    )
+    # What would make it fragile, for the page to mark: a GET writes nothing.
+    # Empty when it is already fragile or a person cleared it.
+    markable = fragility.markable(conn, code)
+    breakable = fragility.reasons(store.subtree(conn, code)) if markable else []
+    return {"summary": summary, "source": source, "breakable": breakable}
 
 
 @router.get("/boxes/{code}/contents")

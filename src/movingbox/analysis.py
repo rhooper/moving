@@ -24,7 +24,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from . import db, kinds, search, spend, store, summarise
+from . import db, fragility, kinds, search, spend, store, summarise
 from .config import Config
 from .vision import base
 
@@ -286,6 +286,20 @@ def refresh_summary(conn: sqlite3.Connection, code: str, *, described: str | Non
     return True
 
 
+def mark_fragile(conn: sqlite3.Connection, code: str, draft: base.BoxDraft) -> bool:
+    """Mark the record fragile for what the photo showed. Returns whether it changed.
+
+    The model's own `fragile` (it saw glass or a screen) or a breakable thing
+    among the items it named, by the same words as a typed item.
+    """
+    named = next((item.name for item in draft.items if fragility.breakable(item.name)), None)
+    if named:
+        return fragility.mark(conn, code, because=named, actor="ai")
+    if draft.fragile:
+        return fragility.mark(conn, code, because="something breakable in a photo", actor="ai")
+    return False
+
+
 # --- the worker ---------------------------------------------------------------------
 
 
@@ -418,9 +432,10 @@ class Analyst(threading.Thread):
         if store.get_box(conn, code) is not None:
             items_changed = merge_items(conn, code, draft.items)
             summary_changed = refresh_summary(conn, code, described=draft.summary)
+            marked = mark_fragile(conn, code, draft)
             if items_changed:
                 self._publish(ITEMS_CHANGED, code)
-            if summary_changed or items_changed:
+            if summary_changed or items_changed or marked:
                 self._publish(BOX_UPDATED, code)
         self._publish(PHOTOS_CHANGED, code)
 

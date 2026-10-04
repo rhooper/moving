@@ -111,20 +111,28 @@ class OpenAIPhraser:
     def __init__(self, api_key):
         self.api_key = api_key
 
-    def phrase(self, contents, *, model: str) -> str:
-        system, user = phrasing.prompt(contents)
+    def phrase(self, contents, *, model: str, context=None) -> str:
+        system, user = phrasing.prompt(contents, context)
         text = ...            # send both, temperature 0, asking for phrasing.SCHEMA
-        return phrasing.finish(text)
+        return phrasing.finish(text, contents, context)
 
 def phraser(config, key):
     api_key = key("OPENAI_API_KEY")
     return OpenAIPhraser(api_key) if api_key else None
 ```
 
-- `phrasing.prompt(contents)` gives the system prompt and the user message,
-  the same ones Ollama gets. `phrasing.finish(text)` pulls the line out of the
-  reply and tidies it to label length. It raises `phrasing.Unusable` when the
-  reply has no line.
+- `context` is what the record is and where it is going (`{"kind": "Box",
+  "room": "Office"}`, either may be None). Pass it on to both calls.
+- `phrasing.prompt(contents, context)` gives the system prompt and the user
+  message, the same ones Ollama gets. The reply is fields, not the line: a
+  kind, whether that kind covers most of the list, and a few examples.
+  `phrasing.finish(text, contents, context)` reads them and writes the line
+  ("Kitchen gear - stock pot, stand mixer, etc.", or "Miscellaneous Office -
+  ..." for a jumble), fitted to label length. It raises `phrasing.Unusable`
+  when the reply has no examples.
+- A `phrase` written before `context` existed (2026-10-04) takes no `context`,
+  so every call to it fails and the line is assembled instead: add the
+  keyword. A reply still in the old `{"summary": ...}` shape is used as it is.
 - **Use temperature 0.** That is what makes pressing the button twice give the
   same line (measured: 7 records of 7, against 5 of 7 with sampling).
 - Any exception from `phrase`, or taking longer than a person will wait,

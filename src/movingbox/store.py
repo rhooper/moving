@@ -203,8 +203,14 @@ def get_box(
 
 
 def update_box(
-    conn: sqlite3.Connection, code: str, *, actor: str | None = None, **fields
+    conn: sqlite3.Connection,
+    code: str,
+    *,
+    actor: str | None = None,
+    note: str | None = None,
+    **fields,
 ) -> dict[str, Any]:
+    """Change editable fields, logging each with `actor` and, if given, why (`note`)."""
     box = _require(conn, code)
     unknown = set(fields) - set(EDITABLE)
     if unknown:
@@ -242,6 +248,7 @@ def update_box(
                     from_value=_shown(conn, name, box[name]),
                     to_value=_shown(conn, name, value),
                     actor=actor,
+                    note=note,
                 )
     return get_box(conn, code)
 

@@ -28,8 +28,9 @@ class Says:
         self.answer = answer
         self.calls = 0
 
-    def phrase(self, contents, *, model):
+    def phrase(self, contents, *, model, context=None):
         self.calls += 1
+        self.context = context
         if isinstance(self.answer, Exception):
             raise self.answer
         return self.answer
@@ -48,7 +49,7 @@ class TestTheRequest:
         request = phrasing.build_request("qwen2.5:7b", KITCHEN)
 
         assert request["format"]["type"] == "object"
-        assert "summary" in request["format"]["properties"]
+        assert "examples" in request["format"]["properties"]
 
     def test_the_context_size_matches_the_warm_ping(self):
         # Ollama keys a loaded model by its runner options: ask for a
@@ -93,46 +94,128 @@ class TestTheRequest:
         assert "1 kettle" not in request["messages"][-1]["content"]
 
 
-class TestTheShapeAskedFor:
-    """The line leads with the kinds of things; examples are in support.
+OFFICE = {"kind": "Box", "room": "Office"}
 
-    Asked for as "prefer a high level view of the kinds of things in the box,
-    not the exact items" -- so the prompt is what carries it, and these pin
-    the parts of it that decide the shape.
+
+def reply(kind="Kitchen gear", most=True, examples=("stock pot", "stand mixer")):
+    return json.dumps({"kind": kind, "most_of_the_list": most, "examples": list(examples)})
+
+
+class TestTheShapeAskedFor:
+    """One heading for the whole container, then examples, then "etc.".
+
+    Asked for as "prefer summary descriptions. Eg B-0062 could be Miscellaneous
+    Office - lights, vacuum, leather, mug, figurine, etc. based on the contents
+    and box information". The model answers in fields; `compose` writes the
+    line, so the shape is code's and only the judgement is the model's.
     """
 
-    def test_it_asks_for_kinds_first_and_examples_after(self):
-        asked = phrasing.build_request("m", KITCHEN)["messages"][-1]["content"]
+    def test_it_is_told_what_the_record_is_and_where_it_is_going(self):
+        asked = phrasing.build_request("m", KITCHEN, OFFICE)["messages"][-1]["content"]
 
-        assert "KINDS" in asked
-        assert "groups" in asked
-        assert "examples in support" in asked
+        assert "a box going to the Office, holding" in asked
 
-    def test_it_asks_for_a_length_the_label_can_show(self):
-        # The stated number steers the model: "under 200 characters" produced
-        # a 64-character median, "about 90" an 87-character one. It is not
-        # obeyed as a ceiling, though -- one answer came back at 147 -- so the
-        # cap is enforced in _tidy, and this only has to aim.
-        asked = phrasing.build_request("m", KITCHEN)["messages"][-1]["content"]
+    def test_with_no_room_it_is_just_the_kind(self):
+        asked = phrasing.build_request("m", KITCHEN, {"kind": "Loose item"})["messages"][-1][
+            "content"
+        ]
 
-        assert "about 90 characters" in asked
+        assert "a loose item holding" in asked
+
+    def test_with_no_context_it_is_a_container(self):
+        assert "a container holding" in phrasing.prompt(KITCHEN)[1]
+
+    def test_it_asks_for_the_kind_whether_it_covers_most_and_examples(self):
+        request = phrasing.build_request("m", KITCHEN)
+
+        assert request["format"]["required"] == ["kind", "most_of_the_list", "examples"]
+        asked = request["messages"][-1]["content"]
+        # "Never the room": without it, B-0062 came back "Office supplies".
+        assert "Never the room" in asked
+        assert "jumble" in asked
 
     def test_the_same_contents_ask_the_same_question_every_time(self):
-        # temperature 0: measured over seven real records, three runs each,
-        # this took the answers from identical on 5 of 7 to 7 of 7. The
-        # run-to-run variation an earlier attempt blamed on its prompt was
-        # mostly sampling.
+        # temperature 0: measured over seventeen real records, three runs each,
+        # every answer was the same line.
         assert phrasing.build_request("m", KITCHEN)["options"]["temperature"] == 0
 
     def test_the_prompt_is_versioned_for_the_new_shape(self):
-        assert phrasing.PROMPT_VERSION == "2026-09-22.1"
+        assert phrasing.PROMPT_VERSION == "2026-10-04.1"
+
+
+class TestComposingTheLine:
+    def test_a_kind_that_covers_most_is_the_heading(self):
+        line = phrasing.finish(reply(), KITCHEN * 2)
+
+        assert line == "Kitchen gear - stock pot, stand mixer, etc."
+
+    def test_a_jumble_is_miscellaneous_and_the_room(self):
+        line = phrasing.finish(
+            reply("Electronics", False, ["lights", "vacuum", "leather", "mug", "figurine"]),
+            things(*"abcdefghij"),
+            OFFICE,
+        )
+
+        assert line == "Miscellaneous Office - lights, vacuum, leather, mug, figurine, etc."
+
+    def test_a_jumble_going_nowhere_yet_is_just_miscellaneous(self):
+        line = phrasing.finish(reply(most=False), things(*"abcdef"))
+
+        assert line.startswith("Miscellaneous - ")
+
+    def test_an_empty_heading_is_miscellaneous(self):
+        assert phrasing.finish(reply(kind="  "), KITCHEN * 2).startswith("Miscellaneous - ")
+
+    def test_the_heading_starts_with_a_capital(self):
+        assert phrasing.finish(reply(kind="filament spools"), KITCHEN).startswith("Filament")
+
+    def test_no_etc_when_every_thing_was_named(self):
+        line = phrasing.finish(reply(examples=["pot", "mixer", "pan", "colander"]), KITCHEN)
+
+        assert line == "Kitchen gear - pot, mixer, pan, colander"
+
+    def test_at_most_six_examples(self):
+        line = phrasing.finish(reply(examples=list("abcdefgh")), things(*"abcdefgh"))
+
+        assert line == "Kitchen gear - a, b, c, d, e, f, etc."
+
+    def test_repeated_examples_are_named_once(self):
+        line = phrasing.finish(
+            reply(examples=["mug", "mugs", "Mug", "vase"]), things("mug", "vase")
+        )
+
+        assert line == "Kitchen gear - mug, vase"
+
+    def test_a_long_line_drops_examples_rather_than_cutting_one(self):
+        long = [f"something rather long number {n}" for n in range(6)]
+
+        line = phrasing.finish(reply(examples=long), things(*"abcdefgh"))
+
+        assert len(line) <= summarise.MAX_LENGTH
+        assert line.endswith(", etc.")
+        assert "…" not in line
+
+    def test_no_examples_is_not_an_answer(self):
+        with pytest.raises(phrasing.Unusable):
+            phrasing.finish(reply(examples=[" ", ""]), KITCHEN)
+
+    def test_examples_that_are_not_a_list_are_not_an_answer(self):
+        with pytest.raises(phrasing.Unusable):
+            phrasing.finish('{"kind": "Books", "most_of_the_list": true, "examples": "a, b"}')
+
+    def test_a_reply_in_the_old_shape_is_used_as_it_is(self):
+        # A plug-in written before 2026-10-04 asks for {"summary": ...}.
+        assert phrasing.finish('{"summary": "Garage tools - clamps"}') == "Garage tools - clamps"
 
 
 class TestTheReply:
     def test_a_well_formed_reply_is_the_summary(self):
-        payload = {"message": {"content": json.dumps({"summary": "Kitchen gear - a stock pot"})}}
+        payload = {"message": {"content": reply()}}
 
-        assert phrasing.read_response(payload) == "Kitchen gear - a stock pot"
+        assert (
+            phrasing.read_response(payload, KITCHEN)
+            == "Kitchen gear - stock pot, stand mixer, etc."
+        )
 
     def test_a_reply_wrapped_in_a_markdown_fence_still_reads(self):
         body = '```json\n{"summary": "Garage tools - clamps"}\n```'
@@ -232,6 +315,31 @@ class TestFallingBackIsNormal:
 
         assert phrasing.summary_for(KITCHEN, said, model="m")[1] == "model"
         assert said.calls == 1
+
+    def test_the_record_is_passed_to_the_phraser(self):
+        said = Says("Kitchen gear - pot")
+
+        phrasing.summary_for(KITCHEN, said, model="m", context=OFFICE)
+
+        assert said.context == OFFICE
+
+    def test_a_plug_in_written_before_context_falls_back(self):
+        # Its phrase() takes no `context`: a TypeError, which is a failure
+        # like any other, so the line is the assembled one rather than a 500.
+        class Older:
+            name = "older"
+
+            def phrase(self, contents, *, model):
+                return "never reached"
+
+        assert phrasing.summary_for(KITCHEN, Older(), model="m", context=OFFICE)[1] == "assembled"
+
+
+class TestTheStub:
+    def test_it_is_miscellaneous_and_the_room_with_the_names(self):
+        line = phrasing.StubPhraser().phrase(KITCHEN, model="m", context=OFFICE)
+
+        assert line == "Miscellaneous Office - stock pot, stand mixer, baking pan, colander"
 
 
 class TestKeepingTheModelWarm:
